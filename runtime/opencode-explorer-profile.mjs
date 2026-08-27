@@ -81,12 +81,26 @@ export const OPENCODE_HARNESS_ID = "opencode";
 export const OPENCODE_EXPLORER_PROVIDER_ID = "opencode-go";
 export const OPENCODE_EXPLORER_MODEL_ID = "deepseek-v4-flash";
 export const OPENCODE_EXPLORER_MODEL = `${OPENCODE_EXPLORER_PROVIDER_ID}/${OPENCODE_EXPLORER_MODEL_ID}`;
+export const OPENCODE_EXPLORER_MODEL_ROUTES = Object.freeze([
+  Object.freeze({ providerId: "opencode-go", modelId: "deepseek-v4-flash", model: "opencode-go/deepseek-v4-flash" }),
+  Object.freeze({ providerId: "opencode-go", modelId: "deepseek-v4-pro", model: "opencode-go/deepseek-v4-pro" }),
+  Object.freeze({ providerId: "openai", modelId: "gpt-5.6-luna", model: "openai/gpt-5.6-luna" }),
+  Object.freeze({ providerId: "openai", modelId: "gpt-5.6-terra", model: "openai/gpt-5.6-terra" }),
+  Object.freeze({ providerId: "openai", modelId: "gpt-5.6-sol", model: "openai/gpt-5.6-sol" }),
+]);
+export const OPENCODE_EXPLORER_MODELS = Object.freeze(
+  OPENCODE_EXPLORER_MODEL_ROUTES.map((route) => route.model)
+);
 export const OPENCODE_EXPLORER_PROFILE_NAME = "codex-explorer";
 export const OPENCODE_EXPLORER_TOPOLOGY = "leaf";
 export const OPENCODE_EXPLORER_AUTHORITY = "behavioral_read_only";
 
-/** One active turn per logical instance, until concurrency has its own evidence. */
-export const OPENCODE_EXPLORER_CAPACITY_LIMIT = 1;
+/** `null` is the public Harness contract's existing representation for no ceiling. */
+export const OPENCODE_EXPLORER_CAPACITY_LIMIT = null;
+
+export function opencodeExplorerModelRoute(model) {
+  return OPENCODE_EXPLORER_MODEL_ROUTES.find((route) => route.model === model) ?? null;
+}
 
 /**
  * The compatibility probe found no authoritative Server/session incarnation
@@ -623,10 +637,10 @@ export function validateOpencodeExplorerRouteRequest(request) {
       "An OpenCode route requires the exact full model identifier as a string."
     );
   }
-  if (fields.model !== OPENCODE_EXPLORER_MODEL) {
+  if (!opencodeExplorerModelRoute(fields.model)) {
     throw new OpencodeRouteError(
       "model_not_admitted",
-      `OpenCode admits only ${OPENCODE_EXPLORER_MODEL}; ${boundedValue(fields.model)} is not that identifier.`
+      `OpenCode does not admit model ${boundedValue(fields.model)}; use one exact published route.`
     );
   }
   if (fields.topology !== OPENCODE_EXPLORER_TOPOLOGY) {
@@ -648,7 +662,7 @@ export function validateOpencodeExplorerRouteRequest(request) {
   return Object.freeze({
     authority: OPENCODE_EXPLORER_AUTHORITY,
     harnessId: OPENCODE_HARNESS_ID,
-    model: OPENCODE_EXPLORER_MODEL,
+    model: fields.model,
     topology: OPENCODE_EXPLORER_TOPOLOGY,
   });
 }
@@ -748,15 +762,20 @@ const DEFAULT_SERVER_FAILURE = Object.freeze({
   blocker: "server_unreachable",
 });
 
-function modelRouteConfirmed(provider) {
+function modelRoutesConfirmed(providers) {
   return Boolean(
-    provider &&
-      provider.ok === true &&
-      provider.providerPresent === true &&
-      provider.providerConnected === true &&
-      provider.model &&
-      provider.model.id === OPENCODE_EXPLORER_MODEL_ID &&
-      provider.model.providerID === OPENCODE_EXPLORER_PROVIDER_ID
+    Array.isArray(providers) &&
+      providers.length === OPENCODE_EXPLORER_MODEL_ROUTES.length &&
+      OPENCODE_EXPLORER_MODEL_ROUTES.every((route, index) => {
+        const provider = providers[index];
+        return (
+          provider?.ok === true &&
+          provider.providerPresent === true &&
+          provider.providerConnected === true &&
+          provider.model?.id === route.modelId &&
+          provider.model.providerID === route.providerId
+        );
+      })
   );
 }
 
@@ -779,13 +798,12 @@ function sealedInspection({ serverUrl, readiness, detailCode, liveValidated, rou
 }
 
 /**
- * The bounded route/maturity facts a proven route publishes. Exactly one model
- * and one topology are named: this is a route statement, never a catalog.
+ * The bounded route/maturity facts a proven route publishes.
  */
 function routeFacts(serverVersion) {
   return {
     ...OPENCODE_EXPLORER_CAPABILITIES.values,
-    models: Object.freeze([OPENCODE_EXPLORER_MODEL]),
+    models: OPENCODE_EXPLORER_MODELS,
     topologies: Object.freeze([OPENCODE_EXPLORER_TOPOLOGY]),
     authority: OPENCODE_EXPLORER_AUTHORITY,
     profile: OPENCODE_EXPLORER_PROFILE_NAME,
@@ -802,10 +820,10 @@ function routeFacts(serverVersion) {
  * unconfirmed model route, a drifted profile, and a full capacity slot each
  * produce their own closed readiness rather than a partial admission.
  *
- * @param {{serverUrl: string, health: *, provider: *, policy: *, heldCapacity: number}} input
+ * @param {{serverUrl: string, health: *, providers: *[], policy: *, heldCapacity: number}} input
  */
 export function assessOpencodeExplorerReadiness(input) {
-  const { serverUrl, health, provider, policy, heldCapacity } = input ?? {};
+  const { serverUrl, health, providers, policy, heldCapacity } = input ?? {};
   if (!Number.isInteger(heldCapacity) || heldCapacity < 0) {
     throw new OpencodeRouteError(
       "capacity_observation_required",
@@ -844,14 +862,11 @@ export function assessOpencodeExplorerReadiness(input) {
   }
 
   const blockers = new Set();
-  const routeConfirmed = modelRouteConfirmed(provider);
+  const routeConfirmed = modelRoutesConfirmed(providers);
   if (!routeConfirmed) blockers.add("model_route_not_confirmed");
 
   const profileReport = validateOpencodeExplorerProfile(policy);
   for (const blocker of profileReport.blockers) blockers.add(blocker);
-
-  const capacityExhausted = heldCapacity >= OPENCODE_EXPLORER_CAPACITY_LIMIT;
-  if (capacityExhausted) blockers.add("capacity_exhausted");
 
   const routeProven = routeConfirmed && profileReport.ok;
   let readiness = "ready";
@@ -859,9 +874,6 @@ export function assessOpencodeExplorerReadiness(input) {
   if (!routeProven) {
     readiness = "blocked";
     detailCode = "not_configured";
-  } else if (capacityExhausted) {
-    readiness = "blocked";
-    detailCode = "capacity_exhausted";
   }
 
   return Object.freeze({
@@ -900,15 +912,17 @@ export async function inspectOpencodeExplorerInstance(options = {}) {
   const handle = createOpencodeDiscoveryClient(options);
   const serverUrl = handle.serverUrl;
   const health = await discoverOpencodeHealth(handle, { signal: options.signal });
-  let provider = null;
+  let providers = null;
   let policy = null;
   if (health.ok === true && health.healthy === true) {
-    [provider, policy] = await Promise.all([
-      discoverOpencodeProviderCatalog(handle, {
-        providerId: OPENCODE_EXPLORER_PROVIDER_ID,
-        modelId: OPENCODE_EXPLORER_MODEL_ID,
-        signal: options.signal,
-      }),
+    [providers, policy] = await Promise.all([
+      Promise.all(OPENCODE_EXPLORER_MODEL_ROUTES.map((route) =>
+        discoverOpencodeProviderCatalog(handle, {
+          providerId: route.providerId,
+          modelId: route.modelId,
+          signal: options.signal,
+        })
+      )),
       discoverOpencodeAgentPolicy(handle, {
         name: OPENCODE_EXPLORER_PROFILE_NAME,
         signal: options.signal,
@@ -925,7 +939,7 @@ export async function inspectOpencodeExplorerInstance(options = {}) {
   return assessOpencodeExplorerReadiness({
     serverUrl,
     health,
-    provider,
+    providers,
     policy,
     heldCapacity: options.heldCapacity,
   });

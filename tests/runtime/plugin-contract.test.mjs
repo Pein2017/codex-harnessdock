@@ -261,7 +261,13 @@ describe("native plugin contract", () => {
     assert.match(text, /no default (?:Harness|route)/i);
     assert.doesNotMatch(text, /delegation_mode/);
     // OpenCode Explorer route truth, stated plainly and without aspiration.
-    assert.match(text, /opencode-go\/deepseek-v4-flash/);
+    for (const model of [
+      "opencode-go/deepseek-v4-flash",
+      "opencode-go/deepseek-v4-pro",
+      "openai/gpt-5.6-luna",
+      "openai/gpt-5.6-terra",
+      "openai/gpt-5.6-sol",
+    ]) assert.match(text, new RegExp(model.replace("/", "\\/")));
     assert.match(text, /`opencode`[\s\S]*leaf[\s\S]*`write: false`/i);
     assert.match(text, /no reasoning effort/i);
     assert.match(text, /experimental Native Agent Team lead/i);

@@ -37,6 +37,8 @@ import {
   OPENCODE_EXPLORER_CONTINUATION,
   OPENCODE_EXPLORER_MODEL,
   OPENCODE_EXPLORER_MODEL_ID,
+  OPENCODE_EXPLORER_MODELS,
+  OPENCODE_EXPLORER_MODEL_ROUTES,
   OPENCODE_EXPLORER_PROFILE_NAME,
   OPENCODE_EXPLORER_PROVIDER_ID,
   OPENCODE_EXPLORER_TOPOLOGY,
@@ -171,25 +173,25 @@ function healthyHealth() {
   return { ok: true, healthy: true, version: "1.18.18" };
 }
 
-function exactProvider() {
-  return {
+function exactProviders() {
+  return OPENCODE_EXPLORER_MODEL_ROUTES.map((route) => ({
     ok: true,
     providerPresent: true,
     providerConnected: true,
     model: {
-      id: OPENCODE_EXPLORER_MODEL_ID,
-      providerID: OPENCODE_EXPLORER_PROVIDER_ID,
-      name: "DeepSeek V4 Flash (2x usage)",
-      family: "deepseek-flash",
+      id: route.modelId,
+      providerID: route.providerId,
+      name: route.model,
+      family: null,
     },
-  };
+  }));
 }
 
 function readinessInput(overrides = {}) {
   return {
     serverUrl: "http://127.0.0.1:4096",
     health: healthyHealth(),
-    provider: exactProvider(),
+    providers: exactProviders(),
     policy: compliantPolicy(),
     heldCapacity: 0,
     ...overrides,
@@ -322,12 +324,19 @@ describe("opencode explorer template: reviewed default-deny operator profile", (
 // ---------------------------------------------------------------------------
 
 describe("opencode explorer route: frozen constants bound to captured evidence", () => {
-  it("admits exactly the discovered full model identifier", () => {
+  it("admits exactly the five discovered full model identifiers", () => {
     assert.equal(OPENCODE_HARNESS_ID, "opencode");
     assert.equal(OPENCODE_EXPLORER_PROVIDER_ID, "opencode-go");
     assert.equal(OPENCODE_EXPLORER_MODEL_ID, "deepseek-v4-flash");
     assert.equal(OPENCODE_EXPLORER_MODEL, "opencode-go/deepseek-v4-flash");
     assert.equal(OPENCODE_EXPLORER_MODEL, compatibilityFixture.modelRoute.exact);
+    assert.deepEqual(OPENCODE_EXPLORER_MODELS, [
+      "opencode-go/deepseek-v4-flash",
+      "opencode-go/deepseek-v4-pro",
+      "openai/gpt-5.6-luna",
+      "openai/gpt-5.6-terra",
+      "openai/gpt-5.6-sol",
+    ]);
     assert.equal(OPENCODE_EXPLORER_PROFILE_NAME, compatibilityFixture.profile.name);
   });
 
@@ -337,10 +346,10 @@ describe("opencode explorer route: frozen constants bound to captured evidence",
     assert.equal(OPENCODE_EXPLORER_CAPABILITIES.values.continuation, OPENCODE_EXPLORER_CONTINUATION);
   });
 
-  it("declares one leaf, read-only, capacity-one route", () => {
+  it("declares leaf, read-only routes with no HarnessDock capacity ceiling", () => {
     assert.equal(OPENCODE_EXPLORER_TOPOLOGY, "leaf");
     assert.equal(OPENCODE_EXPLORER_AUTHORITY, "behavioral_read_only");
-    assert.equal(OPENCODE_EXPLORER_CAPACITY_LIMIT, 1);
+    assert.equal(OPENCODE_EXPLORER_CAPACITY_LIMIT, null);
   });
 
   it("publishes one valid experimental capability snapshot with nothing unproven", () => {
@@ -688,11 +697,14 @@ describe("opencode explorer profile: exact resolved-policy validation", () => {
 // ---------------------------------------------------------------------------
 
 describe("opencode explorer route request: exact, immutable, selector-free", () => {
-  it("accepts exactly the discovered route and echoes nothing else", () => {
-    const route = validateOpencodeExplorerRouteRequest(exactRouteRequest());
-    assert.deepEqual({ ...route }, exactRouteRequest());
-    assert.deepEqual(Object.keys(route).sort(), [...ROUTE_REQUEST_FIELDS]);
-    assert.equal(Object.isFrozen(route), true);
+  it("accepts each exact discovered route and echoes nothing else", () => {
+    for (const model of OPENCODE_EXPLORER_MODELS) {
+      const request = exactRouteRequest({ model });
+      const route = validateOpencodeExplorerRouteRequest(request);
+      assert.deepEqual({ ...route }, request);
+      assert.deepEqual(Object.keys(route).sort(), [...ROUTE_REQUEST_FIELDS]);
+      assert.equal(Object.isFrozen(route), true);
+    }
   });
 
   it("rejects an omitted, aliased, substituted, or case-variant model", () => {
@@ -707,7 +719,9 @@ describe("opencode explorer route request: exact, immutable, selector-free", () 
       ["OpenCode-Go/deepseek-v4-flash", "model_not_admitted"],
       ["opencode-go/DeepSeek-V4-Flash", "model_not_admitted"],
       ["opencode-go/deepseek-v4-flash:thinking", "model_not_admitted"],
-      ["opencode-go/deepseek-v4-pro", "model_not_admitted"],
+      ["openai/gpt-5.6-luna-fast", "model_not_admitted"],
+      ["openai/gpt-5.6-terra-fast", "model_not_admitted"],
+      ["openai/gpt-5.6-sol-fast", "model_not_admitted"],
       ["opencode-go/kimi-k2.6", "model_not_admitted"],
       ["flash", "model_not_admitted"],
       [{ providerID: "opencode-go", modelID: "deepseek-v4-flash" }, "model_required"],
@@ -862,7 +876,7 @@ describe("opencode explorer readiness: contract-shaped, live-validated, no model
     assert.equal(inspection.liveValidated, true);
     assert.equal(inspection.maturity, "experimental");
     assert.equal(inspection.instanceKey, opencodeExplorerInstanceKey("http://127.0.0.1:4096"));
-    assert.deepEqual(inspection.routes.models, [OPENCODE_EXPLORER_MODEL]);
+    assert.deepEqual(inspection.routes.models, OPENCODE_EXPLORER_MODELS);
     assert.deepEqual(inspection.routes.topologies, [OPENCODE_EXPLORER_TOPOLOGY]);
     assert.equal(inspection.routes.authority, OPENCODE_EXPLORER_AUTHORITY);
     assert.equal(inspection.routes.capacity, OPENCODE_EXPLORER_CAPACITY_LIMIT);
@@ -918,19 +932,18 @@ describe("opencode explorer readiness: contract-shaped, live-validated, no model
   });
 
   it("blocks a missing, disconnected, or substituted model route", () => {
-    for (const provider of [
-      { ok: false, code: "malformed_response", retryable: false },
-      { ok: true, providerPresent: false, providerConnected: false, model: null },
-      { ok: true, providerPresent: true, providerConnected: false, model: exactProvider().model },
-      { ok: true, providerPresent: true, providerConnected: true, model: { id: "kimi-k2.6", providerID: "opencode-go" } },
-      { ok: true, providerPresent: true, providerConnected: true, model: { id: "deepseek-v4-flash", providerID: "deepseek" } },
-      { ok: true, providerPresent: true, providerConnected: true, model: null },
+    const broken = exactProviders();
+    broken[4] = { ...broken[4], model: { id: "gpt-5.6-sol-fast", providerID: "openai" } };
+    for (const providers of [
+      exactProviders().slice(0, -1),
+      exactProviders().map((provider, index) => index === 1 ? { ...provider, providerConnected: false } : provider),
+      broken,
     ]) {
-      const report = assessOpencodeExplorerReadiness(readinessInput({ provider }));
-      assert.equal(report.inspection.readiness, "blocked", JSON.stringify(provider));
-      assert.equal(report.inspection.detailCode, "not_configured", JSON.stringify(provider));
+      const report = assessOpencodeExplorerReadiness(readinessInput({ providers }));
+      assert.equal(report.inspection.readiness, "blocked", JSON.stringify(providers));
+      assert.equal(report.inspection.detailCode, "not_configured", JSON.stringify(providers));
       assert.equal(report.inspection.routes, null);
-      assert.equal(report.blockers.includes("model_route_not_confirmed"), true, JSON.stringify(provider));
+      assert.equal(report.blockers.includes("model_route_not_confirmed"), true, JSON.stringify(providers));
     }
   });
 
@@ -961,13 +974,14 @@ describe("opencode explorer readiness: contract-shaped, live-validated, no model
     );
   });
 
-  it("blocks a full capacity-one instance while keeping the route proven", () => {
-    const report = assessOpencodeExplorerReadiness(readinessInput({ heldCapacity: 1 }));
-    assert.equal(report.inspection.readiness, "blocked");
-    assert.equal(report.inspection.detailCode, "capacity_exhausted");
+  it("keeps readiness uncapped while retaining the held-turn observation", () => {
+    const report = assessOpencodeExplorerReadiness(readinessInput({ heldCapacity: 10_000 }));
+    assert.equal(report.inspection.readiness, "ready");
+    assert.equal(report.inspection.detailCode, "ready");
     assert.equal(report.inspection.liveValidated, true);
-    assert.deepEqual(report.blockers, ["capacity_exhausted"]);
-    assert.equal(report.inspection.routes, null);
+    assert.deepEqual(report.blockers, []);
+    assert.equal(report.inspection.routes.capacity, null);
+    assert.equal(report.facts.heldCapacity, 10_000);
     assert.throws(() => assessOpencodeExplorerReadiness(readinessInput({ heldCapacity: -1 })));
     assert.throws(() => assessOpencodeExplorerReadiness(readinessInput({ heldCapacity: "1" })));
     assert.throws(() => assessOpencodeExplorerReadiness(readinessInput({ heldCapacity: undefined })));
@@ -1001,21 +1015,22 @@ describe("opencode explorer readiness: fake-Server discovery is GET-only and ses
   }
 
   function providerBody() {
+    const providers = [...new Set(OPENCODE_EXPLORER_MODEL_ROUTES.map((route) => route.providerId))];
     return {
-      all: [
-        {
-          id: OPENCODE_EXPLORER_PROVIDER_ID,
-          models: {
-            [OPENCODE_EXPLORER_MODEL_ID]: {
-              id: OPENCODE_EXPLORER_MODEL_ID,
-              providerID: OPENCODE_EXPLORER_PROVIDER_ID,
-              name: "DeepSeek V4 Flash (2x usage)",
-              family: "deepseek-flash",
-            },
-          },
-        },
-      ],
-      connected: [OPENCODE_EXPLORER_PROVIDER_ID],
+      all: providers.map((providerId) => ({
+        id: providerId,
+        models: Object.fromEntries(
+          OPENCODE_EXPLORER_MODEL_ROUTES
+            .filter((route) => route.providerId === providerId)
+            .map((route) => [route.modelId, {
+              id: route.modelId,
+              providerID: route.providerId,
+              name: route.model,
+              family: null,
+            }])
+        ),
+      })),
+      connected: providers,
       default: {},
     };
   }

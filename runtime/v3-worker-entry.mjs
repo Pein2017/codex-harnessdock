@@ -47,13 +47,7 @@ import { acquireInstanceLease } from "./instance-admission-lease.mjs";
 import { resolveDriverV2 } from "./harness-registry.mjs";
 import { runVersionThreeWorkerLoop } from "./v3-worker-loop.mjs";
 
-/**
- * The capacity class one logical instance serializes turns under. One Agent's
- * turn holds one slot of its instance, which is what makes a capacity-one route
- * (the OpenCode Explorer) refuse a second concurrent turn durably rather than
- * only in the process that happens to be running.
- */
-export const V3_INSTANCE_CAPACITY_CLASS = "v3-public-turn";
+const V3_TURN_EVIDENCE_CLASS = "v3-public-turn";
 
 /** Read the immutable route from the version-three Agent record, or fail. */
 function requireVersionThreeRoute(agent, agentId) {
@@ -114,8 +108,8 @@ export async function runDetachedVersionThreeTurn(input) {
     turnOptions,
     turnId: jobId,
   });
-  // The instance slot is held by the worker that owns the turn, for exactly as
-  // long as the turn owns it: the loop releases it only on proven settlement.
+  // Each turn keeps its own durable settlement evidence. Including the job in
+  // the class prevents this evidence lease from becoming an instance-wide cap.
   const lease = acquireInstanceLease({
     ownerRootId,
     agentId: agent.agentId,
@@ -123,7 +117,7 @@ export async function runDetachedVersionThreeTurn(input) {
     route,
     harnessId: route.harnessId,
     instanceKey: route.instanceKey,
-    capacityClass: V3_INSTANCE_CAPACITY_CLASS,
+    capacityClass: `${V3_TURN_EVIDENCE_CLASS}:${jobId}`,
     capacityLimit: 1,
   });
   return runVersionThreeWorkerLoop({

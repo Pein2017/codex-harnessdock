@@ -47,6 +47,7 @@ import {
 import {
   OPENCODE_EXPLORER_MODEL,
   OPENCODE_EXPLORER_MODEL_ID,
+  OPENCODE_EXPLORER_MODEL_ROUTES,
   OPENCODE_EXPLORER_PROFILE_NAME,
   OPENCODE_EXPLORER_PROVIDER_ID,
   OPENCODE_HARNESS_ID,
@@ -79,6 +80,7 @@ function compliantRuleset() {
 }
 
 async function startReadyFake(scenario = {}) {
+  const providers = [...new Set(OPENCODE_EXPLORER_MODEL_ROUTES.map((route) => route.providerId))];
   const server = createFakeOpencodeServer({
     agents: {
       status: 200,
@@ -94,16 +96,15 @@ async function startReadyFake(scenario = {}) {
     provider: {
       status: 200,
       body: {
-        all: [{
-          id: OPENCODE_EXPLORER_PROVIDER_ID,
-          models: {
-            [OPENCODE_EXPLORER_MODEL_ID]: {
-              id: OPENCODE_EXPLORER_MODEL_ID,
-              providerID: OPENCODE_EXPLORER_PROVIDER_ID,
-            },
-          },
-        }],
-        connected: [OPENCODE_EXPLORER_PROVIDER_ID],
+        all: providers.map((providerId) => ({
+          id: providerId,
+          models: Object.fromEntries(
+            OPENCODE_EXPLORER_MODEL_ROUTES
+              .filter((route) => route.providerId === providerId)
+              .map((route) => [route.modelId, { id: route.modelId, providerID: route.providerId }])
+          ),
+        })),
+        connected: providers,
         default: {},
       },
     },

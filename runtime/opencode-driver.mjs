@@ -74,15 +74,13 @@ import {
 import {
   OPENCODE_EXPLORER_AUTHORITY,
   OPENCODE_EXPLORER_CAPABILITIES,
-  OPENCODE_EXPLORER_CAPACITY_LIMIT,
-  OPENCODE_EXPLORER_MODEL_ID,
   OPENCODE_EXPLORER_PROFILE_NAME,
-  OPENCODE_EXPLORER_PROVIDER_ID,
   OPENCODE_EXPLORER_TOPOLOGY,
   OPENCODE_HARNESS_ID,
   OpencodeRouteError,
   assertOpencodeRouteCapabilities,
   inspectOpencodeExplorerInstance,
+  opencodeExplorerModelRoute,
   opencodeExplorerInstanceKey,
   validateOpencodeExplorerRouteRequest,
 } from "./opencode-explorer-profile.mjs";
@@ -125,7 +123,6 @@ export const OPENCODE_TURN_LOCATOR_KEYS = Object.freeze([
 
 /** Closed reasons this Driver refuses a turn before its native transport. */
 export const OPENCODE_PRE_TRANSPORT_CODES = Object.freeze([
-  "capacity_exhausted",
   "continuation_unsupported",
   "foreign_route",
   "instance_not_configured",
@@ -245,10 +242,8 @@ const PROVIDER_ERROR_CLASSES = Object.freeze({
 });
 
 /**
- * Process-local capacity, keyed by logical instance. The durable instance lease
- * is the real owner of capacity one; this is defense in depth inside one
- * process, so a second concurrent `startTurn()` can never create a second
- * session against a slot that is already held.
+ * Process-local active/unknown turn evidence, keyed by logical instance. It is
+ * observational only: the operator requested no HarnessDock capacity ceiling.
  */
 const ACTIVE_TURNS = new Map();
 
@@ -258,12 +253,6 @@ function heldCapacity(instanceKey) {
 
 function claimCapacity(instanceKey) {
   const held = heldCapacity(instanceKey);
-  if (held >= OPENCODE_EXPLORER_CAPACITY_LIMIT) {
-    throw new OpencodeRouteError(
-      "capacity_exhausted",
-      `The OpenCode instance already holds its one active turn; a second turn is refused before any session.`
-    );
-  }
   ACTIVE_TURNS.set(instanceKey, held + 1);
   return () => {
     const current = heldCapacity(instanceKey);
@@ -362,7 +351,7 @@ export function createOpencodeDriver(options = {}) {
     };
   }
 
-  function turnReference({ sessionId, userMessageId, attemptId }) {
+  function turnReference({ sessionId, userMessageId, attemptId, providerId, modelId }) {
     return {
       version: 1,
       harnessId: OPENCODE_HARNESS_ID,
@@ -373,8 +362,8 @@ export function createOpencodeDriver(options = {}) {
         sessionId,
         userMessageId,
         attemptId,
-        providerId: OPENCODE_EXPLORER_PROVIDER_ID,
-        modelId: OPENCODE_EXPLORER_MODEL_ID,
+        providerId,
+        modelId,
       },
     };
   }
@@ -390,7 +379,7 @@ export function createOpencodeDriver(options = {}) {
         `${label} names a logical instance this Driver is not configured for.`
       );
     }
-    if (fields.model !== `${OPENCODE_EXPLORER_PROVIDER_ID}/${OPENCODE_EXPLORER_MODEL_ID}`) {
+    if (!opencodeExplorerModelRoute(fields.model)) {
       throw new OpencodeRouteError("foreign_route", `${label} names a model this Driver does not admit.`);
     }
     if (fields.topology !== OPENCODE_EXPLORER_TOPOLOGY || fields.authority !== OPENCODE_EXPLORER_AUTHORITY) {
@@ -585,8 +574,8 @@ export function createOpencodeDriver(options = {}) {
     const selected = selectOpencodeExplorerFinalResult(outcome.response, {
       sessionId,
       parentMessageId: userMessageId,
-      providerId: OPENCODE_EXPLORER_PROVIDER_ID,
-      modelId: OPENCODE_EXPLORER_MODEL_ID,
+      providerId: context.providerId,
+      modelId: context.modelId,
       agent: OPENCODE_EXPLORER_PROFILE_NAME,
       attemptId: context.attemptId,
     });
@@ -747,7 +736,7 @@ export function createOpencodeDriver(options = {}) {
       });
       if (report.inspection.readiness !== "ready") {
         throw new OpencodeRouteError(
-          report.inspection.detailCode === "capacity_exhausted" ? "capacity_exhausted" : "instance_not_ready",
+          "instance_not_ready",
           `The OpenCode instance is ${report.inspection.readiness} (${report.inspection.detailCode}); ` +
             "no native turn is started."
         );
@@ -803,10 +792,7 @@ export function createOpencodeDriver(options = {}) {
           throw new Error(`An OpenCode turn locator requires bounded text for ${key}.`);
         }
       }
-      if (
-        locator.providerId !== OPENCODE_EXPLORER_PROVIDER_ID ||
-        locator.modelId !== OPENCODE_EXPLORER_MODEL_ID
-      ) {
+      if (!opencodeExplorerModelRoute(`${locator.providerId}/${locator.modelId}`)) {
         throw new Error("An OpenCode turn locator must name the exact admitted provider and model.");
       }
       return reference;
@@ -856,12 +842,13 @@ export function createOpencodeDriver(options = {}) {
       let nativeTurnRef;
       let userMessageId;
       try {
+        const admittedModel = opencodeExplorerModelRoute(route.model);
         const turnClient = createOpencodeTurnClient(clientOptions);
         const workspaceRoot = input?.launchContext?.workspaceRoot ?? scope?.workspaceRoot ?? null;
         const created = await createOpencodeSession(turnClient, {
           agent: OPENCODE_EXPLORER_PROFILE_NAME,
-          providerId: OPENCODE_EXPLORER_PROVIDER_ID,
-          modelId: OPENCODE_EXPLORER_MODEL_ID,
+          providerId: admittedModel.providerId,
+          modelId: admittedModel.modelId,
           directory: workspaceRoot ?? undefined,
           signal: scope?.signal ?? undefined,
         });
@@ -890,7 +877,13 @@ export function createOpencodeDriver(options = {}) {
         userMessageId = generateUserMessageId();
         try {
           nativeTurnRef = assertNativeReferenceEnvelope(
-            turnReference({ sessionId, userMessageId, attemptId }),
+            turnReference({
+              sessionId,
+              userMessageId,
+              attemptId,
+              providerId: admittedModel.providerId,
+              modelId: admittedModel.modelId,
+            }),
             { driver, route: prepared.route, kind: "turn" }
           );
         } catch (error) {
@@ -904,8 +897,8 @@ export function createOpencodeDriver(options = {}) {
           sessionId,
           messageId: userMessageId,
           agent: OPENCODE_EXPLORER_PROFILE_NAME,
-          providerId: OPENCODE_EXPLORER_PROVIDER_ID,
-          modelId: OPENCODE_EXPLORER_MODEL_ID,
+          providerId: admittedModel.providerId,
+          modelId: admittedModel.modelId,
           text: promptText,
           directory: workspaceRoot ?? undefined,
           signal: scope?.signal ?? undefined,
@@ -932,6 +925,8 @@ export function createOpencodeDriver(options = {}) {
               sessionId,
               userMessageId,
               attemptId,
+              providerId: admittedModel.providerId,
+              modelId: admittedModel.modelId,
               usageIdentity,
               // Plugin-observed wall clock only. Nothing derives a cache hit, a
               // price, or a charge from it.

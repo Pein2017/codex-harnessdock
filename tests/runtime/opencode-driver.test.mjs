@@ -45,6 +45,8 @@ import {
   OPENCODE_EXPLORER_CAPABILITIES,
   OPENCODE_EXPLORER_MODEL,
   OPENCODE_EXPLORER_MODEL_ID,
+  OPENCODE_EXPLORER_MODELS,
+  OPENCODE_EXPLORER_MODEL_ROUTES,
   OPENCODE_EXPLORER_PROFILE_NAME,
   OPENCODE_EXPLORER_PROVIDER_ID,
   OPENCODE_EXPLORER_TOPOLOGY,
@@ -105,23 +107,24 @@ function readyAgents(overrides = {}) {
 }
 
 function readyProvider() {
+  const providers = [...new Set(OPENCODE_EXPLORER_MODEL_ROUTES.map((route) => route.providerId))];
   return {
     status: 200,
     body: {
-      all: [
-        {
-          id: OPENCODE_EXPLORER_PROVIDER_ID,
-          models: {
-            [OPENCODE_EXPLORER_MODEL_ID]: {
-              id: OPENCODE_EXPLORER_MODEL_ID,
-              providerID: OPENCODE_EXPLORER_PROVIDER_ID,
-              name: "DeepSeek V4 Flash (2x usage)",
-              family: "deepseek-flash",
-            },
-          },
-        },
-      ],
-      connected: [OPENCODE_EXPLORER_PROVIDER_ID],
+      all: providers.map((providerId) => ({
+        id: providerId,
+        models: Object.fromEntries(
+          OPENCODE_EXPLORER_MODEL_ROUTES
+            .filter((route) => route.providerId === providerId)
+            .map((route) => [route.modelId, {
+              id: route.modelId,
+              providerID: route.providerId,
+              name: route.model,
+              family: null,
+            }])
+        ),
+      })),
+      connected: providers,
       default: {},
     },
   };
@@ -142,17 +145,17 @@ function driverFor(url, options = {}) {
   return createOpencodeDriver({ env: { OPENCODE_SERVER_URL: url }, ...options });
 }
 
-function routeRequest() {
+function routeRequest(model = OPENCODE_EXPLORER_MODEL) {
   return {
     harnessId: OPENCODE_HARNESS_ID,
-    model: OPENCODE_EXPLORER_MODEL,
+    model,
     topology: OPENCODE_EXPLORER_TOPOLOGY,
     authority: OPENCODE_EXPLORER_AUTHORITY,
   };
 }
 
 /** Route + prepared turn + scope, each through its real contract validator. */
-async function acceptedTurn(driver, url, { taskInput = TASK_INPUT, scopeOverrides = {} } = {}) {
+async function acceptedTurn(driver, url, { taskInput = TASK_INPUT, model = OPENCODE_EXPLORER_MODEL, scopeOverrides = {} } = {}) {
   // Setup, not the scenario: every caller of this helper is asserting something
   // downstream of a ready instance, so one transport-class reading of its own
   // just-started fake Server is re-observed rather than failing the scenario.
@@ -160,7 +163,7 @@ async function acceptedTurn(driver, url, { taskInput = TASK_INPUT, scopeOverride
     driver,
     createDriverScope({ driver, purpose: "inspect", env: { OPENCODE_SERVER_URL: url }, workspaceRoot: WORKSPACE_ROOT })
   );
-  const request = routeRequest();
+  const request = routeRequest(model);
   const route = validateCanonicalRoute(driver.validateRoute(request, inspection), { driver, inspection, request });
   const preparedTurn = validatePreparedTurn(driver.prepareTurn({ route, taskInput }), {
     driver,
@@ -313,6 +316,24 @@ describe("opencode driver: readiness and route admission", () => {
     ]) {
       assert.throws(() => driver.validateRoute(bad, inspection));
     }
+  });
+
+  it("binds a non-default admitted model through native submission and result lineage", async () => {
+    const { server, url } = await startFake();
+    const driver = driverFor(url);
+    const model = "openai/gpt-5.6-sol";
+    assert.equal(OPENCODE_EXPLORER_MODELS.includes(model), true);
+    const { live, route } = await launch(driver, url, { model });
+    const outcome = await settled(live.result);
+    assert.equal(outcome.ok, true);
+    assert.equal(route.model, model);
+    const posts = postRequests(server);
+    assert.deepEqual(posts.map((request) => request.body?.model), [
+      { providerID: "openai", id: "gpt-5.6-sol" },
+      { providerID: "openai", modelID: "gpt-5.6-sol" },
+    ]);
+    assert.equal(live.nativeTurnRef.locator.providerId, "openai");
+    assert.equal(live.nativeTurnRef.locator.modelId, "gpt-5.6-sol");
   });
 
   it("refuses a route for an instance that is not ready", async () => {
@@ -708,34 +729,32 @@ describe("opencode driver: refusals before native submission", () => {
     }
   });
 
-  it("serializes capacity one: a second concurrent turn never creates a second session", async () => {
+  it("admits concurrent distinct turns without releasing unknown-turn evidence", async () => {
     const { server, url } = await startFake({ promptHang: true });
     const driver = driverFor(url, { turnTimeoutMs: 400 });
-    // The second turn is admitted while the slot is still free, exactly like two
-    // supervisors racing for one instance lease.
     const accepted = await acceptedTurn(driver, url, {
       scopeOverrides: { agentId: "agent_2", attemptId: "att_2", turnId: "job_2" },
     });
     const first = await launch(driver, url);
     assert.equal(opencodeHeldCapacity(opencodeExplorerInstanceKey(url)), 1);
-    // The gate itself already refuses: readiness reports the slot as full.
-    await assert.rejects(
-      () => driver.revalidatePreparedTurn(accepted.preparedTurn, accepted.scope),
-      (error) => error.code === "capacity_exhausted"
-    );
-    const outcome = await settled(
-      driver.startTurn({ scope: accepted.scope, preparedTurn: accepted.preparedTurn, launchContext: {} })
-    );
-    assert.equal(outcome.ok, false);
-    assert.equal(outcome.error.opencodeCode, "capacity_exhausted");
+    const launchContext = await driver.revalidatePreparedTurn(accepted.preparedTurn, accepted.scope);
+    const second = await driver.startTurn({
+      scope: accepted.scope,
+      preparedTurn: accepted.preparedTurn,
+      launchContext,
+    });
+    assert.equal(opencodeHeldCapacity(opencodeExplorerInstanceKey(url)), 2);
     assert.equal(
       postRequests(server).filter((request) => request.path === "/session").length,
-      1,
-      "a refused second turn never creates a second session"
+      2
     );
-    const ambiguous = await settled(first.live.result);
-    assert.equal(ambiguous.ok, false);
-    assert.equal(opencodeHeldCapacity(opencodeExplorerInstanceKey(url)), 1, "ambiguity keeps the slot");
+    const [firstAmbiguous, secondAmbiguous] = await Promise.all([
+      settled(first.live.result),
+      settled(second.result),
+    ]);
+    assert.equal(firstAmbiguous.ok, false);
+    assert.equal(secondAmbiguous.ok, false);
+    assert.equal(opencodeHeldCapacity(opencodeExplorerInstanceKey(url)), 2, "ambiguity keeps both observations");
   });
 });
 

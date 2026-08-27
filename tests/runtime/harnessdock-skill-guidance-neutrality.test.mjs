@@ -138,7 +138,15 @@ describe("HarnessDock Skill guidance neutrality", () => {
     for (const model of ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5"]) {
       assert.match(spawn, new RegExp(model));
     }
-    assert.match(spawn, /opencode-go\/deepseek-v4-flash/);
+    for (const model of [
+      "opencode-go/deepseek-v4-flash",
+      "opencode-go/deepseek-v4-pro",
+      "openai/gpt-5.6-luna",
+      "openai/gpt-5.6-terra",
+      "openai/gpt-5.6-sol",
+    ]) assert.match(spawn, new RegExp(model.replace("/", "\\/")));
+    assert.match(spawn, /HarnessDock capacity ceiling/i);
+    assert.match(spawn, /No `-fast` variants/i);
     assert.match(spawn, /`low`, `medium`, `high`, `xhigh`, or `max`/i);
     assert.match(spawn, /`write: false` is behavioral read\/review-only[\s\S]*`write: true`/i);
     assert.match(spawn, /`IS_SANDBOX=1`[\s\S]*`--dangerously-skip-permissions`/i);

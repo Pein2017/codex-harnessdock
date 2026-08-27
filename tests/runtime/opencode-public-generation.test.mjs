@@ -36,6 +36,8 @@ import { OPENCODE_DRIVER_VERSION } from "../../runtime/opencode-driver.mjs";
 import {
   OPENCODE_EXPLORER_MODEL,
   OPENCODE_EXPLORER_MODEL_ID,
+  OPENCODE_EXPLORER_MODELS,
+  OPENCODE_EXPLORER_MODEL_ROUTES,
   OPENCODE_EXPLORER_PROFILE_NAME,
   OPENCODE_EXPLORER_PROVIDER_ID,
   OPENCODE_HARNESS_ID,
@@ -67,6 +69,7 @@ function compliantRuleset() {
 }
 
 async function startReadyFake() {
+  const providers = [...new Set(OPENCODE_EXPLORER_MODEL_ROUTES.map((route) => route.providerId))];
   const server = createFakeOpencodeServer({
     agents: {
       status: 200,
@@ -84,18 +87,15 @@ async function startReadyFake() {
     provider: {
       status: 200,
       body: {
-        all: [
-          {
-            id: OPENCODE_EXPLORER_PROVIDER_ID,
-            models: {
-              [OPENCODE_EXPLORER_MODEL_ID]: {
-                id: OPENCODE_EXPLORER_MODEL_ID,
-                providerID: OPENCODE_EXPLORER_PROVIDER_ID,
-              },
-            },
-          },
-        ],
-        connected: [OPENCODE_EXPLORER_PROVIDER_ID],
+        all: providers.map((providerId) => ({
+          id: providerId,
+          models: Object.fromEntries(
+            OPENCODE_EXPLORER_MODEL_ROUTES
+              .filter((route) => route.providerId === providerId)
+              .map((route) => [route.modelId, { id: route.modelId, providerID: route.providerId }])
+          ),
+        })),
+        connected: providers,
         default: {},
       },
     },
@@ -236,8 +236,8 @@ describe("public generation: list_harnesses observes without selecting", () => {
     assert.equal(instance.readiness, "ready");
     assert.equal(instance.detail, "ready");
     assert.equal(instance.live_validated, true);
-    assert.equal(instance.capacity, 1, "the OpenCode route serves one turn at a time");
-    assert.deepEqual([...instance.routes.models], [OPENCODE_EXPLORER_MODEL]);
+    assert.equal(instance.capacity, null, "the OpenCode route has no HarnessDock capacity ceiling");
+    assert.deepEqual([...instance.routes.models], OPENCODE_EXPLORER_MODELS);
     assert.deepEqual([...instance.routes.topologies], ["leaf"]);
     assert.equal(instance.routes.authority, "behavioral_read_only");
     assert.equal(instance.routes.continuation, "fresh_only");

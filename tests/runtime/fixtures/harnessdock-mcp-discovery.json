@@ -48,7 +48,11 @@
               "claude-haiku-4-5",
               "claude-opus-5",
               "claude-sonnet-5",
-              "opencode-go/deepseek-v4-flash"
+              "openai/gpt-5.6-luna",
+              "openai/gpt-5.6-sol",
+              "openai/gpt-5.6-terra",
+              "opencode-go/deepseek-v4-flash",
+              "opencode-go/deepseek-v4-pro"
             ],
             "description": "Required full model identifier admitted by the stated Harness."
           },

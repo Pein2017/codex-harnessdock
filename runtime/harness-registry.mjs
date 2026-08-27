@@ -17,7 +17,7 @@ import {
 } from "./claude-code-driver.mjs";
 import { MODEL_ALIASES } from "./claude-headless-adapter.mjs";
 import { createOpencodeDriver } from "./opencode-driver.mjs";
-import { OPENCODE_EXPLORER_MODEL, OPENCODE_HARNESS_ID } from "./opencode-explorer-profile.mjs";
+import { OPENCODE_EXPLORER_MODELS, OPENCODE_HARNESS_ID } from "./opencode-explorer-profile.mjs";
 import {
   ROUTE_AUTHORITY_VALUES,
   ROUTE_REQUEST_FIELDS,
@@ -200,7 +200,7 @@ export const ADMITTED_GENERATION_HARNESS_IDS = ADMITTED_DRIVER_V2_HARNESS_IDS;
  * The full model identifiers each admitted Harness serves, in one place.
  *
  * The Claude entries are derived from that Driver's own canonical alias table
- * and the OpenCode entry from the discovered route constant, so this table
+ * and the OpenCode entries from the discovered route constants, so this table
  * cannot drift from either Driver. The typed public schema and runtime route
  * validation both read it: a model no Harness admits is refused by the schema,
  * and a model the wrong Harness admits is refused by that Harness's own route
@@ -209,7 +209,7 @@ export const ADMITTED_GENERATION_HARNESS_IDS = ADMITTED_DRIVER_V2_HARNESS_IDS;
  */
 export const ADMITTED_ROUTE_MODELS = Object.freeze({
   [CLAUDE_CODE_HARNESS_ID]: Object.freeze([...new Set(MODEL_ALIASES.values())].sort()),
-  [OPENCODE_HARNESS_ID]: Object.freeze([OPENCODE_EXPLORER_MODEL]),
+  [OPENCODE_HARNESS_ID]: OPENCODE_EXPLORER_MODELS,
 });
 
 /** Every admitted full model identifier, deduplicated and deterministic. */

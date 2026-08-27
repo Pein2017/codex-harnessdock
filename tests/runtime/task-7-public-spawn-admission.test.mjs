@@ -32,12 +32,10 @@ import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import { createAgentRuntime } from "../../runtime/agent-runtime.mjs";
-import { acquireInstanceLease } from "../../runtime/instance-admission-lease.mjs";
 import {
   acquireWorkspaceWriterLease,
   releaseLeasesOnSettlement,
 } from "../../runtime/workspace-writer-lease.mjs";
-import { V3_INSTANCE_CAPACITY_CLASS } from "../../runtime/v3-worker-entry.mjs";
 import { readJobFile, resolveJobFile } from "../../runtime/job-store.mjs";
 import { resolveVersionThreeJobDirectory } from "../../runtime/v3-job-store.mjs";
 import { claudeCodeInstanceKey } from "../../runtime/claude-code-driver.mjs";
@@ -50,6 +48,7 @@ import {
 import {
   OPENCODE_EXPLORER_MODEL,
   OPENCODE_EXPLORER_MODEL_ID,
+  OPENCODE_EXPLORER_MODEL_ROUTES,
   OPENCODE_EXPLORER_PROFILE_NAME,
   OPENCODE_EXPLORER_PROVIDER_ID,
   OPENCODE_HARNESS_ID,
@@ -80,6 +79,7 @@ function compliantRuleset() {
 
 /** A ready fake Explorer Server, with only the discovery routes exercised. */
 async function startReadyFake(scenario = {}) {
+  const providers = [...new Set(OPENCODE_EXPLORER_MODEL_ROUTES.map((route) => route.providerId))];
   const server = createFakeOpencodeServer({
     agents: {
       status: 200,
@@ -95,16 +95,15 @@ async function startReadyFake(scenario = {}) {
     provider: {
       status: 200,
       body: {
-        all: [{
-          id: OPENCODE_EXPLORER_PROVIDER_ID,
-          models: {
-            [OPENCODE_EXPLORER_MODEL_ID]: {
-              id: OPENCODE_EXPLORER_MODEL_ID,
-              providerID: OPENCODE_EXPLORER_PROVIDER_ID,
-            },
-          },
-        }],
-        connected: [OPENCODE_EXPLORER_PROVIDER_ID],
+        all: providers.map((providerId) => ({
+          id: providerId,
+          models: Object.fromEntries(
+            OPENCODE_EXPLORER_MODEL_ROUTES
+              .filter((route) => route.providerId === providerId)
+              .map((route) => [route.modelId, { id: route.modelId, providerID: route.providerId }])
+          ),
+        })),
+        connected: providers,
         default: {},
       },
     },
@@ -737,51 +736,33 @@ describe("Task 7 — each Harness states exactly one execution lifecycle", () =>
     assert.deepEqual(jobFiles, [], "an OpenCode Agent must write no version-one job record");
   });
 
-  it("gives two public Explorer Agents one capacity slot on one logical instance", async () => {
-    const { url } = await startReadyFake();
+  it("starts two public Explorer Agents concurrently without an instance capacity ceiling", async () => {
+    const { server, url } = await startReadyFake({ promptDelayMs: 2_000 });
     const { runtime } = setup(url);
-    const accepted = await runtime.acceptStatedRoute(
-      { harness: OPENCODE_HARNESS_ID, model: OPENCODE_EXPLORER_MODEL, topology: "leaf", write: false },
-      "spawn_agent"
+    const first = await runtime.spawnAgent(explorerRequest({ task_name: "capacity_one" }));
+    const second = await runtime.spawnAgent(explorerRequest({ task_name: "capacity_two" }));
+
+    const deadline = Date.now() + 20_000;
+    while (Date.now() < deadline) {
+      const sessions = server.requests.filter((request) => request.method === "POST" && request.path === "/session");
+      if (sessions.length >= 2) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    assert.equal(
+      server.requests.filter((request) => request.method === "POST" && request.path === "/session").length,
+      2
     );
-    const store = runtime.versionThreeStore();
-    const first = store.createAgent({
-      task_name: "capacity_one",
-      route: accepted.route,
-      initialMessage: "the first turn",
-    });
-    const second = store.createAgent({
-      task_name: "capacity_two",
-      route: accepted.route,
-      initialMessage: "the second turn",
-    });
-    // Two Agents, one Explorer Server, one slot: the second turn's worker
-    // cannot admit itself while the first still holds the instance. A lease is
-    // released only through settlement-gated release, so this proves admission
-    // alone and leaves the held slot to that owner.
-    const held = acquireInstanceLease({
-      ownerRootId: runtime.ownerRootId,
-      agentId: first.agentId,
-      jobId: "hd-agent-capacity-one",
-      route: accepted.route,
-      harnessId: accepted.route.harnessId,
-      instanceKey: accepted.route.instanceKey,
-      capacityClass: V3_INSTANCE_CAPACITY_CLASS,
-      capacityLimit: 1,
-    });
-    assert.equal(held.instanceKey ?? accepted.route.instanceKey, accepted.route.instanceKey);
-    assert.throws(
-      () => acquireInstanceLease({
-        ownerRootId: runtime.ownerRootId,
-        agentId: second.agentId,
-        jobId: "hd-agent-capacity-two",
-        route: accepted.route,
-        harnessId: accepted.route.harnessId,
-        instanceKey: accepted.route.instanceKey,
-        capacityClass: V3_INSTANCE_CAPACITY_CLASS,
-        capacityLimit: 1,
-      }),
-      /capacity/i
+
+    while (Date.now() < deadline) {
+      const cards = runtime.listAgents().agents.filter((entry) =>
+        [first.agent_name, second.agent_name].includes(entry.agent_name)
+      );
+      if (cards.length === 2 && cards.every((card) => card.agent_status === "completed")) break;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    const cards = runtime.listAgents().agents.filter((entry) =>
+      [first.agent_name, second.agent_name].includes(entry.agent_name)
     );
+    assert.deepEqual(cards.map((card) => card.agent_status).sort(), ["completed", "completed"]);
   });
 });

@@ -25,9 +25,11 @@ are emergency-only; `HARNESSDOCK_MCP_RESTART_REQUIRED` means new Codex task. Nev
 `claude-fable-5`; `leaf` or `native_orchestrator`; either authority; separate
 effort `low`, `medium`, `high`, `xhigh`, or `max`. Map “x-high” to `xhigh`.
 
-`opencode`: Experimental Explorer, exact `opencode-go/deepseek-v4-flash`, `leaf`
-only, `write: false` only, no reasoning effort, one turn at a time, `fresh_only`
-continuation; interruption and history are unsupported.
+`opencode`: exact `opencode-go/deepseek-v4-flash`,
+`opencode-go/deepseek-v4-pro`, `openai/gpt-5.6-luna`, `openai/gpt-5.6-terra`,
+or `openai/gpt-5.6-sol`; `leaf`, `write: false`; no reasoning effort or
+HarnessDock capacity ceiling; `fresh_only`; interruption/history unsupported.
+No `-fast` variants.
 
 Never infer a model from an Agent label such as Ops5, use partial IDs, or
 substitute another model after rejection. Ask when no model family was selected.
