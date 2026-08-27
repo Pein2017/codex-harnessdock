@@ -171,6 +171,21 @@ async function setup(options = {}) {
     turnId: jobId,
     ...(options.turnOptions === undefined ? {} : { turnOptions: options.turnOptions }),
   });
+  const assignedMessageIds = reservation.assignedMessages.map((message) => message.messageId);
+  const launchTurnOptions = options.launchTurnOptions === undefined
+    ? preparedTurn.turnOptions
+    : options.launchTurnOptions;
+  createLaunchClaim({
+    ownerRootId,
+    agentId: agent.agentId,
+    jobId,
+    attemptId,
+    route: v3Route,
+    leaseBindings: [lease],
+    assignedMessageIds,
+    preparedInput: PROMPT,
+    turnOptions: launchTurnOptions,
+  });
 
   return {
     ownerRootId,
@@ -191,7 +206,7 @@ async function setup(options = {}) {
       driver,
       preparedTurn,
       preparedInput: PROMPT,
-      assignedMessageIds: reservation.assignedMessages.map((message) => message.messageId),
+      assignedMessageIds,
       assignedInputs: [],
       leaseBindings: [lease],
       workspaceRoot,
@@ -199,9 +214,7 @@ async function setup(options = {}) {
       cwd: workspaceRoot,
       // Always stated. Claude's prepared turn always resolves an explicit
       // effort, so a launch that stated nothing would now be refused.
-      turnOptions: options.launchTurnOptions === undefined
-        ? preparedTurn.turnOptions
-        : options.launchTurnOptions,
+      turnOptions: launchTurnOptions,
       ...(options.nativeSessionRef === undefined ? {} : { nativeSessionRef: options.nativeSessionRef }),
     },
     claim: () => {
@@ -267,7 +280,7 @@ describe("Task 7 — turn options reach the native turn through the neutral laun
     assert.equal(context.session.state.requests.length, 0);
   });
 
-  it("refuses a launch input that omits turn options entirely, before any durable claim", async () => {
+  it("refuses a worker input that omits turn options without advancing its parent claim", async () => {
     const context = await setup({ turnOptions: { effort: "low" } });
     const omitted = { ...context.input };
     delete omitted.turnOptions;
@@ -276,7 +289,7 @@ describe("Task 7 — turn options reach the native turn through the neutral laun
       /requires turnOptions/
     );
     assert.equal(context.session.state.requests.length, 0);
-    assert.equal(context.claim(), null, "no durable claim may exist for an unstated launch");
+    assert.equal(context.claim().submissionState, "not_started");
   });
 
   it("never reads Claude effort vocabulary in the generic core", () => {
@@ -606,6 +619,16 @@ describe("Task 7 correction — turn options are durably bound to the launch cla
       turnOptions,
     });
 
+    createLaunchClaim({
+      ...binding,
+      attemptId: "attempt-sub",
+      route,
+      leaseBindings: [lease],
+      assignedMessageIds: ["message-1"],
+      preparedInput,
+      turnOptions: { tier: "one" },
+    });
+
     const first = await launchVersionThreeTurn(launchInput({ tier: "one" }));
     assert.ok(first.liveTurn.nativeTurnRef);
     assert.equal(control.turnIds().length, 1);
@@ -614,7 +637,7 @@ describe("Task 7 correction — turn options are durably bound to the launch cla
     // neither reuse the claim nor reach the service a second time.
     await assert.rejects(
       launchVersionThreeTurn(launchInput({ tier: "two" })),
-      (error) => /identity mismatch|already crossed/.test(error.message)
+      (error) => /identity mismatch|already crossed|does not match/.test(error.message)
     );
     assert.equal(control.turnIds().length, 1, "exactly one native submission may exist");
     await first.liveTurn.dispose();

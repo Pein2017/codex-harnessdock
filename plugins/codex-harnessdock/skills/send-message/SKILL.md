@@ -13,9 +13,10 @@ Call `mcp__codex_harnessdock__send_message` with exact current-root `target` and
 Release drift: use the exact retained Skill path; latest-version instructions
 are emergency-only; `HARNESSDOCK_MCP_RESTART_REQUIRED` means new Codex task. Never repair Plugin Cache.
 
-A running Agent on a route taking active input receives durable delivery. A
-route taking only its first input queues the message instead; the Explorer
-route is such a route. `queued_no_turn` requires
+A running Pi worker durably acknowledges active input; the receipt may remain
+`activation_pending`, and its exact session serializes delivery. A route taking
+only its first input queues the message instead;
+the Explorer route is such a route. `queued_no_turn` requires
 `$codex-harnessdock:followup-task`. A blocked Agent rejects instead of queueing
 with a closed `reason`/`scope`/`retry`; `retry: new_agent` leaves that identity
 unusable and needs a new Agent under a new name.

@@ -247,10 +247,10 @@ describe("Claude Code Driver Contract v2 admission", () => {
   });
 
   it("resolves the wrapped Driver from the static in-tree version-two registry", () => {
-    // The multi-Harness generation admits two Harnesses at Driver Contract v2;
+    // The multi-Harness generation admits three Harnesses at Driver Contract v2;
     // this Driver is still resolved from the static in-tree table by identity.
     assert.equal(ADMITTED_DRIVER_V2_HARNESS_IDS.includes(CLAUDE_CODE_HARNESS_ID), true);
-    assert.deepEqual([...ADMITTED_DRIVER_V2_HARNESS_IDS], ["claude-code", "opencode"]);
+    assert.deepEqual([...ADMITTED_DRIVER_V2_HARNESS_IDS], ["claude-code", "opencode", "pi"]);
     const resolved = resolveDriverV2(CLAUDE_CODE_HARNESS_ID, { env: fixedEnv() });
     assert.equal(resolved.harnessId, CLAUDE_CODE_HARNESS_ID);
     assert.equal(resolved.contractVersion, DRIVER_CONTRACT_VERSION_V2);

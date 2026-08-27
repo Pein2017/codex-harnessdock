@@ -7,6 +7,7 @@ import { after, describe, it } from "node:test";
 import { acquireInstanceLease } from "../../runtime/instance-admission-lease.mjs";
 import {
   claimNativeSubmissionStartAsync,
+  createLaunchClaim,
   createLaunchClaimAsync,
   readLaunchClaim,
   resolveLaunchClaimDirectory,
@@ -82,6 +83,17 @@ function setup(options = {}) {
     workspaceRoot,
     env: { FAKE_SERVICE_HOME: path.join(root, "fake-service") },
   };
+  createLaunchClaim({
+    ownerRootId,
+    agentId,
+    jobId,
+    attemptId,
+    route,
+    leaseBindings: [lease],
+    assignedMessageIds: input.assignedMessageIds,
+    preparedInput,
+    turnOptions: null,
+  });
   return {
     input,
     route,
@@ -207,14 +219,14 @@ describe("version-three worker launch acceptance core", () => {
     const context = setup();
     await assert.rejects(
       launchVersionThreeTurn({ ...context.input, ownerRootId: `${context.input.ownerRootId}-foreign` }),
-      /foreign owner root\/Agent\/job/
+      /No launch claim exists/
     );
     assert.equal(context.startCalls, 0);
 
     await launchVersionThreeTurn(context.input);
     await assert.rejects(
       launchVersionThreeTurn({ ...context.input, attemptId: `${context.input.attemptId}-other` }),
-      /different attempt/
+      /different attempt|does not match/
     );
     assert.equal(context.startCalls, 1);
   });

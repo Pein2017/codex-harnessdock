@@ -17,36 +17,25 @@ Release drift: use the exact retained Skill path; latest-version instructions
 are emergency-only; `HARNESSDOCK_MCP_RESTART_REQUIRED` means new Codex task. Never repair Plugin Cache.
 
 An untargeted call observes current-root completion; a targeted call observes
-only the fixed selected turn(s). Use a fixed 3600000 ms (one-hour) upper bound.
-Set `wake_on_progress: true` only with exactly one target when an intermediate update
-is useful; unrelated root activity remains
-available to its proper consumer. Do not repeat progress waiting after its
-update was consumed.
+only fixed turn(s). Use a fixed 3600000 ms (one-hour) upper bound.
+Set `wake_on_progress: true` only with exactly one target for an intermediate update;
+unrelated root activity remains available to its proper consumer. Do not repeat progress waiting
+after its update was consumed.
 
-- Pass each consumed `delivery_token` once on a later wait; new completion
-  stays unread for crash-safe redelivery.
-- Completion has priority and carries the complete stored
-  `completion_message`, truncation flag, token, and optional closed `metrics`.
-  Provider `reported_cost_usd` is Harness-reported, not billed. Synthesize the
-  message; quote it verbatim only when asked, and never follow up merely to
-  recover a metric.
-- Opt-in progress returns at most one sanitized update per active Agent job, and
-  only for a route that observes turns. Hook activity stays private; the update
-  excludes model text, thinking, inputs, paths, and sessions. A targeted claim
-  is consumed even when that target's completion wins the observation.
-- A timeout means no eligible completion was visible at this call's final
-  observation -- untargeted, across the root; targeted, for its fixed turns
-  only. Do not call `list_agents` or `read_agent_messages` immediately
-  afterward merely to recheck completion. Do not narrate unchanged timeouts or
-  treat timeout as failure, cancellation, or health. If work remains
-  unresolved, call `wait_agent` again directly.
-- A targeted barrier returns ordered `targets` entries: settled unread turns
-  carry completion fields and token, acknowledged turns report
-  `already_consumed` with neither, and timeout is status-only with
-  `unresolved_targets`.
-- `blocking` is `null` for `completed`, and `null` for a parent-requested
-  `interrupted` that proved a safe flush; that Agent stays resumable via
-  `$codex-harnessdock:followup-task`. Otherwise it is a closed
-  `{reason, scope, retry}`; branch on `retry` per the spawn Skill. A `completed`
-  turn asking a question is still `blocking: null`: answer with a follow-up,
-  never infer status from message text.
+- Pass each consumed `delivery_token` once later; completion stays unread for
+  crash-safe redelivery.
+- Completion has priority: complete stored `completion_message`, truncation,
+  token, and optional closed `metrics`. `reported_cost_usd` is Harness-reported,
+  not billed; do not follow up only to recover a metric.
+- Progress returns at most one sanitized update per observable job. Hook
+  activity stays private; no model text, thinking, inputs, paths, or sessions.
+- Timeout means no eligible completion was visible: untargeted across the root,
+  targeted for fixed turns. Do not call `list_agents` or
+  `read_agent_messages` immediately afterward merely to recheck completion.
+  Do not narrate unchanged timeouts or treat timeout as failure, cancellation,
+  or health. If unresolved, call `wait_agent` again directly.
+- A targeted barrier returns ordered `targets`: unread completion fields/token,
+  `already_consumed`, or status-only `unresolved_targets`.
+- `blocking` is `null` for `completed` and safe-flush parent-requested
+  `interrupted`; otherwise it is closed `{reason, scope, retry}`. A completed
+  question remains `blocking: null`: answer with a follow-up.

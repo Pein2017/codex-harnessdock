@@ -31,6 +31,7 @@ import { fileURLToPath } from "node:url";
 import { after, describe, it } from "node:test";
 
 import { createAgentStore, resolveAgentRegistryDirectory } from "../../runtime/agent-store.mjs";
+import { createAgentRuntime } from "../../runtime/agent-runtime.mjs";
 import { readUnreadCompletionEvents, resolveCompletionInboxFile } from "../../runtime/completion-inbox.mjs";
 import { FUTURE_WRITE_GENERATION, PUBLIC_WRITE_GENERATION } from "../../runtime/durable-state-v3.mjs";
 import {
@@ -41,15 +42,22 @@ import {
 import {
   acquireInstanceLease,
   acquireNativeSessionLease,
+  inspectLeaseInventory,
   releaseLeasesOnSettlement,
 } from "../../runtime/instance-admission-lease.mjs";
 import { acquireWorkspaceWriterLease } from "../../runtime/workspace-writer-lease.mjs";
 import {
+  beginPreSubmissionRollback,
+  createLaunchClaim,
   launchClaimRollbackEligibility,
   readLaunchClaim,
   resolveLaunchClaimDirectory,
 } from "../../runtime/launch-claim.mjs";
 import { launchVersionThreeTurn } from "../../runtime/v3-worker-launch.mjs";
+import {
+  PRE_SUBMISSION_RECONCILIATION_AGE_MS,
+  rollbackPreparedVersionThreeTurn,
+} from "../../runtime/v3-worker-entry.mjs";
 import { buildLeaseReleaseTargets, runVersionThreeWorkerLoop } from "../../runtime/v3-worker-loop.mjs";
 import {
   readVersionThreeJobRecord,
@@ -230,6 +238,16 @@ function setup(options = {}) {
 
   const preparedTurn = fixture.driver.prepareTurn({ route, taskInput: PROMPT });
   const identity = { ownerRootId, agentId: agent.agentId, jobId };
+  const assignedMessageIds = reservation.assignedMessages.map((message) => message.messageId);
+  createLaunchClaim({
+    ...identity,
+    attemptId,
+    route,
+    leaseBindings,
+    assignedMessageIds,
+    preparedInput: PROMPT,
+    turnOptions: null,
+  });
 
   return {
     ownerRootId,
@@ -249,7 +267,7 @@ function setup(options = {}) {
       driver: fixture.driver,
       preparedTurn,
       preparedInput: PROMPT,
-      assignedMessageIds: reservation.assignedMessages.map((message) => message.messageId),
+      assignedMessageIds,
       assignedInputs: [],
       leaseBindings,
       // Stated explicitly: this fixture's Driver owns no turn options.
@@ -385,6 +403,200 @@ function rawTerminalResultFor(record, { status = "completed", nativeTurnRef = re
 }
 
 describe("version-three worker loss: before native submission (scenario 1)", () => {
+  it("finishes an already-owned rollback immediately from the public owning wait path", async () => {
+    sequence += 1;
+    const payload = {
+      ownerRootId: `root-v3-owned-cleanup-${sequence}`,
+      jobId: `job-v3-owned-cleanup-${sequence}`,
+      attemptId: `attempt-v3-owned-cleanup-${sequence}`,
+      instanceKey: `tenant-owned-cleanup-${sequence}`,
+      taskName: `v3_owned_cleanup_${sequence}`,
+      promptText: PROMPT,
+      workspaceRoot,
+      capacityClass: "fake-service-owned-cleanup",
+    };
+    const { agentId } = await killAtCheckpoint("intent_after_acquire", payload);
+    const identity = { ownerRootId: payload.ownerRootId, agentId, jobId: payload.jobId };
+    const claim = readLaunchClaim(identity);
+    beginPreSubmissionRollback({ ...identity, token: launchClaimRollbackEligibility(claim).token });
+
+    const runtime = createAgentRuntime({
+      cwd: workspaceRoot,
+      env: {
+        ...process.env,
+        CODEX_THREAD_ID: payload.ownerRootId,
+        CODEX_HARNESSDOCK_RUNTIME_HOME: process.env.CODEX_HARNESSDOCK_RUNTIME_HOME,
+      },
+    });
+    assert.equal((await runtime.waitAgent({ timeout_ms: 0 })).timedOut, true);
+    assert.equal(readLaunchClaim(identity).submissionState, "rollback_complete");
+  });
+
+  it("cleans a real SIGKILL preparation from the next public owning wait without replay", async () => {
+    sequence += 1;
+    const payload = {
+      ownerRootId: `root-v3-public-cleanup-${sequence}`,
+      jobId: `job-v3-public-cleanup-${sequence}`,
+      attemptId: `attempt-v3-public-cleanup-${sequence}`,
+      instanceKey: `tenant-public-cleanup-${sequence}`,
+      taskName: `v3_public_cleanup_${sequence}`,
+      promptText: PROMPT,
+      workspaceRoot,
+      capacityClass: "fake-service-public-cleanup",
+    };
+    const { agentId, signal } = await killAtCheckpoint("intent_after_acquire", payload);
+    assert.equal(signal, "SIGKILL");
+    await new Promise((resolve) => setTimeout(resolve, PRE_SUBMISSION_RECONCILIATION_AGE_MS + 100));
+
+    const identity = {
+      ownerRootId: payload.ownerRootId,
+      agentId,
+      jobId: payload.jobId,
+    };
+    assert.equal(readVersionThreeJobRecord(identity), null);
+    const runtime = createAgentRuntime({
+      cwd: workspaceRoot,
+      env: {
+        ...process.env,
+        CODEX_THREAD_ID: payload.ownerRootId,
+        CODEX_HARNESSDOCK_RUNTIME_HOME: process.env.CODEX_HARNESSDOCK_RUNTIME_HOME,
+      },
+    });
+    let driverCalls = 0;
+    runtime.jobs.driverForHarness = () => {
+      driverCalls += 1;
+      throw new Error("pre-submission cleanup must not resolve or replay through a Driver");
+    };
+    assert.equal((await runtime.waitAgent({ timeout_ms: 0 })).timedOut, true);
+    assert.equal(driverCalls, 0);
+    assert.equal(readLaunchClaim(identity).submissionState, "rollback_complete");
+    assert.equal(
+      inspectLeaseInventory().entries.flatMap((entry) => entry.holders)
+        .some((holder) => holder.ownerRootId === payload.ownerRootId && holder.jobId === payload.jobId),
+      false,
+    );
+    assert.equal(readVersionThreeJobRecord(identity), null);
+  });
+
+  it("restores a noninitial follow-up to queued state and retains the Agent", () => {
+    sequence += 1;
+    const ownerRootId = `root-v3-followup-${sequence}`;
+    const jobId = `job-v3-followup-${sequence}`;
+    const attemptId = `attempt-v3-followup-${sequence}`;
+    const route = versionThreeRoute({ instanceKey: `tenant-followup-${sequence}` });
+    const store = createAgentStore({
+      cwd: workspaceRoot,
+      ownerRootId,
+      writeGeneration: FUTURE_WRITE_GENERATION,
+    });
+    const agent = store.createAgent({ task_name: `v3_followup_${sequence}`, route });
+    store.updateAgent(agent.agentId, (current) => ({
+      ...current,
+      status: "completed",
+      continuation: { mode: "safe_fresh", evidence: { reason: "test_terminal" } },
+    }));
+    const queued = store.enqueueMessage(agent.agentId, "continue exactly", { kind: "followup_task" });
+    const reservation = store.reserveActivation(agent.agentId, jobId);
+    assert.equal(reservation.reserved, true);
+    const lease = acquireInstanceLease({
+      ownerRootId,
+      agentId: agent.agentId,
+      jobId,
+      route,
+      harnessId: route.harnessId,
+      instanceKey: route.instanceKey,
+      capacityClass: "fake-service-followup",
+      capacityLimit: 1,
+    });
+    createLaunchClaim({
+      ownerRootId,
+      agentId: agent.agentId,
+      jobId,
+      attemptId,
+      route,
+      leaseBindings: [lease],
+      assignedMessageIds: [queued.message.messageId],
+      preparedInput: "continue exactly",
+      turnOptions: null,
+    });
+
+    rollbackPreparedVersionThreeTurn({ cwd: workspaceRoot, ownerRootId, agentId: agent.agentId, jobId, attemptId });
+    const retained = store.readAgent(agent.agentId);
+    assert.equal(retained.status, "completed");
+    assert.equal(retained.activeJobId, null);
+    assert.equal(store.listMessages(agent.agentId)[0].state, "queued");
+    assert.equal(store.listMessages(agent.agentId)[0].text, "continue exactly");
+  });
+
+  for (const mode of ["intent_before_acquire", "intent_after_acquire", "intent_after_binding"]) {
+    it(`recovers exact ${mode} state after a real parent SIGKILL without native replay`, async () => {
+      sequence += 1;
+      const payload = {
+        ownerRootId: `root-v3-intent-${sequence}`,
+        jobId: `job-v3-intent-${sequence}`,
+        attemptId: `attempt-v3-intent-${sequence}`,
+        instanceKey: `tenant-intent-${sequence}`,
+        taskName: `v3_intent_${sequence}`,
+        promptText: PROMPT,
+        workspaceRoot,
+        capacityClass: "fake-service-intent",
+      };
+      const { agentId, signal } = await killAtCheckpoint(mode, payload);
+      assert.equal(signal, "SIGKILL");
+      const identity = { ownerRootId: payload.ownerRootId, agentId, jobId: payload.jobId };
+      const claim = readLaunchClaim(identity);
+      assert.equal(claim.leaseState, mode === "intent_after_binding" ? "acquired" : "intended");
+      assert.equal(claim.submissionState, "not_started");
+      assert.equal(readVersionThreeJobRecord(identity), null);
+
+      const recovered = rollbackPreparedVersionThreeTurn({
+        cwd: workspaceRoot,
+        ...identity,
+        attemptId: payload.attemptId,
+      });
+      assert.equal(recovered.submissionState, "rollback_complete");
+      const store = createAgentStore({
+        cwd: workspaceRoot,
+        ownerRootId: payload.ownerRootId,
+        writeGeneration: FUTURE_WRITE_GENERATION,
+      });
+      assert.equal(store.readAgent(agentId), null, "the initial empty reservation is removed by existing proof");
+      assert.equal(
+        inspectLeaseInventory().entries.flatMap((entry) => entry.holders)
+          .some((holder) => holder.ownerRootId === payload.ownerRootId && holder.jobId === payload.jobId),
+        false,
+      );
+    });
+  }
+
+  it("releases the exact intended native-session holder after a real SIGKILL in the acquire-to-bind gap", async () => {
+    sequence += 1;
+    const payload = {
+      ownerRootId: `root-v3-session-intent-${sequence}`,
+      jobId: `job-v3-session-intent-${sequence}`,
+      attemptId: `attempt-v3-session-intent-${sequence}`,
+      instanceKey: `tenant-session-intent-${sequence}`,
+      nativeSessionId: `native-session-intent-${sequence}`,
+      taskName: `v3_session_intent_${sequence}`,
+      promptText: PROMPT,
+      workspaceRoot,
+      capacityClass: "unused-for-native-session",
+    };
+    const { agentId } = await killAtCheckpoint("intent_after_acquire", payload);
+    const identity = { ownerRootId: payload.ownerRootId, agentId, jobId: payload.jobId };
+    const claim = readLaunchClaim(identity);
+    assert.equal(claim.leaseState, "intended");
+    assert.equal(claim.leaseIntent[0].kind, "native_session");
+    assert.equal(claim.leaseIntent[0].keyFields.nativeSessionId, payload.nativeSessionId);
+
+    rollbackPreparedVersionThreeTurn({ cwd: workspaceRoot, ...identity, attemptId: payload.attemptId });
+    assert.equal(
+      inspectLeaseInventory().entries.flatMap((entry) => entry.holders)
+        .some((holder) => holder.ownerRootId === payload.ownerRootId && holder.jobId === payload.jobId),
+      false,
+    );
+  });
+
   it("proves the pre-submission fence, not absence, before a fresh attempt may retry", async () => {
     sequence += 1;
     const payload = {

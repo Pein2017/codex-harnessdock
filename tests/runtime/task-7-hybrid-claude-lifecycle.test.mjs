@@ -239,7 +239,7 @@ describe("Task 7 hybrid — the pinned Claude instance is re-proven at use time"
     ]);
     store.bindSession(agent.agentId, sessionId, { jobId: agent.activeJobId });
 
-    const history = runtime.readAgentMessages({ target: receipt.agent_name, limit: 5 });
+    const history = await runtime.readAgentMessages({ target: receipt.agent_name, limit: 5 });
     assert.equal(history.agent_name, receipt.agent_name);
     assert.equal(history.messages.length, 2);
     assert.equal(history.messages[0].text, "the second outer answer");
@@ -263,8 +263,8 @@ describe("Task 7 hybrid — the pinned Claude instance is re-proven at use time"
     fs.mkdirSync(path.join(moved, "projects"), { recursive: true });
     runtime.jobs.env.CLAUDE_CONFIG_DIR = moved;
 
-    assert.throws(
-      () => runtime.readAgentMessages({ target: receipt.agent_name }),
+    await assert.rejects(
+      runtime.readAgentMessages({ target: receipt.agent_name }),
       (error) => {
         assert.match(error.message, /instance/i);
         // No absolute operator path in the refusal.
@@ -278,9 +278,9 @@ describe("Task 7 hybrid — the pinned Claude instance is re-proven at use time"
   it("refuses history for a version-three Claude Agent with no proven session", async () => {
     const { runtime } = setup();
     const receipt = await spawnClaude(runtime);
-    assert.throws(
-      () => runtime.readAgentMessages({ target: receipt.agent_name }),
-      /no proven native Claude session history/
+    await assert.rejects(
+      runtime.readAgentMessages({ target: receipt.agent_name }),
+      /no proven native session history/
     );
   });
 });

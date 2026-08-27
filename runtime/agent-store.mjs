@@ -48,6 +48,7 @@ import {
   assertNativeReferenceLocatorShape,
 } from "./native-reference.mjs";
 import { resolvePluginStateRoot } from "./paths.mjs";
+import { readLaunchClaim } from "./launch-claim.mjs";
 import { getProcessIdentity, validateProcessIdentity } from "./process-control.mjs";
 import { classifyVersionThreeContinuation } from "./turn-settlement.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
@@ -480,7 +481,26 @@ function validateVersionThreeAgent(agent) {
     }
   }
   if (agent.nativeSessionRef != null) {
-    const nativeSession = canonicalNativeSessionRef(agent.nativeSessionRef);
+    const envelope = Object.hasOwn(agent.nativeSessionRef, "locator");
+    let nativeSession;
+    if (envelope) {
+      nativeSession = assertNativeReferenceEnvelopeShape(
+        agent.nativeSessionRef,
+        `${label} native session reference`,
+      );
+      assertNativeReferenceLocatorShape(
+        nativeSession.locator,
+        `${label} native session reference`,
+      );
+      if (nativeSession.driverVersion !== route.driverVersion) {
+        throw new Error(
+          `${label} native session belongs to Driver ${nativeSession.driverVersion}, ` +
+          `not ${route.driverVersion}.`
+        );
+      }
+    } else {
+      nativeSession = canonicalNativeSessionRef(agent.nativeSessionRef);
+    }
     if (nativeSession.harnessId !== route.harnessId) {
       throw new Error(
         `${label} native session belongs to Harness ${nativeSession.harnessId}, not ${route.harnessId}.`
@@ -786,8 +806,9 @@ function assertVersionThreeLifecycleOwned(agent, generation, operation) {
  * which is a side-effect fact about the execution world; a Driver that cannot
  * resume its transcript has said nothing about side effects. The exact-resume
  * pointer persists as the Driver's own bounded envelope -- it is never
- * flattened into a legacy `nativeSessionId`, and `agent.nativeSessionRef`
- * stays untouched because version-three session binding remains unowned.
+ * flattened into a legacy `nativeSessionId`. Terminal projection also binds
+ * that same validated envelope onto `agent.nativeSessionRef`, which is the
+ * exact pointer the next version-three worker consumes.
  */
 function versionThreeContinuation(job, agent) {
   const projection = classifyVersionThreeContinuation(job?.normalizedTerminalResult, agent.route);
@@ -1391,7 +1412,11 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir, harness, w
   function rollbackReservation(target, options = {}) {
     const result = mutateRegistry((registry) => {
       const agent = internalAgent(registry, target);
-      assertVersionThreeLifecycleUnavailable(agent, "activation rollback");
+      if (agent.version === AGENT_RECORD_VERSION_V3) {
+        assertVersionThreeLifecycleOwned(agent, generation, "activation rollback");
+      } else {
+        assertVersionThreeLifecycleUnavailable(agent, "activation rollback");
+      }
       if (
         agent.status !== "pending_init" ||
         agent.activeJobId ||
@@ -1478,6 +1503,78 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir, harness, w
       reason: result.reason,
       agent: publicAgent(result.agent),
       assignedMessages: clone(result.assignedMessages),
+    };
+  }
+
+  /**
+   * Restore one version-three activation only while its launch claim owns the
+   * pre-submission rollback fence. Every unacknowledged message for the job,
+   * including steering that raced the handoff, returns to the queue atomically.
+   */
+  function rollbackVersionThreeActivation(target, options = {}) {
+    const id = normalizeJobId(options.jobId);
+    const durableClaim = readLaunchClaim({ ownerRootId: root, agentId: assertText(target, "Agent target"), jobId: id });
+    if (options.rollbackClaim == null) {
+      if (durableClaim != null) {
+        throw new Error("Unclaimed version-three activation rollback found a durable launch claim.");
+      }
+    } else if (
+      durableClaim == null ||
+      durableClaim.submissionState !== "rollback_in_progress" ||
+      JSON.stringify(durableClaim) !== JSON.stringify(options.rollbackClaim)
+    ) {
+      throw new Error("Version-three activation rollback requires the exact durable rollback-in-progress claim.");
+    }
+    const result = mutateRegistry((registry) => {
+      const current = internalAgent(registry, target);
+      assertVersionThreeLifecycleOwned(current, generation, "pre-submission activation rollback");
+      if (current.activeJobId == null) {
+        return { registry, write: false, restored: true, initial: false, agent: current };
+      }
+      if (current.activeJobId !== id) {
+        return { registry, write: false, restored: false, reason: "agent_advanced", initial: false, agent: current };
+      }
+      const evidence = current.continuation?.evidence ?? {};
+      if (evidence.activationJobId !== id || evidence.activationPreviousContinuation == null) {
+        throw new Error(`Agent ${current.path} has no activation snapshot for job ${id}.`);
+      }
+      const messages = current.mailbox.messages.map((message) => {
+        if (message.assignedJobId !== id) return message;
+        if (message.state === "acknowledged") {
+          throw new Error("Pre-submission rollback found an acknowledged mailbox message.");
+        }
+        const { receipt: _receipt, undeliveredEvidence: _undelivered, ...rest } = message;
+        return {
+          ...rest,
+          state: "queued",
+          assignedJobId: null,
+          assignedAt: null,
+          deliveryIntent: null,
+          dispatchedAt: null,
+          acknowledgedAt: null,
+        };
+      });
+      const agent = {
+        ...current,
+        activeJobId: null,
+        status: evidence.activationPreviousStatus,
+        continuation: clone(evidence.activationPreviousContinuation),
+        mailbox: { ...current.mailbox, messages },
+        ...(current.liveTurnOwnership?.jobId === id ? { liveTurnOwnership: null } : {}),
+        updatedAt: nowIso(),
+      };
+      return {
+        registry: { ...registry, agents: { ...registry.agents, [agent.agentId]: agent } },
+        restored: true,
+        initial: evidence.activationKind === "initial",
+        agent,
+      };
+    });
+    return {
+      restored: Boolean(result.restored),
+      reason: result.reason ?? null,
+      initial: Boolean(result.initial),
+      agent: readAgent(target),
     };
   }
 
@@ -1926,11 +2023,17 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir, harness, w
               })
             : jobContinuation(job, internalNativeSessionRef(current)?.nativeSessionId ?? null),
         );
+      const sessionBoundCurrent = versionThreeTerminal && nextContinuation.mode === "exact_session"
+        ? applyAgentSessionRef(current, clone(nextContinuation.evidence.nativeSessionRef))
+        : current;
       const blockedByIdentity = ["session_drift", "session_binding_conflict"]
         .includes(nextContinuation.evidence.reason);
       const agent = {
         ...normalizedTerminalRecord(
-          { ...current, activeJobId: current.activeJobId === jobId ? null : current.activeJobId },
+          {
+            ...sessionBoundCurrent,
+            activeJobId: current.activeJobId === jobId ? null : current.activeJobId,
+          },
           job,
         ),
         activeJobId: current.activeJobId === jobId ? null : current.activeJobId,
@@ -2303,6 +2406,7 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir, harness, w
     listAllAgents,
     updateAgent,
     reserveActivation,
+    rollbackVersionThreeActivation,
     recoverCredentialBlockedActivation,
     finalizeFromJob,
     enqueueMessage,

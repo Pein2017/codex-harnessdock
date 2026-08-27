@@ -26,6 +26,7 @@
  *     durable record was written with, never under a fresh alias of it.
  */
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -40,6 +41,13 @@ import { readJobFile, resolveJobFile } from "../../runtime/job-store.mjs";
 import { resolveVersionThreeJobDirectory } from "../../runtime/v3-job-store.mjs";
 import { claudeCodeInstanceKey } from "../../runtime/claude-code-driver.mjs";
 import { canonicalAgentWorkspaceRoot } from "../../runtime/agent-store.mjs";
+import { inspectLeaseInventory } from "../../runtime/instance-admission-lease.mjs";
+import {
+  markNativeSubmissionStarted,
+  readLaunchClaim,
+  recordLaunchAcceptanceRejected,
+} from "../../runtime/launch-claim.mjs";
+import { rollbackPreparedVersionThreeTurn } from "../../runtime/v3-worker-entry.mjs";
 import {
   HARNESS_EXECUTION_LIFECYCLES,
   harnessExecutionLifecycle,
@@ -440,7 +448,7 @@ describe("Task 7 — an Explorer Agent answers unsupported operations with a rec
     const agent = await explorerAgent(runtime);
     const before = server.requests.length;
 
-    const receipt = runtime.readAgentMessages({ target: agent.path });
+    const receipt = await runtime.readAgentMessages({ target: agent.path });
 
     assert.deepEqual(receipt, {
       agent_name: agent.path,
@@ -734,6 +742,150 @@ describe("Task 7 — each Harness states exactly one execution lifecycle", () =>
       ? fs.readdirSync(jobsDirectory).filter((entry) => entry.endsWith(".json"))
       : [];
     assert.deepEqual(jobFiles, [], "an OpenCode Agent must write no version-one job record");
+  });
+
+  it("rolls back a spawned worker that exits before submission, including raced steering", async () => {
+    const { url } = await startReadyFake();
+    const { runtime } = setup(url);
+    let jobId = null;
+    runtime.jobs.launchDependencies.spawn = (_command, args) => {
+      jobId = args[args.indexOf("--job-id") + 1];
+      const child = new EventEmitter();
+      child.pid = 424242;
+      child.exitCode = null;
+      child.signalCode = null;
+      child.kill = () => true;
+      child.unref = () => {};
+      process.nextTick(() => {
+        child.emit("spawn");
+        const card = runtime.listAgents().agents.find((entry) => entry.agent_name === "/root/rollback_probe");
+        runtime.sendMessage({ target: card.agent_name, message: "raced steering" });
+        child.exitCode = 1;
+        child.emit("exit", 1, null);
+      });
+      return child;
+    };
+
+    await assert.rejects(
+      runtime.spawnAgent(explorerRequest({ task_name: "rollback_probe" })),
+      /rolled back before native acceptance/,
+    );
+
+    const store = runtime.versionThreeStore();
+    const agent = store.resolveTarget("/root/rollback_probe");
+    assert.equal(agent.activeJobId, null);
+    assert.equal(agent.status, "pending_init");
+    assert.equal(agent.continuation.mode, "safe_fresh");
+    assert.deepEqual(store.listMessages(agent.agentId).map((message) => [message.text, message.state]), [
+      ["Name the module that owns the static Driver table.", "queued"],
+      ["raced steering", "queued"],
+    ]);
+    const claim = readLaunchClaim({ ownerRootId: runtime.ownerRootId, agentId: agent.agentId, jobId });
+    assert.equal(claim.submissionState, "rollback_complete");
+    assert.equal(claim.acceptance, "not_submitted");
+    assert.equal(rollbackPreparedVersionThreeTurn({
+      cwd: runtime.cwd,
+      ownerRootId: runtime.ownerRootId,
+      agentId: agent.agentId,
+      jobId,
+      attemptId: claim.attemptId,
+    }).submissionState, "rollback_complete");
+    const heldByAgent = inspectLeaseInventory().entries
+      .flatMap((entry) => entry.holders)
+      .filter((holder) => holder.agentId === agent.agentId);
+    assert.deepEqual(heldByAgent, []);
+    assert.equal(readJobFile(runtime.cwd, jobId), null);
+  });
+
+  it("leaves no lease or activation when detached OpenCode preflight fails", async () => {
+    const { server, url } = await startReadyFake();
+    const { runtime } = setup(url);
+    const accepted = await runtime.acceptStatedRoute(
+      { harness: OPENCODE_HARNESS_ID, model: OPENCODE_EXPLORER_MODEL, topology: "leaf", write: false },
+      "spawn_agent",
+    );
+    server.state.health = { status: 503, body: { healthy: false } };
+    await assert.rejects(
+      runtime.spawnVersionThreeAgent({
+        accepted,
+        taskName: "preflight_rollback",
+        description: null,
+        message: "must never reach native submission",
+        jobId: "hd-agent-preflight-rollback",
+        turnOptions: null,
+      }),
+      /submission fence|rolled back|preflight/i,
+    );
+    assert.equal(runtime.versionThreeStore().readAgent("/root/preflight_rollback"), null);
+    const holders = inspectLeaseInventory().entries.flatMap((entry) => entry.holders);
+    assert.equal(holders.some((holder) => holder.jobId === "hd-agent-preflight-rollback"), false);
+    assert.equal(readJobFile(runtime.cwd, "hd-agent-preflight-rollback"), null);
+  });
+
+  it("treats a barrier-controlled acceptance rejection as rollback, never public success", async () => {
+    const { url } = await startReadyFake();
+    const { runtime } = setup(url);
+    let killed = false;
+    runtime.jobs.launchDependencies.versionThreeHandoffWaitMs = 1;
+    runtime.jobs.launchDependencies.spawn = () => {
+      const child = new EventEmitter();
+      child.pid = 424243;
+      child.exitCode = null;
+      child.signalCode = null;
+      child.kill = () => { killed = true; return true; };
+      child.unref = () => {};
+      process.nextTick(() => child.emit("spawn"));
+      return child;
+    };
+    runtime.jobs.launchDependencies.afterVersionThreeHandoffWait = ({ identity }) => {
+      const claim = readLaunchClaim(identity);
+      markNativeSubmissionStarted({ ...identity, attemptId: claim.attemptId });
+      recordLaunchAcceptanceRejected({
+        ...identity,
+        attemptId: claim.attemptId,
+        sanitizedDetail: "barrier_controlled_pre_transport_rejection",
+      });
+    };
+
+    await assert.rejects(
+      runtime.spawnAgent(explorerRequest({ task_name: "rejected_handoff" })),
+      /rolled back before native acceptance/,
+    );
+    assert.equal(killed, true);
+    assert.equal(runtime.versionThreeStore().readAgent("/root/rejected_handoff"), null);
+  });
+
+  it("converts a timeout-vs-submission winner to durable unknown and never kills the continuing turn", async () => {
+    const { url } = await startReadyFake();
+    const { runtime } = setup(url);
+    let killed = false;
+    runtime.jobs.launchDependencies.versionThreeHandoffWaitMs = 1;
+    runtime.jobs.launchDependencies.spawn = () => {
+      const child = new EventEmitter();
+      child.pid = 424244;
+      child.exitCode = null;
+      child.signalCode = null;
+      child.kill = () => { killed = true; return true; };
+      child.unref = () => {};
+      process.nextTick(() => child.emit("spawn"));
+      return child;
+    };
+    runtime.jobs.launchDependencies.afterVersionThreeHandoffWait = ({ identity }) => {
+      const claim = readLaunchClaim(identity);
+      markNativeSubmissionStarted({ ...identity, attemptId: claim.attemptId });
+    };
+
+    const receipt = await runtime.spawnAgent(explorerRequest({ task_name: "submission_wins_handoff" }));
+    assert.equal(receipt.status, "working");
+    assert.equal(killed, false);
+    const agent = runtime.versionThreeStore().resolveTarget("/root/submission_wins_handoff");
+    const claim = readLaunchClaim({
+      ownerRootId: runtime.ownerRootId,
+      agentId: agent.agentId,
+      jobId: agent.activeJobId,
+    });
+    assert.equal(claim.submissionState, "started");
+    assert.equal(claim.acceptance, "acceptance_unknown");
   });
 
   it("starts two public Explorer Agents concurrently without an instance capacity ceiling", async () => {

@@ -41,8 +41,13 @@ import {
   LOCK_ACQUIRE_TIMEOUT_MS,
   MAX_ASSIGNED_MESSAGE_IDS,
   SUBMISSION_STATES,
+  bindLaunchClaimLease,
+  createLaunchIntent,
   createLaunchClaim,
+  beginPreSubmissionRollback,
+  completePreSubmissionRollback,
   launchClaimRollbackEligibility,
+  listLaunchClaimsForOwnerRoot,
   markNativeSubmissionStarted,
   readLaunchClaim,
   recordLaunchAcceptanceProven,
@@ -50,7 +55,13 @@ import {
   recordLaunchAcceptanceUnknown,
   resolveLaunchClaimDirectory,
 } from "../../runtime/launch-claim.mjs";
-import { acquireInstanceLease, acquireNativeSessionLease, acquiredLeaseEvidence } from "../../runtime/instance-admission-lease.mjs";
+import {
+  acquireInstanceLease,
+  acquireIntendedInstanceLease,
+  acquireNativeSessionLease,
+  acquiredLeaseEvidence,
+  inspectLeaseInventory,
+} from "../../runtime/instance-admission-lease.mjs";
 import { acquireWorkspaceWriterLease } from "../../runtime/workspace-writer-lease.mjs";
 import { validateLiveHarnessTurn } from "../../runtime/harness-contract.mjs";
 import { getProcessIdentity } from "../../runtime/process-control.mjs";
@@ -59,6 +70,9 @@ import { V3_DRIVER_VERSION, V3_HARNESS_ID, V3_INSTANCE_KEY, versionThreeRoute } 
 
 const contentionFixture = fileURLToPath(
   new URL("./fixtures/launch-claim-contender.mjs", import.meta.url)
+);
+const intentRaceFixture = fileURLToPath(
+  new URL("./fixtures/launch-intent-race.mjs", import.meta.url)
 );
 
 const priorHome = process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
@@ -75,6 +89,34 @@ function setup() {
   roots.push(root);
   process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = path.join(root, "state-home");
   return { root };
+}
+
+function spawnIntentRace(mode, payload) {
+  const child = spawn(process.execPath, [intentRaceFixture, mode, JSON.stringify(payload)], {
+    env: process.env,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  child.stdout.on("data", (chunk) => { stdout += chunk; });
+  child.stderr.on("data", (chunk) => { stderr += chunk; });
+  const exit = new Promise((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", (code) => {
+      if (code === 0) resolve(stdout);
+      else reject(new Error(stderr || `race child exited ${code}`));
+    });
+  });
+  return { child, exit };
+}
+
+async function waitUntil(predicate, timeoutMs = 4_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.ok(predicate(), "timed out waiting for race barrier");
 }
 
 function binding(overrides = {}) {
@@ -161,11 +203,29 @@ function fakeLiveHarnessTurn({ route = versionThreeRoute(), live = {} } = {}) {
 
 const RECORD_FIELDS = [
   "version", "ownerRootId", "agentId", "jobId", "attemptId",
-  "route", "leaseBindings", "assignedMessageIds", "inputDigest",
+  "route", "leaseState", "leaseIntent", "leaseBindings", "assignedMessageIds", "inputDigest",
   "acceptance", "nativeTurnRef", "nativeSessionRef", "acceptanceEvidenceAt", "sanitizedDetail",
   "submissionState", "submissionStartedAt",
   "createdAt", "updatedAt",
 ];
+
+function materializeLegacyVersionOne(record) {
+  const currentDirectory = resolveLaunchClaimDirectory(record);
+  const legacyDirectory = path.join(
+    path.dirname(path.dirname(currentDirectory)),
+    "v1",
+    path.basename(currentDirectory),
+  );
+  const legacy = { ...record, version: 1 };
+  delete legacy.leaseState;
+  delete legacy.leaseIntent;
+  fs.rmSync(currentDirectory, { recursive: true, force: true });
+  fs.mkdirSync(legacyDirectory, { recursive: true, mode: 0o700 });
+  const fileName = `${createHash("sha256").update(record.attemptId).digest("hex")}.json`;
+  const filePath = path.join(legacyDirectory, fileName);
+  fs.writeFileSync(filePath, `${JSON.stringify(legacy, null, 2)}\n`, { mode: 0o600 });
+  return { legacy, filePath };
+}
 
 describe("launch claim: closed identity and durable binding", () => {
   it("creates a launch claim as not_submitted/not_started with no native turn/session reference", () => {
@@ -194,10 +254,140 @@ describe("launch claim: closed identity and durable binding", () => {
   });
 
   it("exposes exactly the closed acceptance and submission-state vocabularies", () => {
+    assert.equal(LAUNCH_CLAIM_SCHEMA_VERSION, 2);
     assert.deepEqual(LAUNCH_ACCEPTANCE_VALUES, [
       "not_submitted", "acceptance_proven", "acceptance_rejected", "acceptance_unknown",
     ]);
-    assert.deepEqual(SUBMISSION_STATES, ["not_started", "started"]);
+    assert.deepEqual(SUBMISSION_STATES, [
+      "not_started", "started", "rollback_in_progress", "rollback_complete",
+    ]);
+  });
+
+  it("projects an immutable proven/started v1 record into v2 without changing legacy evidence", () => {
+    setup();
+    createLaunchClaim(claimInput());
+    markNativeSubmissionStarted({ ...binding(), attemptId: "attempt-1" });
+    const proven = recordLaunchAcceptanceProven({
+      ...binding(), attemptId: "attempt-1", liveHarnessTurn: fakeLiveHarnessTurn(),
+    });
+    const { legacy, filePath } = materializeLegacyVersionOne(proven);
+
+    const listed = listLaunchClaimsForOwnerRoot({ ownerRootId: "root-1" });
+    assert.deepEqual(listed, [{
+      ...legacy,
+      version: 2,
+      leaseState: "acquired",
+      leaseIntent: legacy.leaseBindings,
+    }]);
+    assert.equal(fs.existsSync(resolveLaunchClaimDirectory(binding())), false);
+
+    const migrated = readLaunchClaim(binding());
+    assert.equal(migrated.version, 2);
+    assert.equal(migrated.leaseState, "acquired");
+    assert.deepEqual(migrated.leaseIntent, migrated.leaseBindings);
+    for (const field of Object.keys(legacy)) {
+      if (field !== "version") assert.deepEqual(migrated[field], legacy[field]);
+    }
+    assert.deepEqual(JSON.parse(fs.readFileSync(filePath, "utf8")), legacy);
+    assert.ok(fs.existsSync(path.join(resolveLaunchClaimDirectory(binding()), path.basename(filePath))));
+  });
+
+  it("projects a rollback-eligible v1 record and keeps its exact timestamps", () => {
+    setup();
+    const prepared = createLaunchClaim(claimInput());
+    const { legacy } = materializeLegacyVersionOne(prepared);
+    const migrated = readLaunchClaim(binding());
+    assert.equal(migrated.createdAt, legacy.createdAt);
+    assert.equal(migrated.updatedAt, legacy.updatedAt);
+    assert.equal(launchClaimRollbackEligibility(migrated).eligible, true);
+  });
+
+  it("migrates a colliding v1 identity before an idempotent create", () => {
+    setup();
+    const prepared = createLaunchClaim(claimInput());
+    materializeLegacyVersionOne(prepared);
+    assert.deepEqual(createLaunchClaim(claimInput()), prepared);
+  });
+
+  it("fails closed when valid v1 and v2 records disagree", () => {
+    setup();
+    const prepared = createLaunchClaim(claimInput());
+    const { filePath } = materializeLegacyVersionOne(prepared);
+    const currentDirectory = resolveLaunchClaimDirectory(binding());
+    fs.mkdirSync(currentDirectory, { recursive: true, mode: 0o700 });
+    fs.writeFileSync(
+      path.join(currentDirectory, path.basename(filePath)),
+      `${JSON.stringify({ ...prepared, sanitizedDetail: "conflicting_current_record" }, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+    assert.throws(
+      () => listLaunchClaimsForOwnerRoot({ ownerRootId: "root-1" }),
+      /Legacy and current launch claims disagree/,
+    );
+    assert.throws(() => readLaunchClaim(binding()), /Legacy and current launch claims disagree/);
+  });
+
+  it("round-trips a native v2 record without rewriting it", () => {
+    setup();
+    const created = createLaunchClaim(claimInput());
+    assert.equal(created.version, 2);
+    assert.deepEqual(readLaunchClaim(binding()), created);
+  });
+
+  it("persists exact lease intent before acquisition and refuses submission until the matching holder is bound", () => {
+    setup();
+    const intent = createLaunchIntent({
+      ...binding(),
+      attemptId: "attempt-1",
+      route: versionThreeRoute(),
+      expectedLease: { kind: "instance", capacityClass: "default", capacityLimit: 4 },
+      assignedMessageIds: ["message-1"],
+      preparedInput: "hello world",
+      turnOptions: null,
+    });
+    assert.equal(intent.leaseState, "intended");
+    assert.equal(intent.leaseBindings.length, 0);
+    assert.equal(intent.leaseIntent[0].capacity.class, "default");
+    assert.throws(
+      () => markNativeSubmissionStarted({ ...binding(), attemptId: "attempt-1" }),
+      /acquired lease proof/,
+    );
+
+    const acquired = bindLaunchClaimLease({
+      ...binding(),
+      attemptId: "attempt-1",
+      lease: instanceLease(),
+    });
+    assert.equal(acquired.leaseState, "acquired");
+    assert.deepEqual(acquired.leaseBindings, acquired.leaseIntent);
+  });
+
+  it("acquires only while the exact durable intent is still rollback-safe", () => {
+    setup();
+    const route = versionThreeRoute();
+    const expectedLease = { kind: "instance", capacityClass: "default", capacityLimit: 4 };
+    const intent = createLaunchIntent({
+      ...binding(), attemptId: "attempt-1", route, expectedLease,
+      assignedMessageIds: ["message-1"], preparedInput: "hello world", turnOptions: null,
+    });
+    const lease = acquireIntendedInstanceLease({
+      ...binding(), attemptId: "attempt-1", route,
+      harnessId: route.harnessId, instanceKey: route.instanceKey,
+      capacityClass: "default", capacityLimit: 4,
+    });
+    assert.equal(bindLaunchClaimLease({ ...binding(), attemptId: "attempt-1", lease }).leaseState, "acquired");
+
+    const eligible = launchClaimRollbackEligibility(readLaunchClaim(binding()));
+    beginPreSubmissionRollback({ ...binding(), token: eligible.token });
+    assert.throws(
+      () => acquireIntendedInstanceLease({
+        ...binding(), attemptId: "attempt-1", route,
+        harnessId: route.harnessId, instanceKey: route.instanceKey,
+        capacityClass: "default", capacityLimit: 4,
+      }),
+      /launch intent|rollback|not_started/,
+    );
+    assert.equal(intent.leaseState, "intended");
   });
 
   it("is idempotent for a repeated identical create call", () => {
@@ -1037,6 +1227,117 @@ describe("launch claim: tightly bounded lock timeout, not the 30-second conventi
     assert.ok(elapsed >= LOCK_ACQUIRE_TIMEOUT_MS, `expected at least the bounded timeout (${LOCK_ACQUIRE_TIMEOUT_MS}ms), got ${elapsed}ms`);
     assert.ok(elapsed < LOCK_ACQUIRE_TIMEOUT_MS * 3, `expected close to the bounded timeout, got ${elapsed}ms`);
     assert.ok(elapsed < 10_000, `must never approach the old 30s convention, got ${elapsed}ms`);
+  });
+});
+
+describe("launch claim: pre-submission rollback fence", () => {
+  function racePayload(root) {
+    return {
+      ...binding(),
+      attemptId: "attempt-1",
+      harnessId: V3_HARNESS_ID,
+      instanceKey: V3_INSTANCE_KEY,
+      capacityClass: "default",
+      capacityLimit: 4,
+      acquireStartFile: path.join(root, "acquire.start"),
+      rollbackStartFile: path.join(root, "rollback.start"),
+      holderReadyFile: path.join(root, "holder.ready"),
+      releaseHolderFile: path.join(root, "holder.release"),
+    };
+  }
+
+  function createRaceIntent() {
+    return createLaunchIntent({
+      ...binding(),
+      attemptId: "attempt-1",
+      route: versionThreeRoute(),
+      expectedLease: { kind: "instance", capacityClass: "default", capacityLimit: 4 },
+      assignedMessageIds: ["message-1"],
+      preparedInput: "hello",
+      turnOptions: null,
+    });
+  }
+
+  function exactHolderPresent() {
+    return inspectLeaseInventory().entries.flatMap((entry) => entry.holders).some((holder) =>
+      holder.ownerRootId === "root-1" && holder.agentId === "agent-1" && holder.jobId === "job-1"
+    );
+  }
+
+  it("real child race: rollback-before-acquire leaves no late holder", async () => {
+    const { root } = setup();
+    createRaceIntent();
+    const payload = racePayload(root);
+    const acquire = spawnIntentRace("acquire", {
+      ...payload,
+      startFile: payload.acquireStartFile,
+      holderReadyFile: null,
+      releaseHolderFile: null,
+    });
+    const rollback = spawnIntentRace("rollback", { ...payload, startFile: payload.rollbackStartFile });
+    fs.writeFileSync(payload.rollbackStartFile, "go");
+    assert.equal(await rollback.exit, "rolled_back");
+    fs.writeFileSync(payload.acquireStartFile, "go");
+    assert.equal(await acquire.exit, "fenced");
+    assert.equal(readLaunchClaim(binding()).submissionState, "rollback_complete");
+    assert.equal(exactHolderPresent(), false);
+  });
+
+  it("real child race: acquire-before-rollback removes the holder after the lease lock releases", async () => {
+    const { root } = setup();
+    createRaceIntent();
+    const payload = racePayload(root);
+    const acquire = spawnIntentRace("acquire", {
+      ...payload,
+      startFile: payload.acquireStartFile,
+      holderReadyFile: payload.holderReadyFile,
+      releaseHolderFile: payload.releaseHolderFile,
+    });
+    fs.writeFileSync(payload.acquireStartFile, "go");
+    await waitUntil(() => fs.existsSync(payload.holderReadyFile));
+    const rollback = spawnIntentRace("rollback", { ...payload, startFile: payload.rollbackStartFile });
+    fs.writeFileSync(payload.rollbackStartFile, "go");
+    await waitUntil(() => readLaunchClaim(binding()).submissionState === "rollback_in_progress");
+    fs.writeFileSync(payload.releaseHolderFile, "go");
+    assert.equal(await acquire.exit, "acquired");
+    assert.equal(await rollback.exit, "rolled_back");
+    assert.equal(readLaunchClaim(binding()).submissionState, "rollback_complete");
+    assert.equal(exactHolderPresent(), false);
+  });
+
+  it("atomically fences a still-unsubmitted attempt, and a stale submitter loses", () => {
+    setup();
+    const record = createLaunchClaim(claimInput());
+    const eligibility = launchClaimRollbackEligibility(record);
+    const rollback = beginPreSubmissionRollback({ ...binding(), token: eligibility.token });
+    assert.equal(rollback.submissionState, "rollback_in_progress");
+    assert.throws(
+      () => markNativeSubmissionStarted({ ...binding(), attemptId: "attempt-1" }),
+      /rollback/i,
+    );
+    assert.throws(
+      () => beginPreSubmissionRollback({ ...binding(), token: eligibility.token }),
+      /stale|rollback/i,
+    );
+  });
+
+  it("completes the rollback tombstone idempotently and never reopens submission", () => {
+    setup();
+    const record = createLaunchClaim(claimInput());
+    const rollback = beginPreSubmissionRollback({
+      ...binding(), token: launchClaimRollbackEligibility(record).token,
+    });
+    assert.equal(rollback.submissionState, "rollback_in_progress");
+    const completed = completePreSubmissionRollback({ ...binding(), attemptId: "attempt-1" });
+    assert.equal(completed.submissionState, "rollback_complete");
+    assert.deepEqual(
+      completePreSubmissionRollback({ ...binding(), attemptId: "attempt-1" }),
+      completed,
+    );
+    assert.throws(
+      () => markNativeSubmissionStarted({ ...binding(), attemptId: "attempt-1" }),
+      /rollback/i,
+    );
   });
 });
 

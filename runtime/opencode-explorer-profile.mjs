@@ -78,12 +78,10 @@ import {
 // ---------------------------------------------------------------------------
 
 export const OPENCODE_HARNESS_ID = "opencode";
-export const OPENCODE_EXPLORER_PROVIDER_ID = "opencode-go";
-export const OPENCODE_EXPLORER_MODEL_ID = "deepseek-v4-flash";
+export const OPENCODE_EXPLORER_PROVIDER_ID = "openai";
+export const OPENCODE_EXPLORER_MODEL_ID = "gpt-5.6-luna";
 export const OPENCODE_EXPLORER_MODEL = `${OPENCODE_EXPLORER_PROVIDER_ID}/${OPENCODE_EXPLORER_MODEL_ID}`;
 export const OPENCODE_EXPLORER_MODEL_ROUTES = Object.freeze([
-  Object.freeze({ providerId: "opencode-go", modelId: "deepseek-v4-flash", model: "opencode-go/deepseek-v4-flash" }),
-  Object.freeze({ providerId: "opencode-go", modelId: "deepseek-v4-pro", model: "opencode-go/deepseek-v4-pro" }),
   Object.freeze({ providerId: "openai", modelId: "gpt-5.6-luna", model: "openai/gpt-5.6-luna" }),
   Object.freeze({ providerId: "openai", modelId: "gpt-5.6-terra", model: "openai/gpt-5.6-terra" }),
   Object.freeze({ providerId: "openai", modelId: "gpt-5.6-sol", model: "openai/gpt-5.6-sol" }),

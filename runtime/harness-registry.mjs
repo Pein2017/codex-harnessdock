@@ -6,8 +6,8 @@
  * Drivers are resolved only from in-tree source. No model-facing input and no
  * ambient variable may select a Driver module, executable, configuration store,
  * capability snapshot, or implementation path. Admitting another Harness
- * requires a separate OpenSpec change with in-tree code, contract evidence, and
- * an explicit public-generation decision.
+ * requires in-tree code, contract evidence, and an explicit public-generation
+ * decision.
  */
 
 import {
@@ -18,6 +18,7 @@ import {
 import { MODEL_ALIASES } from "./claude-headless-adapter.mjs";
 import { createOpencodeDriver } from "./opencode-driver.mjs";
 import { OPENCODE_EXPLORER_MODELS, OPENCODE_HARNESS_ID } from "./opencode-explorer-profile.mjs";
+import { createPiDriver, PI_HARNESS_ID, PI_MODELS } from "./pi-driver.mjs";
 import {
   ROUTE_AUTHORITY_VALUES,
   ROUTE_REQUEST_FIELDS,
@@ -176,6 +177,7 @@ export function resolveHarnessDriver(harnessId, options = {}) {
 const DRIVER_V2_FACTORIES = Object.freeze({
   [CLAUDE_CODE_HARNESS_ID]: createClaudeCodeDriverV2,
   [OPENCODE_HARNESS_ID]: createOpencodeDriver,
+  [PI_HARNESS_ID]: createPiDriver,
 });
 
 export const ADMITTED_DRIVER_V2_HARNESS_IDS = Object.freeze(Object.keys(DRIVER_V2_FACTORIES).sort());
@@ -191,8 +193,8 @@ export const ADMITTED_DRIVER_V2_HARNESS_IDS = Object.freeze(Object.keys(DRIVER_V
  *
  * The version-one table above stays Claude-only on purpose. Version one encodes
  * a process-shaped Claude lifecycle that a service-backed Harness has no
- * meaning for, so `resolveHarnessDriver("opencode")` keeps failing closed while
- * the version-two contract is where both Harnesses are admitted.
+ * meaning for, so non-Claude resolution keeps failing closed while the
+ * version-two contract is where all generation Harnesses are admitted.
  */
 export const ADMITTED_GENERATION_HARNESS_IDS = ADMITTED_DRIVER_V2_HARNESS_IDS;
 
@@ -200,8 +202,8 @@ export const ADMITTED_GENERATION_HARNESS_IDS = ADMITTED_DRIVER_V2_HARNESS_IDS;
  * The full model identifiers each admitted Harness serves, in one place.
  *
  * The Claude entries are derived from that Driver's own canonical alias table
- * and the OpenCode entries from the discovered route constants, so this table
- * cannot drift from either Driver. The typed public schema and runtime route
+ * and the OpenCode/Pi entries from their own route constants, so this table
+ * cannot drift from any Driver. The typed public schema and runtime route
  * validation both read it: a model no Harness admits is refused by the schema,
  * and a model the wrong Harness admits is refused by that Harness's own route
  * validation. Neither is a default, a preference, or a mapping from Harness to
@@ -210,6 +212,7 @@ export const ADMITTED_GENERATION_HARNESS_IDS = ADMITTED_DRIVER_V2_HARNESS_IDS;
 export const ADMITTED_ROUTE_MODELS = Object.freeze({
   [CLAUDE_CODE_HARNESS_ID]: Object.freeze([...new Set(MODEL_ALIASES.values())].sort()),
   [OPENCODE_HARNESS_ID]: OPENCODE_EXPLORER_MODELS,
+  [PI_HARNESS_ID]: PI_MODELS,
 });
 
 /** Every admitted full model identifier, deduplicated and deterministic. */
@@ -242,8 +245,8 @@ export function harnessAdmitsModel(harnessId, model) {
  * The choice is made once, from the route's Harness, when the Agent is created,
  * and it never changes for that Agent. That is what keeps the two machines from
  * ever describing one turn: a Claude Agent has version-one job artifacts and
- * never a version-three job record, and an OpenCode Agent has version-three job
- * records and never a version-one job file.
+ * never a version-three job record, while OpenCode and Pi Agents have
+ * version-three job records and never a version-one job file.
  */
 export const HARNESS_EXECUTION_LIFECYCLES = Object.freeze([
   "version_one_supervisor",
@@ -253,6 +256,7 @@ export const HARNESS_EXECUTION_LIFECYCLES = Object.freeze([
 const HARNESS_EXECUTION_LIFECYCLE = Object.freeze({
   [CLAUDE_CODE_HARNESS_ID]: "version_one_supervisor",
   [OPENCODE_HARNESS_ID]: "version_three_worker",
+  [PI_HARNESS_ID]: "version_three_worker",
 });
 
 /**

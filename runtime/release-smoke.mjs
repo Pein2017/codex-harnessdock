@@ -532,10 +532,10 @@ export async function probeInstalledMcp(options = {}) {
       const records = /** @type {any} */ (harnesses?.structuredContent)?.harnesses;
       if (!Array.isArray(records)) throw new Error("list_harnesses returned no structured Harness array.");
       harnessCount = records.length;
-      if (harnessCount !== ADMITTED_GENERATION_HARNESS_IDS.length) {
+      if (options.expectedHarnessCount != null && harnessCount !== options.expectedHarnessCount) {
         throw new Error(
           `Installed Plugin reported ${harnessCount} admitted Harnesses; this release admits ` +
-          `${ADMITTED_GENERATION_HARNESS_IDS.length}.`
+          `${options.expectedHarnessCount}.`
         );
       }
       // Readiness is reported, never required: an operator whose Server is down
@@ -564,7 +564,7 @@ export async function probeInstalledMcp(options = {}) {
     return {
       healthy: exactTools(tools) &&
         (agentCount == null || agentCount === 0) &&
-        (harnessCount == null || harnessCount === ADMITTED_GENERATION_HARNESS_IDS.length) &&
+        (harnessCount == null || options.expectedHarnessCount == null || harnessCount === options.expectedHarnessCount) &&
         (schemaRejected == null || schemaRejected === true),
       tools,
       agentCount,
@@ -637,8 +637,15 @@ export async function runReleaseSmoke(options = {}) {
     realClaude: options.realClaude === true,
     realClaudeMaxMs: options.realClaudeMaxMs,
     onPaidStart: options.onPaidStart,
+    expectedHarnessCount: ADMITTED_GENERATION_HARNESS_IDS.length,
   });
   if (!mcp.healthy) throw new Error("Installed MCP smoke did not satisfy the eight-tool contract.");
+  if (mcp.harnessCount !== ADMITTED_GENERATION_HARNESS_IDS.length) {
+    throw new Error(
+      `Installed MCP smoke reported ${mcp.harnessCount ?? "no"} admitted Harness count; ` +
+      `this release requires ${ADMITTED_GENERATION_HARNESS_IDS.length}.`
+    );
+  }
   return {
     version: 1,
     status: "pass",

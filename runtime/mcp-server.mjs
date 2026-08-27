@@ -89,7 +89,7 @@ const TOOL_DEFINITIONS = Object.freeze({
   },
   send_message: {
     description:
-      "Experimental: deliver to a running Claude Agent or queue for idle; never activates it.",
+      "Experimental: deliver to a running Agent or queue for idle; never activates it.",
     inputSchema: z.object({ target: exactTarget, message }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
@@ -130,7 +130,7 @@ const TOOL_DEFINITIONS = Object.freeze({
   },
   interrupt_agent: {
     description:
-      "Experimental: stop only the current Claude Agent turn; preserve identity and proven continuation.",
+      "Experimental: request that only the current Agent turn stop; preserve identity and proven continuation.",
     inputSchema: z.object({ target: exactTarget }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   },
@@ -142,7 +142,7 @@ const TOOL_DEFINITIONS = Object.freeze({
   },
   read_agent_messages: {
     description:
-      "Experimental: read complete recent outer-assistant text from a Claude Agent native history without activation.",
+      "Experimental: read complete recent outer-assistant text from an Agent's proven native history without activation.",
     inputSchema: z.object({
       target: exactTarget,
       before: z.string().trim().min(1).optional(),
@@ -191,7 +191,7 @@ export function redactMcpErrorMessage(value) {
   for (const pattern of PRIVATE_ID_PATTERNS) {
     message = message.replace(pattern, (match) => {
       if (/job/i.test(match)) return "internal job";
-      return "Claude session";
+      return "native session";
     });
   }
   message = redactAbsolutePaths(message);

@@ -5,8 +5,7 @@ description: 'Experimental: start a durable Agent asynchronously on one fully st
 
 # Spawn Agent
 
-> **Experimental.** The Agent runs in the background and cannot reactivate an
-> ended Codex turn; the caller owns joining any evidence it needs.
+> **Experimental.** The Agent runs asynchronously; the caller joins needed evidence.
 
 Call `mcp__codex_harnessdock__spawn_agent` with `task_name`, a self-contained
 `message`, and the whole route: `harness`, `model`, `topology`, `write`.
@@ -25,9 +24,15 @@ are emergency-only; `HARNESSDOCK_MCP_RESTART_REQUIRED` means new Codex task. Nev
 `claude-fable-5`; `leaf` or `native_orchestrator`; either authority; separate
 effort `low`, `medium`, `high`, `xhigh`, or `max`. Map “x-high” to `xhigh`.
 
-`opencode`: exact `opencode-go/deepseek-v4-flash`,
-`opencode-go/deepseek-v4-pro`, `openai/gpt-5.6-luna`, `openai/gpt-5.6-terra`,
-or `openai/gpt-5.6-sol`; `leaf`, `write: false`; no reasoning effort or
+`pi`: provider `openai-codex` only; exact `openai-codex/gpt-5.6-luna`,
+`openai-codex/gpt-5.6-terra`, or `openai-codex/gpt-5.6-sol`; `leaf`; either
+authority. Every new turn requires `low`, `medium`, `high`, `xhigh`, or `max`.
+No global capacity ceiling; one exact native session is serialized; exact
+resume only; active input is acknowledged; automatic recovery is absent;
+native orchestration is disabled.
+
+`opencode`: exact `openai/gpt-5.6-luna`, `openai/gpt-5.6-terra`, or
+`openai/gpt-5.6-sol`; `leaf`, `write: false`; no reasoning effort or
 HarnessDock capacity ceiling; `fresh_only`; interruption/history unsupported.
 No `-fast` variants.
 
@@ -43,7 +48,9 @@ generic transient 429 may follow bounded reconnect and is not this stop rule.
 ## Authority and topology
 
 `write: false` is behavioral read/review-only authority; `write: true` permits
-task-scoped mutation. It is frozen at creation and is not an OS-level
+task-scoped mutation. Pi `write: false` allows only `read`, `grep`, `find`, and
+`ls`; Pi `write: true` also allows `bash`, `edit`, and `write`. Authority is
+frozen at creation and is not an OS-level
 process-permission switch or CLI permission flag. Enforcement is route-specific
 and observable: Claude is prompt-level under fixed config, `IS_SANDBOX=1`,
 terminal parity, and `--dangerously-skip-permissions`; the Explorer is
@@ -53,7 +60,8 @@ Names are unique flat `/root/<task_name>` paths. Never adopt a Terminal Claude
 session; the message must stand alone. There is no message path between Agents
 on different Harnesses.
 
-`leaf` runs the task itself and disables native `Agent` and `Workflow`. Use
+`leaf` runs the task itself. Claude disables native `Agent` and `Workflow`; Pi
+has no native orchestration. Use
 `native_orchestrator` only with exact Opus or Fable: it is an
 experimental Native Agent Team lead, not a Plugin-owned child lifecycle. A
 named member must launch asynchronously and a correlated `SendMessage` to that

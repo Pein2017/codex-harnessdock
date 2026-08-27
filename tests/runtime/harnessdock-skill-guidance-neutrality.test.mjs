@@ -94,8 +94,9 @@ describe("HarnessDock Skill guidance neutrality", () => {
     assert.match(interrupt, /exact current-root `target`/i);
     assert.match(interrupt, /ends only the current turn[\s\S]*never deletes the[\s\S]*Agent/i);
     assert.match(interrupt, /graceful\s+interrupt request may be accepted, rejected, or left pending/i);
-    assert.match(interrupt, /`status`[\s\S]*`interrupted`,\s*`still_working`,\s*or\s*`failed`/i);
+    assert.match(interrupt, /`status`[\s\S]*`interrupted`,\s*`still_working`,[\s\S]*`failed`,[\s\S]*`settlement_unknown`/i);
     assert.match(interrupt, /`still_working`[\s\S]*never\s+a\s+forced\s+termination/i);
+    assert.match(interrupt, /Pi request is nonterminal[\s\S]*wait for settlement/i);
     assert.match(interrupt, /Exact-session\s+continuation needs native evidence of a safe flush/i);
     assert.doesNotMatch(interrupt, /force-terminat/i);
     assert.match(interrupt, /one concise sentence from `agent_name` and\s+`status`/i);
@@ -139,12 +140,19 @@ describe("HarnessDock Skill guidance neutrality", () => {
       assert.match(spawn, new RegExp(model));
     }
     for (const model of [
-      "opencode-go/deepseek-v4-flash",
-      "opencode-go/deepseek-v4-pro",
+      "openai-codex/gpt-5.6-luna",
+      "openai-codex/gpt-5.6-terra",
+      "openai-codex/gpt-5.6-sol",
       "openai/gpt-5.6-luna",
       "openai/gpt-5.6-terra",
       "openai/gpt-5.6-sol",
     ]) assert.match(spawn, new RegExp(model.replace("/", "\\/")));
+    assert.match(spawn, /`pi`[\s\S]*provider `openai-codex` only/i);
+    assert.match(spawn, /Every new turn requires `low`, `medium`, `high`, `xhigh`, or `max`/i);
+    assert.match(spawn, /No global capacity ceiling[\s\S]*exact native session is serialized/i);
+    assert.match(spawn, /exact\s+resume only[\s\S]*active input is acknowledged[\s\S]*automatic recovery is absent[\s\S]*native orchestration is disabled/i);
+    assert.match(spawn, /Pi `write: false` allows only `read`, `grep`, `find`, and[\s\S]*Pi `write: true` also allows `bash`, `edit`, and `write`/i);
+    assert.doesNotMatch(spawn, /deepseek|opencode-go/i);
     assert.match(spawn, /HarnessDock capacity ceiling/i);
     assert.match(spawn, /No `-fast` variants/i);
     assert.match(spawn, /`low`, `medium`, `high`, `xhigh`, or `max`/i);

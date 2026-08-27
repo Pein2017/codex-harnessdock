@@ -19,10 +19,10 @@ import {
 import { createDriverScope } from "./harness-registry.mjs";
 import {
   claimNativeSubmissionStartAsync,
-  createLaunchClaimAsync,
   recordLaunchAcceptanceProvenAsync,
   recordLaunchAcceptanceRejectedAsync,
   recordLaunchAcceptanceUnknownAsync,
+  verifyPreparedLaunchClaim,
 } from "./launch-claim.mjs";
 import { validateVersionThreeRoute } from "./durable-state-v3.mjs";
 import { validateNativeReferenceEnvelope } from "./native-reference.mjs";
@@ -278,24 +278,14 @@ export async function launchVersionThreeTurn(input) {
     env: snapshot.env ?? {},
   });
 
-  // Readiness/route revalidation is deliberately before the durable claim and
-  // is not native submission. A failure here leaves no ambiguous attempt.
-  let launchContext;
-  try {
-    launchContext = await driver.revalidatePreparedTurn(preparedTurn, scope);
-  } catch (error) {
-    throw launchFailure(error, "not_submitted", { acceptancePersisted: false });
-  }
+  // The parent already bound the exact lease and mailbox activation before it
+  // detached us. A worker consumes that claim; it never reacquires/recreates.
   const identity = claimIdentity(snapshot);
-  const created = await createLaunchClaimAsync({
+  const created = verifyPreparedLaunchClaim({
     ...identity,
     route,
-    leaseBindings: snapshot.leaseBindings,
     assignedMessageIds: snapshot.assignedMessageIds,
     preparedInput: snapshot.preparedInput,
-    // The claim module owns the digest; it folds this bag in under its own
-    // domain separator so a same-attempt contender with the same prompt and
-    // mailbox identity but different options cannot share or replay it.
     turnOptions,
   });
   if (created.acceptance !== "not_submitted" || created.submissionState !== "not_started") {
@@ -307,6 +297,14 @@ export async function launchVersionThreeTurn(input) {
     );
   }
 
+  // Readiness/route revalidation is not native submission. Its failure leaves
+  // this durable claim eligible for the handoff owner's fenced rollback.
+  let launchContext;
+  try {
+    launchContext = await driver.revalidatePreparedTurn(preparedTurn, scope);
+  } catch (error) {
+    throw launchFailure(error, "not_submitted", { acceptancePersisted: false });
+  }
   const submission = await claimNativeSubmissionStartAsync(identity);
   if (!submission.started) {
     const replay = replayAcceptance(submission.record);

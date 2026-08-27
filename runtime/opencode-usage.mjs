@@ -11,7 +11,7 @@
  *
  * ## Why the key carries eleven fields
  *
- * A model identifier is not an identity. `opencode-go/deepseek-v4-flash` could
+ * A model identifier is not an identity. `openai/gpt-5.6-luna` could
  * in principle be served by another Harness with its own pricing, its own
  * capabilities, and its own instance, and two such records must never merge into
  * one number. So the key is derived from the full tuple -- root, Agent, turn,

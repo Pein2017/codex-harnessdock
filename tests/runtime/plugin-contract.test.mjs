@@ -144,7 +144,7 @@ describe("native plugin contract", () => {
       "utf8",
     );
     assert.match(text, /graceful\s+interrupt request may be accepted, rejected, or left pending/i);
-    assert.match(text, /`status`[\s\S]*`interrupted`,\s*`still_working`,\s*or\s*`failed`/i);
+    assert.match(text, /`status`[\s\S]*`interrupted`,\s*`still_working`,[\s\S]*`failed`,[\s\S]*`settlement_unknown`/i);
     assert.match(text, /`still_working`[\s\S]*never\s+a\s+forced\s+termination/i);
     assert.doesNotMatch(text, /Forced unflushed\s+termination becomes failed and non-resumable/i);
     assert.doesNotMatch(text, /force-terminat/i);
@@ -260,16 +260,24 @@ describe("native plugin contract", () => {
     assert.match(text, /`harness`[\s\S]*`model`[\s\S]*`topology`[\s\S]*`write`/);
     assert.match(text, /no default (?:Harness|route)/i);
     assert.doesNotMatch(text, /delegation_mode/);
-    // OpenCode Explorer route truth, stated plainly and without aspiration.
+    // Pi and OpenCode route truth, stated plainly and without aspiration.
     for (const model of [
-      "opencode-go/deepseek-v4-flash",
-      "opencode-go/deepseek-v4-pro",
+      "openai-codex/gpt-5.6-luna",
+      "openai-codex/gpt-5.6-terra",
+      "openai-codex/gpt-5.6-sol",
       "openai/gpt-5.6-luna",
       "openai/gpt-5.6-terra",
       "openai/gpt-5.6-sol",
     ]) assert.match(text, new RegExp(model.replace("/", "\\/")));
+    assert.match(text, /`pi`[\s\S]*provider `openai-codex` only/i);
+    assert.match(text, /Every new turn requires `low`, `medium`, `high`, `xhigh`, or `max`/i);
+    assert.match(text, /No global capacity ceiling[\s\S]*exact native session is serialized/i);
+    assert.match(text, /exact\s+resume only[\s\S]*active input is acknowledged[\s\S]*automatic recovery is absent[\s\S]*native orchestration is disabled/i);
+    assert.match(text, /Pi `write: false` allows only `read`, `grep`, `find`, and[\s\S]*Pi `write: true` also allows `bash`, `edit`, and `write`/i);
     assert.match(text, /`opencode`[\s\S]*leaf[\s\S]*`write: false`/i);
     assert.match(text, /no reasoning effort/i);
+    assert.doesNotMatch(text, /deepseek|opencode-go/i);
+    assert.match(text, /No `-fast` variants/i);
     assert.match(text, /experimental Native Agent Team lead/i);
     assert.match(text, /named member[\s\S]*launch(?:es|ed)? asynchronously[\s\S]*correlated `SendMessage`[\s\S]*succeed(?:s)?/i);
     assert.match(text, /definition-owned[\s\S]*requested models[\s\S]*effective teammate model[\s\S]*unknown/i);
@@ -417,6 +425,25 @@ describe("native plugin contract", () => {
     assert.match(read("interrupt-agent"), /`unsupported`[\s\S]*turn (?:keeps|is still) running/i);
     assert.match(read("read-agent-messages"), /`unsupported`[\s\S]*no messages/i);
     assert.match(read("send-message"), /queue/i);
+  });
+
+  it("documents Pi as a first-class exact-session route and removes DeepSeek from current routes", () => {
+    const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
+    assert.match(readme, /Three Harnesses are admitted[\s\S]*Experimental \*\*Pi\*\*/i);
+    for (const model of [
+      "openai-codex/gpt-5.6-luna",
+      "openai-codex/gpt-5.6-terra",
+      "openai-codex/gpt-5.6-sol",
+      "openai/gpt-5.6-luna",
+      "openai/gpt-5.6-terra",
+      "openai/gpt-5.6-sol",
+    ]) assert.match(readme, new RegExp(model.replace("/", "\\/")));
+    assert.match(readme, /Pi resumes that exact session only[\s\S]*asynchronous assistant history/i);
+    assert.match(readme, /`settlement_unknown`/);
+    const openCodeStart = readme.indexOf("## OpenCode Explorer (Experimental)");
+    const openCodeSection = readme.slice(openCodeStart, readme.indexOf("## Route refusal is Codex-led", openCodeStart));
+    assert.doesNotMatch(openCodeSection, /deepseek|opencode-go/i);
+    assert.match(readme, /\*\*DeepSeek Harness\*\*[\s\S]*later, independent probes/i);
   });
 
   it("keeps every Skill free of route ranking or preference language", () => {

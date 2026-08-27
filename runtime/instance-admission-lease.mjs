@@ -47,6 +47,7 @@ import path from "node:path";
 import { types } from "node:util";
 
 import { validateVersionThreeRoute } from "./durable-state-v3.mjs";
+import { readLaunchClaim } from "./launch-claim.mjs";
 import { assertNativeReferenceEnvelopeShape } from "./native-reference.mjs";
 import { assertHarnessId, canonicalNativeSessionRef } from "./harness-contract.mjs";
 import { resolvePluginStateRoot } from "./paths.mjs";
@@ -682,6 +683,32 @@ function assertSameLeaseIdentity(record, { kind, keyText, ownerRootId, agentId, 
   }
 }
 
+function assertDurableLaunchIntent({ kind, keyFields, capacity, identity, route, attemptId }) {
+  const claim = readLaunchClaim(identity);
+  const intended = claim?.leaseIntent;
+  const receipt = Array.isArray(intended) && intended.length === 1 ? intended[0] : null;
+  const routeDigest = createHash("sha256").update(JSON.stringify(route)).digest("hex");
+  if (
+    claim?.attemptId !== attemptId ||
+    claim?.acceptance !== "not_submitted" ||
+    claim?.submissionState !== "not_started" ||
+    claim?.leaseState !== "intended" ||
+    receipt?.kind !== kind ||
+    receipt?.ownerRootId !== identity.ownerRootId ||
+    receipt?.agentId !== identity.agentId ||
+    receipt?.jobId !== identity.jobId ||
+    receipt?.routeDigest !== routeDigest ||
+    JSON.stringify(receipt?.keyFields) !== JSON.stringify(keyFields) ||
+    JSON.stringify(receipt?.capacity) !== JSON.stringify(capacity) ||
+    JSON.stringify(claim?.route) !== JSON.stringify(route)
+  ) {
+    throw taggedError(
+      "launch_intent_not_acquirable",
+      "Lease acquisition requires the exact durable rollback-safe launch intent."
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Low-level engine, shared by every kind-specific facade and by
 // `runtime/workspace-writer-lease.mjs`. `key`/`keyFields` are always derived
@@ -699,7 +726,7 @@ function assertSameLeaseIdentity(record, { kind, keyText, ownerRootId, agentId, 
  *
  * @param {{kind: string, ownerRootId: string, agentId: string, jobId: string, route: *,
  *   capacityLimit: number, capacityClass?: (string|null), harnessId?: string, instanceKey?: string,
- *   nativeSessionId?: string, workspaceRoot?: string}} input Only the fields the given `kind`'s
+ *   nativeSessionId?: string, workspaceRoot?: string, launchAttemptId?: string|null}} input Only the fields the given `kind`'s
  *   descriptor needs are read; the rest are ignored, exactly like `resolveDescriptorForTarget()`.
  */
 export function acquireLease({
@@ -714,6 +741,7 @@ export function acquireLease({
   instanceKey,
   nativeSessionId,
   workspaceRoot,
+  launchAttemptId = null,
 }) {
   const { keyText, keyFields } = resolveDescriptorForTarget({
     kind, harnessId, instanceKey, capacityClass, nativeSessionId, workspaceRoot,
@@ -727,6 +755,16 @@ export function acquireLease({
   const keyDir = resolveLeaseKeyDirectory(kind, keyText);
   const lock = acquireDirectoryLock(keyDir);
   try {
+    if (launchAttemptId != null) {
+      assertDurableLaunchIntent({
+        kind,
+        keyFields,
+        capacity,
+        identity,
+        route: canonicalRoute,
+        attemptId: assertIdentityText(launchAttemptId, "Launch intent attempt ID"),
+      });
+    }
     const holderDigest = holderIdentityDigest({ kind, keyText, ...identity, routeText });
     const holderFile = path.join(keyDir, `${holderDigest}.json`);
     const existing = readHolderFiles(keyDir);
@@ -865,11 +903,10 @@ export function acquiredLeaseEvidence(record) {
  * public release surface below the low-level engine is
  * `releaseLeasesOnSettlement()`: every release, single or batch, is gated on
  * the same validated settlement predicate the completion-delivery seam uses.
- * A pre-native-submission rollback (releasing a lease this caller acquired
- * but never used, proven `not_submitted`/`rejected`) is a distinct, narrower
- * proof this module does not yet accept; it belongs to Task 5's launch-claim
- * state machine, which alone knows whether native submission was ever
- * attempted.
+ * A pre-native-submission rollback is the distinct narrow exception: the
+ * launch-claim state machine must already own its durable rollback fence, and
+ * `releaseLeasesForPreSubmissionRollback()` releases only the exact bindings
+ * stored in that still-current claim.
  */
 
 // ---------------------------------------------------------------------------
@@ -890,6 +927,142 @@ export function acquireNativeSessionLease({
   return acquireLease({
     kind: "native_session", ownerRootId, agentId, jobId, route, harnessId, instanceKey, nativeSessionId, capacityLimit: 1,
   });
+}
+
+export function acquireIntendedInstanceLease({
+  ownerRootId, agentId, jobId, attemptId, route, harnessId, instanceKey, capacityClass, capacityLimit,
+}) {
+  return acquireLease({
+    kind: "instance",
+    ownerRootId,
+    agentId,
+    jobId,
+    route,
+    harnessId,
+    instanceKey,
+    capacityClass,
+    capacityLimit,
+    launchAttemptId: attemptId,
+  });
+}
+
+export function acquireIntendedNativeSessionLease({
+  ownerRootId, agentId, jobId, attemptId, route, harnessId, instanceKey, nativeSessionId,
+}) {
+  return acquireLease({
+    kind: "native_session",
+    ownerRootId,
+    agentId,
+    jobId,
+    route,
+    harnessId,
+    instanceKey,
+    nativeSessionId,
+    capacityLimit: 1,
+    launchAttemptId: attemptId,
+  });
+}
+
+function rollbackReleasePlan(binding, boundRoute = null) {
+  const target = {
+    kind: binding.kind,
+    ownerRootId: binding.ownerRootId,
+    agentId: binding.agentId,
+    jobId: binding.jobId,
+    route: binding.route ?? boundRoute,
+    ...(binding.kind === "instance" ? {
+      harnessId: binding.keyFields.harnessId,
+      instanceKey: binding.keyFields.instanceKey,
+      capacityClass: binding.capacity.class,
+    } : binding.kind === "native_session" ? {
+      harnessId: binding.keyFields.harnessId,
+      instanceKey: binding.keyFields.instanceKey,
+      nativeSessionId: binding.keyFields.nativeSessionId,
+    } : {
+      workspaceRoot: binding.keyFields.workspaceRoot,
+    }),
+  };
+  const { kind, keyText } = releaseDescriptorForTarget(target);
+  const identity = assertBindingIdentity(target);
+  const route = validateVersionThreeRoute(target.route, "Rollback lease route");
+  const routeText = JSON.stringify(route);
+  const keyDir = resolveLeaseKeyDirectory(kind, keyText);
+  return {
+    kind,
+    keyText,
+    identity,
+    routeText,
+    keyDir,
+    holderFile: path.join(keyDir, `${holderIdentityDigest({ kind, keyText, ...identity, routeText })}.json`),
+  };
+}
+
+/**
+ * Release only the exact durable bindings of a claim whose rollback fence
+ * already owns native submission. Missing holder files are idempotent success.
+ */
+export function releaseLeasesForPreSubmissionRollback({ claim }) {
+  if (
+    claim == null || typeof claim !== "object" || types.isProxy(claim) ||
+    claim.submissionState !== "rollback_in_progress" ||
+    !(claim.acceptance === "acceptance_rejected" || claim.acceptance === "not_submitted")
+  ) {
+    throw new Error("Pre-submission lease release requires a rollback-in-progress launch claim.");
+  }
+  if (!Array.isArray(claim.leaseBindings) || !Array.isArray(claim.leaseIntent) || claim.leaseIntent.length === 0) {
+    throw new Error("Pre-submission rollback claim has no exact lease intent.");
+  }
+  const durable = readLaunchClaim({
+    ownerRootId: claim.ownerRootId,
+    agentId: claim.agentId,
+    jobId: claim.jobId,
+  });
+  if (!durable || JSON.stringify(durable) !== JSON.stringify(claim)) {
+    throw new Error("Pre-submission lease release requires the exact durable rollback claim.");
+  }
+  const bindings = claim.leaseBindings.length === 0 ? claim.leaseIntent : claim.leaseBindings;
+  const plans = bindings.map((binding) => rollbackReleasePlan(binding, claim.route));
+  const locks = [];
+  try {
+    for (const keyDir of [...new Set(plans.map((plan) => plan.keyDir))].sort()) {
+      locks.push(acquireDirectoryLock(keyDir));
+    }
+    for (const plan of plans) {
+      if (!fs.existsSync(plan.holderFile)) continue;
+      const record = readHolderFile(plan.holderFile);
+      assertSameLeaseIdentity(record, {
+        kind: plan.kind,
+        keyText: plan.keyText,
+        ...plan.identity,
+        routeText: plan.routeText,
+      });
+      fs.unlinkSync(plan.holderFile);
+    }
+    return Object.freeze({ outcome: "all", released: true });
+  } finally {
+    for (const lock of locks) releaseDirectoryLock(lock);
+  }
+}
+
+/** Undo an in-process acquisition when no launch claim was durably created. */
+export function releaseUnclaimedLeaseAcquisition(record) {
+  const binding = acquiredLeaseEvidence(record);
+  const plan = rollbackReleasePlan(binding);
+  const lock = acquireDirectoryLock(plan.keyDir);
+  try {
+    if (!fs.existsSync(plan.holderFile)) return Object.freeze({ released: true, alreadyReleased: true });
+    const stored = readHolderFile(plan.holderFile);
+    assertSameLeaseIdentity(stored, {
+      kind: plan.kind,
+      keyText: plan.keyText,
+      ...plan.identity,
+      routeText: plan.routeText,
+    });
+    fs.unlinkSync(plan.holderFile);
+    return Object.freeze({ released: true, alreadyReleased: false });
+  } finally {
+    releaseDirectoryLock(lock);
+  }
 }
 
 // ---------------------------------------------------------------------------

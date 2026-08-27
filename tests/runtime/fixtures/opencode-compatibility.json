@@ -1,156 +1,154 @@
 {
-    "schemaVersion": 1,
-    "generatedAt": "2026-08-15T14:48:03.728Z",
-    "zeroModel": true,
-    "zeroSession": true,
-    "pinnedDependency": {
-        "name": "@opencode-ai/sdk",
-        "version": "1.18.18",
-        "exactPin": true
+  "schemaVersion": 1,
+  "generatedAt": "2026-08-27T16:08:10.860Z",
+  "zeroModel": true,
+  "zeroSession": true,
+  "pinnedDependency": {
+    "name": "@opencode-ai/sdk",
+    "version": "1.18.18",
+    "exactPin": true
+  },
+  "cli": {
+    "binMode": "explicit_override",
+    "version": {
+      "ok": true,
+      "value": "1.18.23"
     },
-    "cli": {
-        "binMode": "explicit_override",
-        "version": {
-            "ok": true,
-            "value": "1.18.18"
-        },
-        "modelCatalog": {
-            "ok": true,
-            "targetPresent": true,
-            "observedCount": 26
-        }
-    },
-    "server": {
-        "baseUrl": "http://127.0.0.1:4096",
-        "loopback": true,
-        "reachable": true,
-        "health": {
-            "healthy": true,
-            "version": "1.18.18"
-        },
-        "provider": {
-            "providerPresent": true,
-            "providerConnected": true,
-            "model": {
-                "id": "deepseek-v4-flash",
-                "providerID": "opencode-go",
-                "name": "DeepSeek V4 Flash (2x usage)",
-                "family": "deepseek-flash"
-            }
-        },
-        "capabilities": {
-            "backgroundSubagents": false
-        },
-        "requestAudit": {
-            "totalRequests": 4,
-            "mutatingRequestCount": 0,
-            "methods": [
-                "GET",
-                "GET",
-                "GET",
-                "GET"
-            ]
-        }
-    },
-    "modelRoute": {
-        "expected": "opencode-go/deepseek-v4-flash",
-        "cliMatch": true,
-        "serverMatch": true,
-        "exact": "opencode-go/deepseek-v4-flash"
-    },
-    "profile": {
-        "name": "codex-explorer",
-        "present": false
-    },
-    "continuation": {
-        "mode": "fresh_only",
-        "incarnationCandidates": [],
-        "reason": "no instance/pid/boot/incarnation-shaped field was observed in health, agent, capabilities, session, or assistant-message schemas"
-    },
-    "sdkTypeShapes": {
-        "clientExports": [
-            "createOpencodeClient",
-            "OpencodeClient"
-        ],
-        "forbiddenExports": [
-            "createOpencode"
-        ],
-        "methodsUsed": [
-            "global.health",
-            "app.agents",
-            "provider.list",
-            "experimental.capabilities.get"
-        ],
-        "assistantMessageFields": [
-            "id",
-            "sessionID",
-            "role",
-            "time",
-            "error",
-            "parentID",
-            "modelID",
-            "providerID",
-            "mode",
-            "agent",
-            "path",
-            "summary",
-            "cost",
-            "tokens",
-            "structured",
-            "variant",
-            "finish"
-        ],
-        "tokensFields": [
-            "total",
-            "input",
-            "output",
-            "reasoning",
-            "cache"
-        ],
-        "errorVariantNames": [
-            "ProviderAuthError",
-            "UnknownError",
-            "MessageOutputLengthError",
-            "MessageAbortedError",
-            "StructuredOutputError",
-            "ContextOverflowError",
-            "ContentFilterError",
-            "ApiError"
-        ],
-        "sessionFields": [
-            "id",
-            "slug",
-            "projectID",
-            "workspaceID",
-            "directory",
-            "path",
-            "parentID",
-            "summary",
-            "cost",
-            "tokens",
-            "share",
-            "title",
-            "agent",
-            "model",
-            "version",
-            "metadata",
-            "time",
-            "permission",
-            "revert"
-        ],
-        "clientConfigFields": [
-            "baseUrl",
-            "fetch",
-            "next",
-            "parseAs",
-            "responseStyle",
-            "throwOnError"
-        ]
-    },
-    "readiness": {
-        "ready": false,
-        "blockers": [
-            "profile_missing:codex-explorer"
-        ]
+    "modelCatalog": {
+      "ok": true,
+      "targetPresent": true,
+      "observedCount": 3
     }
+  },
+  "server": {
+    "baseUrl": "http://127.0.0.1:4096",
+    "loopback": true,
+    "reachable": true,
+    "health": {
+      "healthy": true,
+      "version": "1.18.23"
+    },
+    "provider": {
+      "providerPresent": true,
+      "providerConnected": true,
+      "model": {
+        "id": "gpt-5.6-luna",
+        "providerID": "openai",
+        "name": "GPT-5.6 Luna",
+        "family": "gpt-luna"
+      }
+    },
+    "capabilities": {
+      "backgroundSubagents": false
+    },
+    "requestAudit": {
+      "totalRequests": 4,
+      "mutatingRequestCount": 0,
+      "methods": [
+        "GET",
+        "GET",
+        "GET",
+        "GET"
+      ]
+    }
+  },
+  "modelRoute": {
+    "expected": "openai/gpt-5.6-luna",
+    "cliMatch": true,
+    "serverMatch": true,
+    "exact": "openai/gpt-5.6-luna"
+  },
+  "profile": {
+    "name": "codex-explorer",
+    "present": true
+  },
+  "continuation": {
+    "mode": "fresh_only",
+    "incarnationCandidates": [],
+    "reason": "no instance/pid/boot/incarnation-shaped field was observed in health, agent, capabilities, session, or assistant-message schemas"
+  },
+  "sdkTypeShapes": {
+    "clientExports": [
+      "createOpencodeClient",
+      "OpencodeClient"
+    ],
+    "forbiddenExports": [
+      "createOpencode"
+    ],
+    "methodsUsed": [
+      "global.health",
+      "app.agents",
+      "provider.list",
+      "experimental.capabilities.get"
+    ],
+    "assistantMessageFields": [
+      "id",
+      "sessionID",
+      "role",
+      "time",
+      "error",
+      "parentID",
+      "modelID",
+      "providerID",
+      "mode",
+      "agent",
+      "path",
+      "summary",
+      "cost",
+      "tokens",
+      "structured",
+      "variant",
+      "finish"
+    ],
+    "tokensFields": [
+      "total",
+      "input",
+      "output",
+      "reasoning",
+      "cache"
+    ],
+    "errorVariantNames": [
+      "ProviderAuthError",
+      "UnknownError",
+      "MessageOutputLengthError",
+      "MessageAbortedError",
+      "StructuredOutputError",
+      "ContextOverflowError",
+      "ContentFilterError",
+      "ApiError"
+    ],
+    "sessionFields": [
+      "id",
+      "slug",
+      "projectID",
+      "workspaceID",
+      "directory",
+      "path",
+      "parentID",
+      "summary",
+      "cost",
+      "tokens",
+      "share",
+      "title",
+      "agent",
+      "model",
+      "version",
+      "metadata",
+      "time",
+      "permission",
+      "revert"
+    ],
+    "clientConfigFields": [
+      "baseUrl",
+      "fetch",
+      "next",
+      "parseAs",
+      "responseStyle",
+      "throwOnError"
+    ]
+  },
+  "readiness": {
+    "ready": true,
+    "blockers": []
+  }
 }

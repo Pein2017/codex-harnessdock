@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+## 0.21.0 - 2026-08-27
+
+- Add the first-class Pi RPC Harness for exactly
+  `openai-codex/gpt-5.6-luna`, `openai-codex/gpt-5.6-terra`, and
+  `openai-codex/gpt-5.6-sol`: explicit per-turn effort, leaf-only fixed tool
+  policy, exact UUID resume, acknowledged active input, interruption, native
+  assistant history, and cumulative provider-token deltas. Pi has no global
+  capacity ceiling; only concurrent use of one exact native session is
+  serialized.
+- Contract OpenCode Explorer to the matching three OpenAI subscription routes,
+  defaulting to Luna and rejecting DeepSeek and `-fast` variants. Preserve its
+  read-only, fresh-session-only capability boundary and unlimited instance
+  admission.
+- Harden detached version-three launch handoff with a durable pre-acquisition
+  intent, claim-aware lease publication, submission/rollback fencing, exact
+  lease release, and mailbox restoration. Abandoned pre-submission launches are
+  cleaned by an owning reconciliation without native replay; `list_agents`
+  remains observational.
+- Version launch claims at v2 while projecting valid released v1 records
+  read-only and materializing v2 only on an exact owning mutation. Conflicting,
+  corrupt, over-bound, or ambiguous recovery evidence continues to fail closed.
+
 ## 0.20.0 - 2026-08-18
 
 - **BREAKING (operator-facing).** Complete the identifier half of the

@@ -1323,10 +1323,9 @@ describe("Driver Contract v2 registry and scope", () => {
   it("keeps the version-two registry static and in-tree", () => {
     const { driver: service } = createFakeServiceDriver();
     // The version-two table holds exactly the in-tree Drivers this checkout
-    // implements on Contract v2 -- now the wrapped Claude Driver, and nothing
-    // else. A fixture can never register itself, and admission is not
+    // implements on Contract v2. A fixture can never register itself, and admission is not
     // activation: no public lifecycle path resolves a v2 Driver here.
-    assert.deepEqual([...ADMITTED_DRIVER_V2_HARNESS_IDS], ["claude-code", "opencode"]);
+    assert.deepEqual([...ADMITTED_DRIVER_V2_HARNESS_IDS], ["claude-code", "opencode", "pi"]);
     assert.throws(() => resolveDriverV2("fake-service"), /Unknown Harness fake-service/);
     assert.equal(resolveDriverV2("claude-code").contractVersion, 2);
     assert.equal(admitDriverV2(service), service);
@@ -2614,7 +2613,7 @@ describe("Driver Contract v2 conformance across every admitted Harness", () => {
     }));
 
   it("admits every statically registered Driver under the same validation", () => {
-    assert.deepEqual([...ADMITTED_DRIVER_V2_HARNESS_IDS], ["claude-code", "opencode"]);
+    assert.deepEqual([...ADMITTED_DRIVER_V2_HARNESS_IDS], ["claude-code", "opencode", "pi"]);
     for (const { harnessId, driver } of admittedDrivers()) {
       assert.equal(validateDriverV2(driver), driver, harnessId);
       assert.equal(admitDriverV2(driver), driver, harnessId);

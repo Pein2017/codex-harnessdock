@@ -168,10 +168,10 @@ const POLICY_WORDS =
 // 7.1 Static admission.
 // ---------------------------------------------------------------------------
 
-describe("public generation: static two-Harness admission", () => {
-  it("admits exactly claude-code and opencode at Driver Contract v2", () => {
-    assert.deepEqual([...ADMITTED_DRIVER_V2_HARNESS_IDS], ["claude-code", "opencode"]);
-    assert.deepEqual([...ADMITTED_GENERATION_HARNESS_IDS], ["claude-code", "opencode"]);
+describe("public generation: static three-Harness admission", () => {
+  it("admits exactly claude-code, opencode, and pi at Driver Contract v2", () => {
+    assert.deepEqual([...ADMITTED_DRIVER_V2_HARNESS_IDS], ["claude-code", "opencode", "pi"]);
+    assert.deepEqual([...ADMITTED_GENERATION_HARNESS_IDS], ["claude-code", "opencode", "pi"]);
     // Deterministic order, not a preference: sorted, with no first-choice meaning.
     assert.deepEqual([...ADMITTED_GENERATION_HARNESS_IDS], [...ADMITTED_GENERATION_HARNESS_IDS].sort());
   });
@@ -221,10 +221,10 @@ describe("public generation: list_harnesses observes without selecting", () => {
     assert.equal(Object.isFrozen(runtime), true);
   });
 
-  it("reports readiness, routes, maturity, and capacity for both Harnesses", async () => {
+  it("reports readiness, routes, maturity, and capacity for every Harness", async () => {
     const { url } = await startReadyFake();
     const listing = await runtimeFor(url).list_harnesses({});
-    assert.deepEqual(listing.harnesses.map((record) => record.harness), ["claude-code", "opencode"]);
+    assert.deepEqual(listing.harnesses.map((record) => record.harness), ["claude-code", "opencode", "pi"]);
 
     const opencode = harnessOf(listing, OPENCODE_HARNESS_ID);
     assert.equal(opencode.driver_version, OPENCODE_DRIVER_VERSION);
@@ -249,7 +249,11 @@ describe("public generation: list_harnesses observes without selecting", () => {
     const claude = harnessOf(listing, "claude-code");
     assert.equal(claude.maturity, "experimental");
     assert.ok(claude.instances.length >= 1);
-    assert.ok(claude.instances[0].routes.models.length >= 1);
+    if (claude.instances[0].readiness === "ready") {
+      assert.ok(claude.instances[0].routes.models.length >= 1);
+    } else {
+      assert.equal(claude.instances[0].routes, null);
+    }
   });
 
   it("carries no ranking, recommendation, price, threshold, or default", async () => {
@@ -407,7 +411,7 @@ describe("public generation: list_harnesses through MCP and the operator CLI", (
     const payload = JSON.parse(result.stdout);
     assert.equal(payload.operatorMode, true);
     assert.equal(payload.readOnly, true);
-    assert.deepEqual(payload.harnesses.map((record) => record.harness), ["claude-code", "opencode"]);
+    assert.deepEqual(payload.harnesses.map((record) => record.harness), ["claude-code", "opencode", "pi"]);
     assert.equal(harnessOf(payload, OPENCODE_HARNESS_ID).instances[0].readiness, "unavailable");
     // Inspection, never dispatch: the operator surface exposes no spawn/route verb.
     const usage = spawnSync(

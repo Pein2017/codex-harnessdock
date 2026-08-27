@@ -1495,7 +1495,6 @@ describe("Version-three turn lifecycle is owned only by the internal generation"
     assert.equal(JSON.stringify(storedAgent(context.root, agent.agentId)), before);
 
     for (const [name, mutate] of [
-      ["rollbackReservation", () => store.rollbackReservation(agent.agentId)],
       ["recoverPreClaudeActivation", () => store.recoverPreClaudeActivation(agent.agentId, "job-v3-life")],
       ["recoverCredentialBlockedActivation", () => store.recoverCredentialBlockedActivation(agent.agentId, {
         failedJobId: "job-v3-life",
@@ -1508,6 +1507,11 @@ describe("Version-three turn lifecycle is owned only by the internal generation"
     }
     assert.equal(store.readAgent(agent.agentId).activeJobId, null);
     assert.equal(store.readAgent(agent.agentId).nativeSessionRef, null);
+    assert.deepEqual(store.rollbackReservation(agent.agentId), {
+      rolledBack: true,
+      reason: "prelaunch_reservation",
+    });
+    assert.equal(store.readAgent(agent.agentId), null);
   });
 
   it("never finalizes a version-three Agent from a legacy or foreign receipt", () => {
@@ -1608,6 +1612,7 @@ describe("Version-three turn lifecycle is owned only by the internal generation"
     assert.equal(store.finalizeFromJob(receipt).reconciled, true);
 
     const after = store.readAgent(agent.agentId);
+    assert.deepEqual(after.nativeSessionRef, nativeSessionRef);
     assert.equal(after.status, "completed");
     assert.equal(after.activeJobId, null);
     assert.equal(after.latestJobId, "job-v3-project");
@@ -1620,7 +1625,6 @@ describe("Version-three turn lifecycle is owned only by the internal generation"
     assert.equal(after.continuation.evidence.attemptId, "attempt-v3-project");
     assert.equal(after.continuation.evidence.jobId, "job-v3-project");
     // No Claude meaning is invented for a fake-service turn.
-    assert.equal(after.nativeSessionRef, null);
     assert.equal(after.claudeSessionId, null);
     assert.equal(
       fs.existsSync(path.join(process.env.CODEX_HARNESSDOCK_RUNTIME_HOME, "state", "session-bindings")),

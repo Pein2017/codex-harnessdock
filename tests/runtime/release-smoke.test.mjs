@@ -195,6 +195,7 @@ describe("release smoke", () => {
             "interrupt_agent", "list_agents", "read_agent_messages",
           ],
           agentCount: 0,
+          harnessCount: ADMITTED_GENERATION_HARNESS_IDS.length,
           paid: { requested: true, status: "completed" },
         };
       },
@@ -216,6 +217,7 @@ describe("release smoke", () => {
           "interrupt_agent", "list_agents", "read_agent_messages",
         ],
         agentCount: 0,
+        harnessCount: ADMITTED_GENERATION_HARNESS_IDS.length,
         paid: { requested: false, status: "skipped" },
       }),
     });
@@ -257,6 +259,7 @@ describe("release smoke", () => {
           "interrupt_agent", "list_agents", "read_agent_messages",
         ],
         agentCount: 0,
+        harnessCount: ADMITTED_GENERATION_HARNESS_IDS.length,
         paid: { requested: false, status: "skipped" },
       }),
     });

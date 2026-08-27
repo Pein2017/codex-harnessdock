@@ -11,7 +11,23 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { resolveRuntimeEnvironment } from "./environment.mjs";
-import { runDetachedVersionThreeTurn } from "./v3-worker-entry.mjs";
+import {
+  rollbackPreparedVersionThreeTurn,
+  runDetachedVersionThreeTurn,
+} from "./v3-worker-entry.mjs";
+import { createAgentStore } from "./agent-store.mjs";
+import { FUTURE_WRITE_GENERATION } from "./durable-state-v3.mjs";
+import { validateNativeReferenceEnvelope } from "./native-reference.mjs";
+import {
+  acquireIntendedInstanceLease,
+  acquireIntendedNativeSessionLease,
+} from "./instance-admission-lease.mjs";
+import {
+  bindLaunchClaimLease,
+  createLaunchIntent,
+  readLaunchClaim,
+  recordLaunchAcceptanceUnknown,
+} from "./launch-claim.mjs";
 import {
   HARNESS_CAPABILITY_NAMES,
   assertHarnessCapability,
@@ -117,6 +133,8 @@ const HANDOFF_DISPOSITIONS = new Set([
 ]);
 const CHILD_SPAWN_WAIT_MS = 1_000;
 const CHILD_EXIT_WAIT_MS = 1_000;
+const V3_SUBMISSION_HANDOFF_WAIT_MS = 5_000;
+const V3_TURN_EVIDENCE_CLASS = "v3-public-turn";
 /** Version-2 durable Harness evidence on every job this runtime prepares. */
 export const HARNESS_JOB_STATE_VERSION = 2;
 
@@ -177,6 +195,22 @@ function waitFor(promise, milliseconds, fallback) {
   ]).finally(() => {
     if (timer) clearTimeout(timer);
   });
+}
+
+async function waitForVersionThreeSubmissionFence(identity, observer, waitMs = V3_SUBMISSION_HANDOFF_WAIT_MS) {
+  const deadline = Date.now() + waitMs;
+  while (Date.now() < deadline) {
+    const claim = readLaunchClaim(identity);
+    if (["acceptance_unknown", "acceptance_proven", "acceptance_rejected"].includes(claim?.acceptance)) {
+      return { kind: "fenced", claim };
+    }
+    if (["rollback_in_progress", "rollback_complete"].includes(claim?.submissionState)) {
+      return { kind: "rollback", claim };
+    }
+    if (observer.hasExited()) return { kind: "exit", claim };
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  return { kind: "timeout", claim: readLaunchClaim(identity) };
 }
 
 function observeChild(child, onPostSpawnError) {
@@ -1287,6 +1321,109 @@ class InternalAgentRuntime {
     const agentId = assertWorkerIdentityText(options.agentId, "Version-three worker agent ID");
     const jobId = assertJobId(options.jobId);
     const attemptId = assertWorkerIdentityText(options.attemptId, "Version-three worker attempt ID");
+    const identity = { ownerRootId, agentId, jobId };
+    const store = createAgentStore({
+      cwd: this.cwd,
+      ownerRootId,
+      writeGeneration: FUTURE_WRITE_GENERATION,
+    });
+    const agent = store.resolveTarget(agentId);
+    if (agent.activeJobId !== jobId) {
+      throw new Error(`Version-three Agent ${agent.path} is not active for job ${jobId}.`);
+    }
+    const assigned = store.listMessages(agentId).filter(
+      (message) => message.assignedJobId === jobId && message.deliveryIntent === "initial_prompt"
+    );
+    if (assigned.length === 0) throw new Error(`Version-three job ${jobId} has no prepared initial assignment.`);
+    const assignedMessageIds = assigned.map((message) => message.messageId);
+    const taskInput = assigned.map((message) => message.text).join("\n\n");
+    const driver = resolveDriverV2(agent.route.harnessId, { env: this.env });
+    const turnOptions = options.turnOptions ?? null;
+    let lease = null;
+    let claim = readLaunchClaim(identity);
+    try {
+      if (claim) {
+        if (claim.attemptId !== attemptId) {
+          throw new Error(`Version-three job ${jobId} is already claimed by another attempt.`);
+        }
+        if (["rollback_in_progress", "rollback_complete"].includes(claim.submissionState)) {
+          rollbackPreparedVersionThreeTurn({ cwd: this.cwd, ...identity, attemptId });
+          throw new Error(`Version-three job ${jobId} was already rolled back.`);
+        }
+        if (claim.acceptance === "not_submitted" && claim.submissionState === "not_started") {
+          rollbackPreparedVersionThreeTurn({ cwd: this.cwd, ...identity, attemptId });
+          throw new Error(`Version-three job ${jobId} recovered its incomplete prepared launch without replay.`);
+        }
+      } else {
+        const preparedTurn = driver.prepareTurn({
+          route: agent.route,
+          taskInput,
+          turnOptions,
+          turnId: jobId,
+        });
+        const nativeSessionRef = agent.nativeSessionRef == null
+          ? null
+          : validateNativeReferenceEnvelope(agent.nativeSessionRef, {
+              driver,
+              kind: "session",
+              route: agent.route,
+            });
+        const expectedLease = nativeSessionRef == null
+          ? {
+              kind: "instance",
+              capacityClass: `${V3_TURN_EVIDENCE_CLASS}:${jobId}`,
+              capacityLimit: 1,
+            }
+          : { kind: "native_session", nativeSessionId: nativeSessionRef.locator.sessionId };
+        claim = createLaunchIntent({
+          ...identity,
+          attemptId,
+          route: agent.route,
+          expectedLease,
+          assignedMessageIds,
+          preparedInput: taskInput,
+          turnOptions: preparedTurn.turnOptions ?? turnOptions,
+        });
+        lease = nativeSessionRef == null
+          ? acquireIntendedInstanceLease({
+              ...identity,
+              attemptId,
+              route: agent.route,
+              harnessId: agent.route.harnessId,
+              instanceKey: agent.route.instanceKey,
+              capacityClass: `${V3_TURN_EVIDENCE_CLASS}:${jobId}`,
+              capacityLimit: 1,
+            })
+          : acquireIntendedNativeSessionLease({
+              ...identity,
+              attemptId,
+              route: agent.route,
+              harnessId: agent.route.harnessId,
+              instanceKey: agent.route.instanceKey,
+              nativeSessionId: nativeSessionRef.locator.sessionId,
+            });
+        claim = bindLaunchClaimLease({
+          ...identity,
+          attemptId,
+          lease,
+        });
+      }
+    } catch (error) {
+      const durable = readLaunchClaim(identity);
+      if (durable && durable.acceptance === "not_submitted" && durable.submissionState === "not_started") {
+        rollbackPreparedVersionThreeTurn({ cwd: this.cwd, ...identity, attemptId });
+      } else if (!durable) {
+        store.rollbackVersionThreeActivation(agentId, {
+          jobId,
+          removableMessageId: assignedMessageIds[0],
+          rollbackClaim: null,
+        });
+        if (store.readAgent(agentId)) {
+          store.rollbackReservation(agentId, { removableMessageId: assignedMessageIds[0] });
+        }
+      }
+      throw error;
+    }
     ensureJobStateDir(this.cwd);
     const logFile = resolveJobLogFile(this.cwd, jobId);
     const args = [
@@ -1303,7 +1440,7 @@ class InternalAgentRuntime {
     ];
     // Turn-scoped effort is the only turn option this generation admits, and it
     // is a closed enum: it travels as one argument, never as free-form state.
-    const effort = options.turnOptions?.effort ?? null;
+    const effort = turnOptions?.effort ?? null;
     if (effort) args.push("--reasoning-effort", String(effort));
     const workerLog = this.launchDependencies.createWorkerLogStdio(logFile);
     let child = null;
@@ -1319,9 +1456,56 @@ class InternalAgentRuntime {
       const spawnOutcome = await observer.waitForSpawn();
       if (spawnOutcome.kind !== "spawned") {
         try { child.kill("SIGTERM"); } catch {}
-        throw new Error(
-          `Version-three worker for ${jobId} did not prove spawn; nothing was submitted.`
-        );
+        rollbackPreparedVersionThreeTurn({ cwd: this.cwd, ...identity, attemptId });
+        throw new Error(`Version-three worker for ${jobId} did not prove spawn; its prepared launch was rolled back.`);
+      }
+      const handoff = await waitForVersionThreeSubmissionFence(
+        identity,
+        observer,
+        this.launchDependencies.versionThreeHandoffWaitMs ?? V3_SUBMISSION_HANDOFF_WAIT_MS,
+      );
+      await this.launchDependencies.afterVersionThreeHandoffWait?.({ identity, handoff });
+      let durable = readLaunchClaim(identity);
+      if (["rollback_in_progress", "rollback_complete"].includes(durable?.submissionState)) {
+        rollbackPreparedVersionThreeTurn({ cwd: this.cwd, ...identity, attemptId });
+        throw new Error(`Version-three worker for ${jobId} completed rollback before native acceptance (${handoff.kind}).`);
+      }
+      if (durable?.acceptance === "acceptance_rejected" ||
+          (durable?.acceptance === "not_submitted" && durable?.submissionState === "not_started")) {
+        let rollbackWon = false;
+        try {
+          rollbackPreparedVersionThreeTurn({ cwd: this.cwd, ...identity, attemptId });
+          rollbackWon = true;
+        } catch {
+          durable = readLaunchClaim(identity);
+        }
+        if (rollbackWon) {
+          try { child.kill("SIGTERM"); } catch {}
+          throw new Error(`Version-three worker for ${jobId} rolled back before native acceptance (${handoff.kind}).`);
+        }
+      }
+      if (["rollback_in_progress", "rollback_complete"].includes(durable?.submissionState)) {
+        rollbackPreparedVersionThreeTurn({ cwd: this.cwd, ...identity, attemptId });
+        throw new Error(`Version-three worker for ${jobId} lost the handoff race to rollback (${handoff.kind}).`);
+      }
+      if (durable?.acceptance === "not_submitted" && durable?.submissionState === "started") {
+        try {
+          durable = recordLaunchAcceptanceUnknown({
+            ...identity,
+            attemptId,
+            sanitizedDetail: "parent_handoff_observation_ended_after_submission_started",
+          });
+        } catch {
+          durable = readLaunchClaim(identity);
+        }
+      }
+      if (durable?.acceptance === "acceptance_rejected") {
+        rollbackPreparedVersionThreeTurn({ cwd: this.cwd, ...identity, attemptId });
+        try { child.kill("SIGTERM"); } catch {}
+        throw new Error(`Version-three worker for ${jobId} rejected native acceptance and rolled back (${handoff.kind}).`);
+      }
+      if (!["acceptance_unknown", "acceptance_proven"].includes(durable?.acceptance)) {
+        throw new Error(`Version-three worker for ${jobId} has no durable acceptance handoff (${handoff.kind}).`);
       }
       try { child.unref(); } catch {}
       appendLogLine(logFile, "Queued for detached version-three execution.");

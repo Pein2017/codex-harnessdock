@@ -41,8 +41,17 @@ import fs from "node:fs";
 
 import { createAgentStore } from "../../../runtime/agent-store.mjs";
 import { FUTURE_WRITE_GENERATION } from "../../../runtime/durable-state-v3.mjs";
-import { acquireInstanceLease } from "../../../runtime/instance-admission-lease.mjs";
-import { createLaunchClaimAsync } from "../../../runtime/launch-claim.mjs";
+import {
+  acquireInstanceLease,
+  acquireIntendedInstanceLease,
+  acquireIntendedNativeSessionLease,
+  acquireNativeSessionLease,
+} from "../../../runtime/instance-admission-lease.mjs";
+import {
+  bindLaunchClaimLease,
+  createLaunchClaimAsync,
+  createLaunchIntent,
+} from "../../../runtime/launch-claim.mjs";
 import { readVersionThreeJobRecord } from "../../../runtime/v3-job-store.mjs";
 import { runVersionThreeWorkerLoop } from "../../../runtime/v3-worker-loop.mjs";
 import { createFakeServiceDriver } from "./fake-service-driver.mjs";
@@ -71,19 +80,60 @@ async function run() {
   });
   const agent = store.createAgent({ task_name: payload.taskName, route, initialMessage: payload.promptText });
   const reservation = store.reserveActivation(agent.agentId, payload.jobId, { initial: true });
-  const lease = acquireInstanceLease({
-    ownerRootId: payload.ownerRootId,
-    agentId: agent.agentId,
-    jobId: payload.jobId,
-    route,
-    harnessId: route.harnessId,
-    instanceKey: route.instanceKey,
-    capacityClass: payload.capacityClass,
-    capacityLimit: 1,
-  });
   report("IDENTITY", { agentId: agent.agentId });
-
   const identity = { ownerRootId: payload.ownerRootId, agentId: agent.agentId, jobId: payload.jobId };
+  if (["intent_before_acquire", "intent_after_acquire", "intent_after_binding"].includes(mode)) {
+    createLaunchIntent({
+      ...identity,
+      attemptId: payload.attemptId,
+      route,
+      expectedLease: payload.nativeSessionId == null
+        ? { kind: "instance", capacityClass: payload.capacityClass, capacityLimit: 1 }
+        : { kind: "native_session", nativeSessionId: payload.nativeSessionId },
+      assignedMessageIds: reservation.assignedMessages.map((entry) => entry.messageId),
+      preparedInput: payload.promptText,
+      turnOptions: null,
+    });
+    if (mode === "intent_before_acquire") {
+      report("READY", {});
+      await hangForever();
+      return;
+    }
+  }
+  const hasIntent = ["intent_before_acquire", "intent_after_acquire", "intent_after_binding"].includes(mode);
+  const lease = payload.nativeSessionId == null
+    ? (hasIntent ? acquireIntendedInstanceLease : acquireInstanceLease)({
+        ownerRootId: payload.ownerRootId,
+        agentId: agent.agentId,
+        jobId: payload.jobId,
+        ...(hasIntent ? { attemptId: payload.attemptId } : {}),
+        route,
+        harnessId: route.harnessId,
+        instanceKey: route.instanceKey,
+        capacityClass: payload.capacityClass,
+        capacityLimit: 1,
+      })
+    : (hasIntent ? acquireIntendedNativeSessionLease : acquireNativeSessionLease)({
+        ownerRootId: payload.ownerRootId,
+        agentId: agent.agentId,
+        jobId: payload.jobId,
+        ...(hasIntent ? { attemptId: payload.attemptId } : {}),
+        route,
+        harnessId: route.harnessId,
+        instanceKey: route.instanceKey,
+        nativeSessionId: payload.nativeSessionId,
+      });
+  if (mode === "intent_after_acquire") {
+    report("READY", {});
+    await hangForever();
+    return;
+  }
+  if (mode === "intent_after_binding") {
+    bindLaunchClaimLease({ ...identity, attemptId: payload.attemptId, lease });
+    report("READY", {});
+    await hangForever();
+    return;
+  }
 
   if (mode === "claim_before_submission") {
     // Durably bind the claim -- exactly what `launchVersionThreeTurn()` does
@@ -145,6 +195,16 @@ async function run() {
     env: {},
     cwd: payload.workspaceRoot,
   };
+
+  await createLaunchClaimAsync({
+    ...identity,
+    attemptId: payload.attemptId,
+    route,
+    leaseBindings: [lease],
+    assignedMessageIds: input.assignedMessageIds,
+    preparedInput: payload.promptText,
+    turnOptions: null,
+  });
 
   if (mode === "hang_while_running") {
     // Fire and forget: proven native acceptance must land durably before this

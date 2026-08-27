@@ -53,6 +53,8 @@ import {
   readJobFile,
 } from "./job-store.mjs";
 import { projectAgentCard } from "./agent-card.mjs";
+import { enqueueControlCommand } from "./turn-control.mjs";
+import { reconcilePreparedVersionThreeTurns } from "./v3-worker-entry.mjs";
 
 const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "interrupted", "cancelled", "unknown"]);
 const TERMINAL_AGENT_STATUSES = new Set(["completed", "interrupted", "errored"]);
@@ -826,6 +828,20 @@ class AgentRuntime {
     // retained receipt set can itself take longer than the grace window, and
     // must not turn a healthy just-reserved activation into a false orphan.
     const reconciliationStartedAt = Date.now();
+    let versionThreePreparationReceipts;
+    try {
+      versionThreePreparationReceipts = reconcilePreparedVersionThreeTurns({
+        cwd: this.cwd,
+        ownerRootId: this.ownerRootId,
+        reconciliationStartedAt,
+      });
+    } catch {
+      versionThreePreparationReceipts = [{
+        jobId: null,
+        reconciled: false,
+        reason: "v3_pre_submission_scan_deferred",
+      }];
+    }
     const jobs = this.rootJobs();
     const jobsById = new Map(jobs.map((job) => [job.id, job]));
     const diagnosticReceipts = [];
@@ -866,7 +882,7 @@ class AgentRuntime {
     }
     const ordinaryJobs = jobs.filter((job) => !isTerminalPreClaudeActivation(job));
     const ordinaryReceipts = this.store.reconcileFromJobs(ordinaryJobs);
-    const receipts = [...diagnosticReceipts, ...ordinaryReceipts];
+    const receipts = [...versionThreePreparationReceipts, ...diagnosticReceipts, ...ordinaryReceipts];
     for (const receipt of ordinaryReceipts) {
       if (!receipt.jobId) continue;
       const projectionMarkerMissing = !jobsById.get(receipt.jobId)?.agentProjectionReconciledAt;
@@ -1004,23 +1020,81 @@ class AgentRuntime {
       throw new Error(`Unable to activate ${agent.path}: ${activation.reason}.`);
     }
     const attemptId = generateJobId("attempt");
-    try {
-      await this.jobs.launchVersionThreeWorker({
-        agentId: agent.agentId,
-        jobId,
-        attemptId,
-        turnOptions,
-      });
-    } catch (error) {
-      // Nothing native was submitted: the worker never proved it started, so
-      // this rolls back exactly what it reserved.
-      this.rollbackActivation(agent.agentId, jobId, agent, {
-        initial: true,
-        removableMessageId: initialMessage?.messageId,
-      });
-      throw error;
-    }
+    await this.jobs.launchVersionThreeWorker({
+      agentId: agent.agentId,
+      jobId,
+      attemptId,
+      turnOptions,
+    });
     return publicSpawnReceipt(this.cwd, store.resolveTarget(agent.agentId));
+  }
+
+  async followupVersionThreeAgent(input, initialAgent, driver) {
+    const store = this.versionThreeStore();
+    const taskInput = assertText(input.message, "followup_task message");
+    const turnOptions = input.reasoning_effort == null
+      ? null
+      : { effort: input.reasoning_effort };
+
+    this.reconcile();
+    let agent = store.resolveTarget(initialAgent.agentId);
+    if (agent.continuation.mode === "blocked") {
+      throw blockedContinuationRejection(agent, "continue");
+    }
+
+    // An active version-three worker owns its durable mailbox directly. A
+    // follow-up delivered there is steering for the current turn, not a new
+    // turn on which a different reasoning effort could take effect.
+    if (agent.activeJobId) {
+      if (turnOptions != null) {
+        throw new Error(
+          "followup_task reasoning_effort applies only when activating a new turn; " +
+          "this Agent already has an active version-three turn."
+        );
+      }
+      const queued = store.enqueueMessage(agent.agentId, taskInput, { kind: "followup_task" });
+      return publicFollowupReceipt(
+        store.resolveTarget(agent.agentId),
+        queued.delivery === "assigned_active" ? "activation_pending" : "queued_no_turn",
+      );
+    }
+
+    const jobId = generateJobId("hd-agent");
+    // Pure Driver validation precedes every durable mailbox or activation
+    // mutation. The detached worker recomputes the same prepared turn from the
+    // assigned batch and revalidates the host immediately before submission.
+    driver.prepareTurn({
+      route: agent.route,
+      taskInput,
+      turnOptions,
+      turnId: jobId,
+    });
+    const queued = store.enqueueMessage(agent.agentId, taskInput, { kind: "followup_task" });
+    agent = queued.agent;
+    if (queued.delivery === "assigned_active") {
+      // Another caller won the activation race. This message is already bound
+      // to that live worker and must never be launched or replayed here.
+      return publicFollowupReceipt(store.resolveTarget(agent.agentId), "activation_pending");
+    }
+
+    const activation = store.reserveActivation(agent.agentId, jobId, {
+      initial: agent.status === "pending_init" && agent.latestJobId == null,
+    });
+    if (!activation.reserved && activation.reason === "already_active") {
+      return publicFollowupReceipt(store.resolveTarget(agent.agentId), "activation_pending");
+    }
+    if (!activation.reserved) {
+      throw new Error(`Unable to activate ${agent.path}: ${activation.reason}.`);
+    }
+
+    const attemptId = generateJobId("attempt");
+    await this.jobs.launchVersionThreeWorker({
+      agentId: agent.agentId,
+      jobId,
+      attemptId,
+      turnOptions,
+    });
+    return publicFollowupReceipt(store.resolveTarget(agent.agentId), "new_turn");
   }
 
   /**
@@ -1325,16 +1399,15 @@ class AgentRuntime {
     const queued = store.enqueueMessage(agent.agentId, assertText(input.message, "send_message message"), {
       kind: "send_message",
     });
-    // Active delivery is the version-one supervisor's steering path, which reads
-    // a version-one job record. Which path an Agent takes is decided by its
-    // Harness's execution lifecycle, never by its record version: the two are
-    // deliberately independent, so an Agent may hold a version-three record and
-    // still run its turns on the version-one supervisor. A version-three-worker
-    // turn has no job file to steer -- its worker reads the durable mailbox
-    // itself -- so the entry stays queued rather than claiming it was steered.
+    // Active delivery is lifecycle-owned. The version-one supervisor can steer
+    // immediately through its job record. A version-three worker instead reads
+    // the assigned durable mailbox asynchronously, so the public receipt may
+    // report only activation_pending until that worker records acknowledgement.
     const steerable = harnessExecutionLifecycle(agent.harnessId) === "version_one_supervisor";
-    const delivery = queued.delivery === "assigned_active" && steerable
-      ? this.deliverAssignedMessage(queued.agent, queued.message)
+    const delivery = queued.delivery === "assigned_active"
+      ? steerable
+        ? this.deliverAssignedMessage(queued.agent, queued.message)
+        : { delivered: false, reason: "activation_pending" }
       : { delivered: false, reason: "queued_no_turn" };
     const current = store.resolveTarget(agent.agentId);
     return {
@@ -1502,6 +1575,12 @@ class AgentRuntime {
           `Harness ${driver.harnessId} cannot resume Agent ${agent.path} in its exact native session`
         );
       }
+    }
+    if (
+      agent.version === 3 &&
+      harnessExecutionLifecycle(agent.route.harnessId) === "version_three_worker"
+    ) {
+      return await this.followupVersionThreeAgent(input, agent, driver);
     }
     const validationJobId = agent.activeJobId ?? agent.latestJobId;
     const validationLatestJob = validationJobId
@@ -1961,6 +2040,72 @@ class AgentRuntime {
         unsupported: interruptSupport,
       };
     }
+    if (
+      agent.version === 3 &&
+      harnessExecutionLifecycle(agent.route.harnessId) === "version_three_worker"
+    ) {
+      const identity = {
+        ownerRootId: this.ownerRootId,
+        agentId: agent.agentId,
+        jobId: agent.activeJobId,
+      };
+      let record;
+      try {
+        record = readVersionThreeJobRecord(identity);
+      } catch {
+        return { agent_name: agent.path, status: "settlement_unknown" };
+      }
+      // The worker may still be between process handoff and its durable
+      // running record. There is no native turn reference to address yet, so
+      // the only honest request-stage answer is that it is still working.
+      if (!record) {
+        return { agent_name: agent.path, status: "still_working" };
+      }
+      if (record.status !== "running") {
+        if (["completed", "failed", "interrupted"].includes(record.status) && record.terminalJob) {
+          try {
+            this.versionThreeStore().finalizeFromJob(record.terminalJob);
+            const current = this.versionThreeStore().resolveTarget(agent.agentId);
+            return {
+              agent_name: current.path,
+              status: current.activeJobId ? "settlement_unknown" : "no_active_turn",
+            };
+          } catch {}
+        }
+        return { agent_name: agent.path, status: "settlement_unknown" };
+      }
+      try {
+        enqueueControlCommand({
+          commandId: generateJobId("interrupt"),
+          kind: "interrupt",
+          ...identity,
+          route: record.route,
+          nativeTurnRef: record.nativeTurnRef,
+          sanitizedReason: "operator_requested_interrupt",
+        });
+      } catch (error) {
+        // A terminal barrier may win between the running-record read and the
+        // enqueue. Re-read once; never fall through to Claude PID control.
+        if (error?.code === "stream_closed") {
+          try {
+            const raced = readVersionThreeJobRecord(identity);
+            if (["completed", "failed", "interrupted"].includes(raced?.status) && raced?.terminalJob) {
+              this.versionThreeStore().finalizeFromJob(raced.terminalJob);
+              const current = this.versionThreeStore().resolveTarget(agent.agentId);
+              return {
+                agent_name: current.path,
+                status: current.activeJobId ? "settlement_unknown" : "no_active_turn",
+              };
+            }
+          } catch {}
+        }
+        return { agent_name: agent.path, status: "settlement_unknown" };
+      }
+      // Request acceptance is deliberately not terminal settlement. The live
+      // worker owns native acknowledgement and the result promise owns the
+      // eventual terminal projection.
+      return { agent_name: agent.path, status: "still_working" };
+    }
     const interruptSnapshot = versionOneCapabilitySnapshot(agent, driver);
     if (interruptSnapshot) {
       assertHarnessCapability(
@@ -1983,7 +2128,7 @@ class AgentRuntime {
     };
   }
 
-  readAgentMessages(inputValue) {
+  async readAgentMessages(inputValue) {
     const input = assertObject(inputValue, "read_agent_messages input");
     const allowed = new Set(["target", "before", "limit"]);
     const unsupported = Object.keys(input).find((key) => !allowed.has(key));
@@ -2016,12 +2161,12 @@ class AgentRuntime {
     // reference; a legacy record proves it with the legacy pair. Either way the
     // proof has to exist before a transcript is looked for.
     const provenSession = agent.version === 3
-      ? agent.nativeSessionRef?.nativeSessionId
+      ? agent.nativeSessionRef
       : agent.claudeSessionId && agent.claudeConfigDir;
     if (!provenSession) {
-      throw new Error(`Agent ${agent.path} has no proven native Claude session history.`);
+      throw new Error(`Agent ${agent.path} has no proven native session history.`);
     }
-    const history = driver.readAssistantHistory(agent, {
+    const history = await driver.readAssistantHistory(agent, {
       before: input.before,
       limit: input.limit,
     });

@@ -16,7 +16,8 @@ are emergency-only; `HARNESSDOCK_MCP_RESTART_REQUIRED` means new Codex task. Nev
 
 The graceful interrupt request may be accepted, rejected, or left pending by
 the native process; the receipt's `status` is `interrupted`, `still_working`,
-or `failed`. This tool never force-kills a turn, so `still_working` is never
+`failed`, or Pi `settlement_unknown`. A Pi request is nonterminal while
+settlement is unknown; wait for settlement before a follow-up. This tool never force-kills a turn, so `still_working` is never
 a forced termination -- the turn is simply still running. Exact-session
 continuation needs native evidence of a safe flush.
 

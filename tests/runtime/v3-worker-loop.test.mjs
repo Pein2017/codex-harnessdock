@@ -21,7 +21,7 @@ import {
   MAX_FINAL_MESSAGE_CHARS,
 } from "../../runtime/harness-contract.mjs";
 import { acquireInstanceLease } from "../../runtime/instance-admission-lease.mjs";
-import { readLaunchClaim } from "../../runtime/launch-claim.mjs";
+import { createLaunchClaim, readLaunchClaim } from "../../runtime/launch-claim.mjs";
 import { listStoredJobs, readJobFile, reconcileCompletionEvents } from "../../runtime/job-store.mjs";
 import { runVersionThreeWorkerLoop } from "../../runtime/v3-worker-loop.mjs";
 import {
@@ -143,6 +143,18 @@ function setup(options = {}) {
   });
 
   const preparedTurn = fixture.driver.prepareTurn({ route, taskInput: PROMPT });
+  const assignedMessageIds = reservation.assignedMessages.map((message) => message.messageId);
+  createLaunchClaim({
+    ownerRootId,
+    agentId: agent.agentId,
+    jobId,
+    attemptId,
+    route,
+    leaseBindings: [lease],
+    assignedMessageIds,
+    preparedInput: PROMPT,
+    turnOptions: null,
+  });
 
   return {
     ownerRootId,
@@ -161,7 +173,7 @@ function setup(options = {}) {
       driver: fixture.driver,
       preparedTurn,
       preparedInput: PROMPT,
-      assignedMessageIds: reservation.assignedMessages.map((message) => message.messageId),
+      assignedMessageIds,
       assignedInputs: [],
       leaseBindings: [lease],
       // Stated explicitly: this fixture's Driver owns no turn options.
@@ -293,7 +305,11 @@ describe("version-three worker loop: durable turn lifecycle", () => {
     assert.equal(evidence.evidence.attemptId, context.attemptId);
     assert.equal(evidence.evidence.jobId, context.jobId);
     assert.equal(evidence.evidence.nativeTurnRef.locator.turnId, context.turnId());
-    assert.equal(context.agent().nativeSessionRef, null);
+    assert.deepEqual(
+      context.agent().nativeSessionRef,
+      evidence.evidence.nativeSessionRef,
+      "the Driver-validated exact session reference becomes the next turn's resume pointer",
+    );
     assert.equal(context.agent().claudeSessionId, null);
 
     // No foreign locator is ever renamed into a Claude-shaped public field.
@@ -419,6 +435,17 @@ describe("version-three worker loop: mailbox delivery", () => {
       env: {},
       cwd: workspaceRoot,
     };
+    createLaunchClaim({
+      ownerRootId,
+      agentId: agent.agentId,
+      jobId,
+      attemptId: input.attemptId,
+      route,
+      leaseBindings: [lease],
+      assignedMessageIds,
+      preparedInput: PROMPT,
+      turnOptions: null,
+    });
 
     setTimeout(() => {
       const turnIds = fixture.control.turnIds();

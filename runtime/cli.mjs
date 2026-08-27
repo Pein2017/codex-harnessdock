@@ -204,7 +204,7 @@ function listAgents(argv) {
   output(receipt, options.json);
 }
 
-function readAgentMessages(argv) {
+async function readAgentMessages(argv) {
   rejectForbiddenPublicArgs(argv);
   const { options, positionals } = parse(argv, {
     valueOptions: ["target", "before", "limit"],
@@ -213,7 +213,7 @@ function readAgentMessages(argv) {
   if (positionals.length > (options.target ? 0 : 1)) {
     throw new Error("read_agent_messages accepts exactly one target plus optional --before/--limit.");
   }
-  const receipt = createAgentRuntime(runtimeOptions(options)).read_agent_messages({
+  const receipt = await createAgentRuntime(runtimeOptions(options)).read_agent_messages({
     target,
     before: options.before,
     limit: options.limit,
@@ -244,7 +244,7 @@ async function main() {
     case "followup_task": await followupTask(argv); break;
     case "wait_agent": await waitAgent(argv); break;
     case "interrupt_agent": await interruptAgent(argv); break;
-    case "read_agent_messages": readAgentMessages(argv); break;
+    case "read_agent_messages": await readAgentMessages(argv); break;
     case "list_agents": listAgents(argv); break;
     case "worker": await worker(argv); break;
     case "readiness": {

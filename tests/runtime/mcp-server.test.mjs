@@ -69,7 +69,7 @@ describe("typed HarnessDock MCP server", () => {
     assert.equal(Object.hasOwn(spawn.inputSchema.properties, "execution_profile"), false);
     assert.equal(Object.hasOwn(spawn.inputSchema.properties, "allowed_tools"), false);
     assert.equal(Object.hasOwn(spawn.inputSchema.properties, "delegation_mode"), false);
-    assert.deepEqual(spawn.inputSchema.properties.harness.enum, ["claude-code", "opencode"]);
+    assert.deepEqual(spawn.inputSchema.properties.harness.enum, ["claude-code", "opencode", "pi"]);
     assert.deepEqual(spawn.inputSchema.properties.topology.enum, ["leaf", "native_orchestrator"]);
     assert.match(spawn.description, /explicitly stated route/i);
     assert.match(spawn.description, /frozen on the Agent/i);

@@ -50,7 +50,6 @@ const UNRELATED_MODEL_IDENTIFIERS = [
   "glm-5.2",
   "glm-5.3",
   "grok-4.5",
-  "gpt-5.6-luna",
   "hy3",
   "mimo-v2.5",
   "minimax-m2.7",
@@ -63,7 +62,7 @@ const UNRELATED_MODEL_IDENTIFIERS = [
   "deepseek-v4-pro",
   "nemotron-3-ultra-free",
 ];
-const UNRELATED_PROVIDER_IDENTIFIERS = ["anthropic", "openai", "deepseek", "opencode"];
+const UNRELATED_PROVIDER_IDENTIFIERS = ["anthropic", "opencode-go", "deepseek", "opencode"];
 const UNRELATED_AGENT_NAMES = ["build", "compaction", "explore", "general", "plan", "summary", "title"];
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -144,16 +143,16 @@ describe("opencode compatibility probe: pure parsing/sanitization", () => {
 
   it("parses the model catalog and drops malformed lines", () => {
     const stdout = [
-      "opencode-go/deepseek-v4-flash",
-      "opencode-go/deepseek-v4-pro",
+      "openai/gpt-5.6-luna",
+      "openai/gpt-5.6-terra",
       "",
       "not-a-model-line",
       "  opencode/big-pickle  ",
     ].join("\n");
     const models = parseModelCatalog(stdout);
     assert.deepEqual(models, [
-      "opencode-go/deepseek-v4-flash",
-      "opencode-go/deepseek-v4-pro",
+      "openai/gpt-5.6-luna",
+      "openai/gpt-5.6-terra",
       "opencode/big-pickle",
     ]);
   });
@@ -179,22 +178,22 @@ describe("opencode compatibility probe: pure parsing/sanitization", () => {
 
   it("sanitizes the provider catalog to the target route only, dropping cost/env/key", () => {
     const raw = {
-      connected: ["opencode-go", "opencode", "anthropic"],
+      connected: ["openai", "opencode", "anthropic"],
       default: { anthropic: "claude-sonnet-4-6" },
       all: [
         {
-          id: "opencode-go",
-          name: "opencode go",
+          id: "openai",
+          name: "OpenAI",
           source: "custom",
-          env: ["OPENCODE_GO_KEY"],
+          env: ["OPENAI_API_KEY"],
           key: "sk-should-not-appear",
           options: {},
           models: {
-            "deepseek-v4-flash": {
-              id: "deepseek-v4-flash",
-              providerID: "opencode-go",
-              name: "DeepSeek V4 Flash (2x usage)",
-              family: "deepseek-flash",
+            "gpt-5.6-luna": {
+              id: "gpt-5.6-luna",
+              providerID: "openai",
+              name: "GPT-5.6 Luna",
+              family: "gpt-5.6",
               cost: { input: 0.07, output: 0.14 },
               limit: { context: 1000000 },
             },
@@ -204,18 +203,18 @@ describe("opencode compatibility probe: pure parsing/sanitization", () => {
       ],
     };
     const result = sanitizeProviderCatalog(raw, EXPECTED_PROVIDER_ID, EXPECTED_MODEL_ID);
-    assert.deepEqual(result.connected, ["opencode-go", "opencode", "anthropic"]);
+    assert.deepEqual(result.connected, ["openai", "opencode", "anthropic"]);
     assert.equal(result.providerPresent, true);
     assert.equal(result.providerConnected, true);
     assert.deepEqual(result.model, {
-      id: "deepseek-v4-flash",
-      providerID: "opencode-go",
-      name: "DeepSeek V4 Flash (2x usage)",
-      family: "deepseek-flash",
+      id: "gpt-5.6-luna",
+      providerID: "openai",
+      name: "GPT-5.6 Luna",
+      family: "gpt-5.6",
     });
     const serialized = JSON.stringify(result);
     assert.equal(serialized.includes("sk-should-not-appear"), false);
-    assert.equal(serialized.includes("OPENCODE_GO_KEY"), false);
+    assert.equal(serialized.includes("OPENAI_API_KEY"), false);
     assert.equal(serialized.includes("cost"), false);
     assert.equal(serialized.includes("limit"), false);
   });
@@ -231,8 +230,8 @@ describe("opencode compatibility probe: pure parsing/sanitization", () => {
 describe("opencode compatibility probe: model route drift/malformed classification", () => {
   it("confirms the exact route only when both independent surfaces agree", () => {
     const confirmed = classifyModelRoute({
-      cliModels: ["opencode-go/deepseek-v4-flash", "opencode-go/deepseek-v4-pro"],
-      providerCatalog: { providerConnected: true, model: { id: "deepseek-v4-flash", providerID: "opencode-go" } },
+      cliModels: ["openai/gpt-5.6-luna", "openai/gpt-5.6-terra"],
+      providerCatalog: { providerConnected: true, model: { id: "gpt-5.6-luna", providerID: "openai" } },
     });
     assert.equal(confirmed.cliMatch, true);
     assert.equal(confirmed.serverMatch, true);
@@ -241,8 +240,8 @@ describe("opencode compatibility probe: model route drift/malformed classificati
 
   it("fails closed when the CLI catalog is missing the exact identifier", () => {
     const drifted = classifyModelRoute({
-      cliModels: ["opencode-go/deepseek-v4-pro"],
-      providerCatalog: { providerConnected: true, model: { id: "deepseek-v4-flash", providerID: "opencode-go" } },
+      cliModels: ["openai/gpt-5.6-terra"],
+      providerCatalog: { providerConnected: true, model: { id: "gpt-5.6-luna", providerID: "openai" } },
     });
     assert.equal(drifted.cliMatch, false);
     assert.equal(drifted.exact, null);
@@ -250,7 +249,7 @@ describe("opencode compatibility probe: model route drift/malformed classificati
 
   it("fails closed when the Server/client discovery does not report the model", () => {
     const drifted = classifyModelRoute({
-      cliModels: ["opencode-go/deepseek-v4-flash"],
+      cliModels: ["openai/gpt-5.6-luna"],
       providerCatalog: { providerConnected: true, model: null },
     });
     assert.equal(drifted.serverMatch, false);
@@ -258,7 +257,7 @@ describe("opencode compatibility probe: model route drift/malformed classificati
   });
 
   it("fails closed on a malformed/absent provider catalog", () => {
-    const malformed = classifyModelRoute({ cliModels: ["opencode-go/deepseek-v4-flash"], providerCatalog: null });
+    const malformed = classifyModelRoute({ cliModels: ["openai/gpt-5.6-luna"], providerCatalog: null });
     assert.equal(malformed.serverMatch, false);
     assert.equal(malformed.exact, null);
   });
@@ -386,7 +385,7 @@ describe("opencode compatibility probe: forbids production-risk imports and life
 });
 
 describe("opencode compatibility probe: checked-in sanitized fixture", () => {
-  it("is present, structurally sound, and proves zero-model/zero-session with no forbidden fields", () => {
+  it("is present, structurally sound current zero-model evidence", () => {
     const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
     assert.equal(fixture.zeroModel, true);
     assert.equal(fixture.zeroSession, true);
@@ -395,7 +394,7 @@ describe("opencode compatibility probe: checked-in sanitized fixture", () => {
     assert.equal(fixture.modelRoute.cliMatch, true);
     assert.equal(fixture.modelRoute.serverMatch, true);
     assert.equal(fixture.profile.name, EXPECTED_EXPLORER_PROFILE);
-    assert.equal(fixture.profile.present, false);
+    assert.equal(fixture.profile.present, true);
     assert.equal(fixture.continuation.mode, "fresh_only");
     assert.equal(fixture.server.requestAudit.mutatingRequestCount, 0);
     assert.ok(fixture.server.requestAudit.totalRequests > 0);
@@ -419,7 +418,7 @@ describe("opencode compatibility probe: checked-in sanitized fixture", () => {
     assert.doesNotMatch(serialized, /"\/[^"]*\/opencode(\/[^"]*)?"/);
   });
 
-  it("keeps only closed target-model facts in cli.modelCatalog, never the full catalog", () => {
+  it("keeps only target-model facts in cli.modelCatalog, never the full catalog", () => {
     const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
     assert.equal("models" in fixture.cli.modelCatalog, false);
     assert.equal(fixture.cli.modelCatalog.targetPresent, true);
@@ -453,7 +452,7 @@ describe("opencode compatibility probe: checked-in sanitized fixture", () => {
     assert.equal("availableAgents" in fixture.profile, false);
     assert.equal("agents" in fixture.server, false);
     assert.equal(fixture.profile.name, EXPECTED_EXPLORER_PROFILE);
-    assert.equal(fixture.profile.present, false);
+    assert.equal(fixture.profile.present, true);
     // Scoped to profile/server (not sdkTypeShapes, which legitimately contains
     // bounded SDK field names that happen to overlap with English agent-name
     // words, e.g. "summary"/"title" as AssistantMessage/Session field names).
@@ -469,7 +468,7 @@ describe("opencode compatibility probe: projection helpers keep raw data process
     const projected = projectCliDiscovery(
       {
         version: { ok: true, value: "1.18.18" },
-        modelCatalog: { ok: true, models: ["opencode-go/deepseek-v4-flash", "opencode-go/kimi-k3"] },
+        modelCatalog: { ok: true, models: ["openai/gpt-5.6-luna", "openai/gpt-5.6-terra"] },
       },
       "/root/.opencode/bin/opencode"
     );
@@ -506,10 +505,10 @@ describe("opencode compatibility probe: projection helpers keep raw data process
       health: { healthy: true, version: "1.18.18" },
       agents: { ok: true, agents: [{ name: "build", mode: "primary", native: true }] },
       provider: {
-        connected: ["opencode-go", "opencode", "anthropic"],
+        connected: ["openai", "opencode", "anthropic"],
         providerPresent: true,
         providerConnected: true,
-        model: { id: "deepseek-v4-flash", providerID: "opencode-go", name: "DeepSeek V4 Flash", family: "deepseek-flash" },
+        model: { id: "gpt-5.6-luna", providerID: "openai", name: "GPT-5.6 Luna", family: "gpt-5.6" },
       },
       capabilities: { backgroundSubagents: false },
       requestAudit: { totalRequests: 4, mutatingRequestCount: 0, methods: ["GET", "GET", "GET", "GET"] },
@@ -519,7 +518,7 @@ describe("opencode compatibility probe: projection helpers keep raw data process
     assert.deepEqual(projected.provider, {
       providerPresent: true,
       providerConnected: true,
-      model: { id: "deepseek-v4-flash", providerID: "opencode-go", name: "DeepSeek V4 Flash", family: "deepseek-flash" },
+      model: { id: "gpt-5.6-luna", providerID: "openai", name: "GPT-5.6 Luna", family: "gpt-5.6" },
     });
     assert.deepEqual(projected.requestAudit, { totalRequests: 4, mutatingRequestCount: 0, methods: ["GET", "GET", "GET", "GET"] });
   });

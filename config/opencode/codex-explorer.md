@@ -28,7 +28,7 @@
 {
   "description": "Read-only repository Explorer for HarnessDock. Inspects the current workspace with read/list/glob/grep/LSP tools only; it never edits, runs shell, delegates, fetches, or asks for approval.",
   "mode": "primary",
-  "model": "opencode-go/deepseek-v4-flash",
+  "model": "openai/gpt-5.6-luna",
   "permission": {
     "*": "deny",
     "read": {

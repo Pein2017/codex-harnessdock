@@ -37,7 +37,8 @@
             "type": "string",
             "enum": [
               "claude-code",
-              "opencode"
+              "opencode",
+              "pi"
             ],
             "description": "Required Harness this Agent runs on. There is no default Harness."
           },
@@ -48,11 +49,12 @@
               "claude-haiku-4-5",
               "claude-opus-5",
               "claude-sonnet-5",
+              "openai-codex/gpt-5.6-luna",
+              "openai-codex/gpt-5.6-sol",
+              "openai-codex/gpt-5.6-terra",
               "openai/gpt-5.6-luna",
               "openai/gpt-5.6-sol",
-              "openai/gpt-5.6-terra",
-              "opencode-go/deepseek-v4-flash",
-              "opencode-go/deepseek-v4-pro"
+              "openai/gpt-5.6-terra"
             ],
             "description": "Required full model identifier admitted by the stated Harness."
           },

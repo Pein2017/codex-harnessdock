@@ -413,9 +413,12 @@ describe("Task 7.1 — the current public generation stays inert on version two"
 describe("Task 7.4 — the Driver registry stays static and in-tree", () => {
   it("resolves only checkout-owned Harness identities", () => {
     // Version one stays the Claude-only legacy contract; version two is where the
-    // multi-Harness generation admits both checkout-owned Harnesses.
+    // multi-Harness generation admits every checkout-owned Harness.
     assert.deepEqual([...registry.ADMITTED_HARNESS_IDS], [CLAUDE_LEGACY_HARNESS_ID]);
-    assert.deepEqual([...registry.ADMITTED_DRIVER_V2_HARNESS_IDS], [CLAUDE_LEGACY_HARNESS_ID, "opencode"]);
+    assert.deepEqual(
+      [...registry.ADMITTED_DRIVER_V2_HARNESS_IDS],
+      [CLAUDE_LEGACY_HARNESS_ID, "opencode", "pi"],
+    );
     assert.equal(Object.isFrozen(registry.ADMITTED_HARNESS_IDS), true);
     assert.equal(Object.isFrozen(registry.ADMITTED_DRIVER_V2_HARNESS_IDS), true);
     assert.throws(() => resolveHarnessDriver("opencode", { env: {} }), /Unknown Harness/);
@@ -479,7 +482,7 @@ describe("Task 7.4 — the Driver registry stays static and in-tree", () => {
           // endpoint, instance, module, or credential selector, none of which
           // any public schema publishes.
           if (property === "harness") {
-            assert.deepEqual(tool.inputSchema.properties.harness.enum, ["claude-code", "opencode"]);
+            assert.deepEqual(tool.inputSchema.properties.harness.enum, ["claude-code", "opencode", "pi"]);
             continue;
           }
           assert.doesNotMatch(

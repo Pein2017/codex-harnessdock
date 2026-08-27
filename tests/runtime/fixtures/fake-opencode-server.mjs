@@ -34,8 +34,8 @@ export function fakeAssistantMessage(overrides = {}) {
     role: "assistant",
     time: { created: 1_764_000_000_000, completed: 1_764_000_002_000 },
     parentID: "msg_user_fake",
-    modelID: "deepseek-v4-flash",
-    providerID: "opencode-go",
+    modelID: "gpt-5.6-luna",
+    providerID: "openai",
     mode: "primary",
     agent: "codex-explorer",
     path: { cwd: "/opt/operator-owned/workspace", root: "/opt/operator-owned/workspace" },
@@ -120,8 +120,8 @@ export function createFakeOpencodeServer(scenario = {}) {
       id: messageId,
       sessionID: sessionId,
       parentID: body?.messageID ?? "msg_user_fake",
-      modelID: body?.model?.modelID ?? "deepseek-v4-flash",
-      providerID: body?.model?.providerID ?? "opencode-go",
+      modelID: body?.model?.modelID ?? "gpt-5.6-luna",
+      providerID: body?.model?.providerID ?? "openai",
       agent: body?.agent ?? "codex-explorer",
     });
     return {

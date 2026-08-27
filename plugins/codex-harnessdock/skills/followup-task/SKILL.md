@@ -8,7 +8,8 @@ description: 'Experimental: deliver work to a running Agent or activate its prov
 > **Experimental.** May activate an Agent; cannot reactivate an idle Codex parent.
 
 Call `mcp__codex_harnessdock__followup_task` with exact current-root `target` and
-`message`; optional `reasoning_effort` where the route admits one. Trusted Codex
+`message`; optional `reasoning_effort` where admitted. Every new Pi turn needs
+`low`, `medium`, `high`, `xhigh`, or `max`; active input preserves its effort. Trusted Codex
 metadata owns cwd/root. If unavailable, report Plugin startup or discovery failure; never use a shell fallback.
 
 Release drift: use the exact retained Skill path; latest-version instructions
@@ -17,10 +18,10 @@ are emergency-only; `HARNESSDOCK_MCP_RESTART_REQUIRED` means new Codex task. Nev
 - The whole route -- Harness, model, topology, behavioral authority -- is
   frozen at creation and inherited unchanged. This tool accepts no `write`,
   `harness`, or `topology`: a different route means a new Agent.
-- An idle Agent resumes its exact session or a receipt-proven safe-fresh path; a
-  running Agent receives one durable message. Never substitute a Terminal
-  session. A route proving `fresh_only` continuation refuses a second turn by
-  name and needs a new Agent; the Explorer route is such a route.
+- An idle Pi Agent resumes its exact session only, without automatic recovery;
+  an active Pi turn acknowledges serialized input. Other routes may use exact
+  or receipt-proven safe-fresh continuation. Never substitute a Terminal
+  session. A `fresh_only` route needs a new Agent; the Explorer is such a route.
 - An Opus/Fable `native_orchestrator` follow-up never resumes in-process
   teammates: it starts a fresh Native Agent Team under the durable parent.
 - `activation_pending` is durably assigned to a starting activation: use

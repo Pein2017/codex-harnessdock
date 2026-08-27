@@ -18,7 +18,8 @@ are emergency-only; `HARNESSDOCK_MCP_RESTART_REQUIRED` means new Codex task. Nev
   messages only with returned `next_before`.
 - Text is complete within codex-harnessdock; host transport may impose its own
   capacity. Thinking, tools, attachments, child transcripts, and Codex history
-  are excluded, and this never activates the Agent.
+  are excluded, and this never activates the Agent. Pi exposes asynchronous
+  assistant history.
 - A route proving no readable history answers `unsupported` and no messages, and
   no transcript is looked for; the Explorer route is such a route.
 - Current completion comes from `$codex-harnessdock:wait-agent`'s complete

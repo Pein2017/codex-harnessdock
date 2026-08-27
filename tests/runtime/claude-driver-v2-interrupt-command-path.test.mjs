@@ -32,7 +32,7 @@ import {
   inspectDriverInstances,
 } from "../../runtime/harness-registry.mjs";
 import { acquireInstanceLease } from "../../runtime/instance-admission-lease.mjs";
-import { readLaunchClaim } from "../../runtime/launch-claim.mjs";
+import { createLaunchClaim, readLaunchClaim } from "../../runtime/launch-claim.mjs";
 import {
   enqueueControlCommand,
   listControlCommands,
@@ -169,6 +169,17 @@ async function setup(options = {}) {
   });
 
   const preparedTurn = driver.prepareTurn({ route: v3Route, taskInput: PROMPT, turnId: jobId });
+  createLaunchClaim({
+    ownerRootId,
+    agentId: agent.agentId,
+    jobId,
+    attemptId,
+    route: v3Route,
+    leaseBindings: [lease],
+    assignedMessageIds: reservation.assignedMessages.map((message) => message.messageId),
+    preparedInput: PROMPT,
+    turnOptions: preparedTurn.turnOptions,
+  });
 
   function readNativeTurnRef() {
     let claim;

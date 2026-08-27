@@ -28,7 +28,8 @@
  *   - the prepared turn is recomputed by that Driver from the same route and
  *     task text, which is deterministic by construction.
  *
- * A worker that cannot read all of that fails before it claims anything.
+ * A worker that cannot read all of that fails before native submission; the
+ * prepared parent claim then drives the idempotent rollback path.
  *
  * ## Why there is no version-one job file
  *
@@ -43,11 +44,19 @@
 
 import { canonicalAgentWorkspaceRoot, createAgentStore } from "./agent-store.mjs";
 import { FUTURE_WRITE_GENERATION } from "./durable-state-v3.mjs";
-import { acquireInstanceLease } from "./instance-admission-lease.mjs";
+import { validateNativeReferenceEnvelope } from "./native-reference.mjs";
+import {
+  releaseLeasesForPreSubmissionRollback,
+} from "./instance-admission-lease.mjs";
 import { resolveDriverV2 } from "./harness-registry.mjs";
+import {
+  beginPreSubmissionRollback,
+  completePreSubmissionRollback,
+  launchClaimRollbackEligibility,
+  listLaunchClaimsForOwnerRoot,
+  readLaunchClaim,
+} from "./launch-claim.mjs";
 import { runVersionThreeWorkerLoop } from "./v3-worker-loop.mjs";
-
-const V3_TURN_EVIDENCE_CLASS = "v3-public-turn";
 
 /** Read the immutable route from the version-three Agent record, or fail. */
 function requireVersionThreeRoute(agent, agentId) {
@@ -67,16 +76,128 @@ function requireVersionThreeRoute(agent, agentId) {
  * A worker never invents, defaults, or truncates a prompt: an activation with no
  * assigned message is a launch that should never have been handed off.
  */
-function requireAssignedInput(store, agent, jobId) {
-  const assigned = store.listMessages(agent.agentId)
-    .filter((message) => message.state === "assigned" && message.assignedJobId === jobId);
-  if (assigned.length === 0) {
-    throw new Error(`Version-three job ${jobId} has no assigned mailbox message to run.`);
-  }
+function requireAssignedInput(store, agent, jobId, assignedMessageIds) {
+  const byId = new Map(store.listMessages(agent.agentId).map((message) => [message.messageId, message]));
+  const assigned = assignedMessageIds.map((messageId) => {
+    const message = byId.get(messageId);
+    if (!message || message.state !== "assigned" || message.assignedJobId !== jobId) {
+      throw new Error(`Version-three job ${jobId} cannot consume its prepared mailbox message ${messageId}.`);
+    }
+    return message;
+  });
   return {
     taskInput: assigned.map((message) => message.text).join("\n\n"),
-    assignedMessageIds: assigned.map((message) => message.messageId),
+    assignedMessageIds: [...assignedMessageIds],
   };
+}
+
+function removeInitialReservationAfterRollback(store, agentId, removableMessageId) {
+  if (!store.readAgent(agentId)) return;
+  try {
+    store.rollbackReservation(agentId, { removableMessageId });
+  } catch (error) {
+    // Parent and worker may finish the same durable rollback concurrently. The
+    // existing empty-reservation proof owns deletion; absence after the race is
+    // the idempotent result, not permission to weaken that proof.
+    if (!store.readAgent(agentId)) return;
+    throw error;
+  }
+}
+
+/** Recover one prepared attempt without replaying it. Safe to call repeatedly. */
+export function rollbackPreparedVersionThreeTurn({ cwd, ownerRootId, agentId, jobId, attemptId }) {
+  const identity = { ownerRootId, agentId, jobId };
+  let claim = readLaunchClaim(identity);
+  if (!claim) throw new Error(`Version-three rollback found no prepared claim for ${jobId}.`);
+  if (claim.attemptId !== attemptId) throw new Error(`Version-three rollback refuses a different attempt for ${jobId}.`);
+  const store = createAgentStore({ cwd, ownerRootId, writeGeneration: FUTURE_WRITE_GENERATION });
+  if (claim.submissionState === "rollback_complete") {
+    removeInitialReservationAfterRollback(store, agentId, claim.assignedMessageIds[0] ?? null);
+    return claim;
+  }
+  if (claim.submissionState !== "rollback_in_progress") {
+    const eligibility = launchClaimRollbackEligibility(claim);
+    if (!eligibility.eligible) {
+      throw Object.assign(new Error(`Version-three launch ${jobId} is not rollback-safe: ${eligibility.reason}.`), {
+        handoffDisposition: "lifecycle_owned",
+      });
+    }
+    claim = beginPreSubmissionRollback({ ...identity, token: eligibility.token });
+  }
+  releaseLeasesForPreSubmissionRollback({ claim });
+  if (!store.readAgent(agentId)) {
+    const raced = readLaunchClaim(identity);
+    if (raced?.submissionState === "rollback_complete") return raced;
+    throw new Error("Version-three Agent disappeared before rollback completion was durable.");
+  }
+  let restored;
+  try {
+    restored = store.rollbackVersionThreeActivation(agentId, {
+      jobId,
+      removableMessageId: claim.assignedMessageIds[0] ?? null,
+      rollbackClaim: claim,
+    });
+  } catch (error) {
+    const raced = readLaunchClaim(identity);
+    const racedAgent = store.readAgent(agentId);
+    if (
+      raced?.submissionState === "rollback_complete" &&
+      (!racedAgent || racedAgent.activeJobId !== jobId)
+    ) {
+      removeInitialReservationAfterRollback(store, agentId, claim.assignedMessageIds[0] ?? null);
+      return raced;
+    }
+    throw error;
+  }
+  if (!restored.restored) throw new Error(`Version-three activation rollback failed: ${restored.reason}.`);
+  const completed = completePreSubmissionRollback({ ...identity, attemptId });
+  removeInitialReservationAfterRollback(store, agentId, claim.assignedMessageIds[0] ?? null);
+  return completed;
+}
+
+export const PRE_SUBMISSION_RECONCILIATION_AGE_MS = 6_000;
+
+/** Bounded pre-submission cleanup only; never observes or replays a native turn. */
+export function reconcilePreparedVersionThreeTurns({ cwd, ownerRootId, reconciliationStartedAt }) {
+  const startedAt = Number(reconciliationStartedAt);
+  if (!Number.isFinite(startedAt)) throw new Error("Pre-submission reconciliation requires its pass start time.");
+  const receipts = [];
+  for (const claim of listLaunchClaimsForOwnerRoot({ ownerRootId })) {
+    const immediatelyCompletable = claim.submissionState === "rollback_in_progress";
+    const ageEligible = (
+      claim.acceptance === "acceptance_rejected" ||
+      (claim.acceptance === "not_submitted" && claim.submissionState === "not_started")
+    ) && Date.parse(claim.updatedAt) <= startedAt - PRE_SUBMISSION_RECONCILIATION_AGE_MS;
+    if (!immediatelyCompletable && !ageEligible && claim.submissionState !== "rollback_complete") continue;
+    try {
+      const completed = rollbackPreparedVersionThreeTurn({
+        cwd,
+        ownerRootId,
+        agentId: claim.agentId,
+        jobId: claim.jobId,
+        attemptId: claim.attemptId,
+      });
+      receipts.push(Object.freeze({
+        jobId: claim.jobId,
+        reconciled: completed.submissionState === "rollback_complete",
+        reason: "v3_pre_submission_rollback_complete",
+      }));
+    } catch {
+      const raced = readLaunchClaim(claim);
+      const activeWon = raced && (
+        raced.submissionState === "started" ||
+        ["acceptance_unknown", "acceptance_proven"].includes(raced.acceptance)
+      );
+      receipts.push(Object.freeze({
+        jobId: claim.jobId,
+        reconciled: false,
+        reason: activeWon
+          ? "v3_pre_submission_active_launch_won"
+          : "v3_pre_submission_rollback_deferred",
+      }));
+    }
+  }
+  return Object.freeze(receipts);
 }
 
 /**
@@ -99,7 +220,13 @@ export async function runDetachedVersionThreeTurn(input) {
   });
   const agent = store.readAgent(agentId);
   const route = requireVersionThreeRoute(agent, agentId);
-  const { taskInput, assignedMessageIds } = requireAssignedInput(store, agent, jobId);
+  const claim = readLaunchClaim({ ownerRootId, agentId, jobId });
+  if (!claim || claim.attemptId !== attemptId) {
+    throw new Error(`Version-three worker found no exact prepared claim for attempt ${attemptId}.`);
+  }
+  const { taskInput, assignedMessageIds } = requireAssignedInput(
+    store, agent, jobId, claim.assignedMessageIds
+  );
   const driver = resolveDriverV2(route.harnessId, { env });
   const turnOptions = input.turnOptions ?? null;
   const preparedTurn = driver.prepareTurn({
@@ -108,37 +235,56 @@ export async function runDetachedVersionThreeTurn(input) {
     turnOptions,
     turnId: jobId,
   });
-  // Each turn keeps its own durable settlement evidence. Including the job in
-  // the class prevents this evidence lease from becoming an instance-wide cap.
-  const lease = acquireInstanceLease({
-    ownerRootId,
-    agentId: agent.agentId,
-    jobId,
-    route,
-    harnessId: route.harnessId,
-    instanceKey: route.instanceKey,
-    capacityClass: `${V3_TURN_EVIDENCE_CLASS}:${jobId}`,
-    capacityLimit: 1,
-  });
-  return runVersionThreeWorkerLoop({
-    ownerRootId,
-    agentId: agent.agentId,
-    jobId,
-    attemptId,
-    route,
-    driver,
-    preparedTurn,
-    preparedInput: taskInput,
-    assignedMessageIds,
-    assignedInputs: [],
-    leaseBindings: [lease],
-    turnOptions,
-    // The stored canonical workspace root, never a fresh alias: every lease and
-    // writer release in this path must round-trip the exact key the durable
-    // record was written under.
-    workspaceRoot: agent.workspaceRoot ?? canonicalAgentWorkspaceRoot(cwd),
-    env,
-    cwd,
-    signal: input.signal ?? null,
-  });
+  const nativeSessionRef = agent.nativeSessionRef == null
+    ? null
+    : validateNativeReferenceEnvelope(agent.nativeSessionRef, {
+        driver,
+        kind: "session",
+        route,
+      });
+  const preparedLease = claim.leaseBindings[0];
+  if (claim.leaseState !== "acquired") {
+    throw new Error("Version-three worker claim has no durable acquired lease proof.");
+  }
+  if (nativeSessionRef == null && preparedLease?.kind !== "instance") {
+    throw new Error("Fresh version-three worker claim does not hold its prepared instance lease.");
+  }
+  if (
+    nativeSessionRef != null &&
+    (preparedLease?.kind !== "native_session" ||
+      preparedLease.keyFields.nativeSessionId !== nativeSessionRef.locator.sessionId)
+  ) {
+    throw new Error("Exact-session worker claim does not match the Agent's persisted validated session.");
+  }
+  try {
+    return await runVersionThreeWorkerLoop({
+      ownerRootId,
+      agentId: agent.agentId,
+      jobId,
+      attemptId,
+      route,
+      driver,
+      preparedTurn,
+      preparedInput: taskInput,
+      assignedMessageIds,
+      assignedInputs: [],
+      leaseBindings: claim.leaseBindings.map((binding) => ({ ...binding, route: claim.route })),
+      turnOptions,
+      nativeSessionRef,
+      // The stored canonical workspace root, never a fresh alias: every lease and
+      // writer release in this path must round-trip the exact key the durable
+      // record was written under.
+      workspaceRoot: agent.workspaceRoot ?? canonicalAgentWorkspaceRoot(cwd),
+      env,
+      cwd,
+      signal: input.signal ?? null,
+    });
+  } catch (error) {
+    const durable = readLaunchClaim({ ownerRootId, agentId, jobId });
+    const eligible = durable == null ? null : launchClaimRollbackEligibility(durable);
+    if (eligible?.eligible || durable?.submissionState === "rollback_in_progress") {
+      rollbackPreparedVersionThreeTurn({ cwd, ownerRootId, agentId, jobId, attemptId });
+    }
+    throw error;
+  }
 }

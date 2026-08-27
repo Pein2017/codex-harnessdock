@@ -24,8 +24,8 @@ import { createOpencodeClient } from "@opencode-ai/sdk/v2/client";
 import { createFixedOriginFetch, isLoopbackOpencodeUrl } from "../runtime/opencode-client.mjs";
 
 export const EXPECTED_HARNESS = "opencode";
-export const EXPECTED_PROVIDER_ID = "opencode-go";
-export const EXPECTED_MODEL_ID = "deepseek-v4-flash";
+export const EXPECTED_PROVIDER_ID = "openai";
+export const EXPECTED_MODEL_ID = "gpt-5.6-luna";
 export const EXPECTED_MODEL = `${EXPECTED_PROVIDER_ID}/${EXPECTED_MODEL_ID}`;
 export const EXPECTED_EXPLORER_PROFILE = "codex-explorer";
 

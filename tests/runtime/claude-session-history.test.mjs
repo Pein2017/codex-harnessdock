@@ -102,7 +102,7 @@ function writeTranscript(filePath, records) {
 }
 
 describe("native Claude Agent message history", () => {
-  it("returns complete outer-assistant text newest first and filters private records", () => {
+  it("returns complete outer-assistant text newest first and filters private records", async () => {
     const fixture = setup("filtering");
     const huge = `${"界".repeat(24_000)}${"🙂".repeat(3_000)}-tail`;
     assert.ok(Buffer.byteLength(huge, "utf8") > 64 * 1024);
@@ -153,7 +153,7 @@ describe("native Claude Agent message history", () => {
     const before = JSON.stringify(fixture.runtime.store.readAgent(fixture.agent.agentId));
     const inboxFile = resolveCompletionInboxFile(fixture.workspace, fixture.ownerRootId);
     const inboxBefore = fs.readFileSync(inboxFile, "utf8");
-    const latest = fixture.runtime.readAgentMessages({ target: fixture.agent.path });
+    const latest = await fixture.runtime.readAgentMessages({ target: fixture.agent.path });
     assert.equal(latest.agent_name, fixture.agent.path);
     assert.deepEqual(latest.messages, [{
       message_id: "m3",
@@ -163,14 +163,14 @@ describe("native Claude Agent message history", () => {
     assert.equal(latest.next_before, "m3");
     assert.equal(JSON.stringify(fixture.runtime.store.readAgent(fixture.agent.agentId)), before);
 
-    const page = fixture.runtime.readAgentMessages({ target: fixture.agent.agentId, limit: 2 });
+    const page = await fixture.runtime.readAgentMessages({ target: fixture.agent.agentId, limit: 2 });
     assert.deepEqual(page.messages.map((message) => [message.message_id, message.text]), [
       ["m3", huge],
       ["mixed", "visible-only"],
     ]);
     assert.equal(page.next_before, "mixed");
 
-    const older = fixture.runtime.readAgentMessages({
+    const older = await fixture.runtime.readAgentMessages({
       target: fixture.agent.name,
       before: page.next_before,
       limit: 2,
@@ -182,10 +182,10 @@ describe("native Claude Agent message history", () => {
     assert.equal(fs.readFileSync(inboxFile, "utf8"), inboxBefore);
   });
 
-  it("rejects unavailable, ambiguous, escaped, malformed, and invalid-cursor history", () => {
+  it("rejects unavailable, ambiguous, escaped, malformed, and invalid-cursor history", async () => {
     const missing = setup("missing");
-    assert.throws(
-      () => missing.runtime.readAgentMessages({ target: missing.agent.agentId }),
+    await assert.rejects(
+      missing.runtime.readAgentMessages({ target: missing.agent.agentId }),
       /history is unavailable/,
     );
 
@@ -203,8 +203,8 @@ describe("native Claude Agent message history", () => {
 
     const malformed = setup("malformed");
     fs.writeFileSync(malformed.transcript, "{not-json}\n");
-    assert.throws(
-      () => malformed.runtime.readAgentMessages({ target: malformed.agent.agentId }),
+    await assert.rejects(
+      malformed.runtime.readAgentMessages({ target: malformed.agent.agentId }),
       /malformed JSONL/,
     );
 
@@ -212,24 +212,24 @@ describe("native Claude Agent message history", () => {
     writeTranscript(cursor.transcript, [
       record({ uuid: "m1", text: "one", sessionId: cursor.sessionId, timestamp: "2026-07-01T00:00:00.000Z" }),
     ]);
-    assert.throws(
-      () => cursor.runtime.readAgentMessages({ target: cursor.agent.agentId, before: "foreign" }),
+    await assert.rejects(
+      cursor.runtime.readAgentMessages({ target: cursor.agent.agentId, before: "foreign" }),
       /before cursor is not an eligible message/,
     );
-    assert.throws(
-      () => cursor.runtime.readAgentMessages({ target: cursor.agent.agentId, limit: 21 }),
+    await assert.rejects(
+      cursor.runtime.readAgentMessages({ target: cursor.agent.agentId, limit: 21 }),
       /limit must be between 1 and 20/,
     );
-    assert.throws(
-      () => cursor.runtime.readAgentMessages({ target: cursor.agent.agentId, session_id: cursor.sessionId }),
+    await assert.rejects(
+      cursor.runtime.readAgentMessages({ target: cursor.agent.agentId, session_id: cursor.sessionId }),
       /does not support session_id/,
     );
-    assert.throws(
-      () => cursor.runtime.readAgentMessages({ target: cursor.agent.agentId, transcript_path: cursor.transcript }),
+    await assert.rejects(
+      cursor.runtime.readAgentMessages({ target: cursor.agent.agentId, transcript_path: cursor.transcript }),
       /does not support transcript_path/,
     );
-    assert.throws(
-      () => cursor.runtime.readAgentMessages({ target: cursor.agent.agentId, owner_root_id: "foreign" }),
+    await assert.rejects(
+      cursor.runtime.readAgentMessages({ target: cursor.agent.agentId, owner_root_id: "foreign" }),
       /does not support owner_root_id/,
     );
 
@@ -245,7 +245,7 @@ describe("native Claude Agent message history", () => {
       "utf8",
     );
     assert.deepEqual(
-      trailingPartial.runtime.readAgentMessages({ target: trailingPartial.agent.agentId }).messages,
+      (await trailingPartial.runtime.readAgentMessages({ target: trailingPartial.agent.agentId })).messages,
       [{
         message_id: "m1",
         timestamp: "2026-07-01T00:00:00.000Z",
@@ -265,7 +265,7 @@ describe("native Claude Agent message history", () => {
     );
   });
 
-  it("enforces current-root Agent targeting", () => {
+  it("enforces current-root Agent targeting", async () => {
     const fixture = setup("root_a");
     writeTranscript(fixture.transcript, [
       record({ uuid: "m1", text: "owned", sessionId: fixture.sessionId, timestamp: "2026-07-01T00:00:00.000Z" }),
@@ -279,8 +279,8 @@ describe("native Claude Agent message history", () => {
         CLAUDE_CONFIG_DIR: fixture.claudeConfigDir,
       },
     });
-    assert.throws(
-      () => foreign.readAgentMessages({ target: fixture.agent.agentId }),
+    await assert.rejects(
+      foreign.readAgentMessages({ target: fixture.agent.agentId }),
       /No Agent with that exact ID, path, or name exists in this root/,
     );
   });

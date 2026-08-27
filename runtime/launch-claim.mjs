@@ -7,7 +7,8 @@
  *
  * Before `startTurn()`, the supervisor must durably bind one unique launch
  * claim and attempt to the trusted root/Agent/job, the immutable route and
- * capability snapshot, the authority leases already acquired for the turn,
+ * capability snapshot, the exact authority-lease intent before acquisition
+ * and the matching acquired proof before submission,
  * the assigned mailbox/input identity, and a bounded cryptographic input
  * digest -- never prompt/input content, arbitrary environment, an endpoint, a
  * credential, or a live object. This module is the narrow single owner of
@@ -22,10 +23,11 @@
  * settlement, transcript continuation, request acknowledgement, or job
  * completion -- those live in `runtime/turn-settlement.mjs` and
  * `runtime/turn-control.mjs`. A separate, independently monotonic
- * `submissionState` (`not_started|started`) records only whether a native
- * submission attempt has begun; see `markNativeSubmissionStarted()` and
- * `launchClaimRollbackEligibility()` below for why this axis exists and how
- * it gates rollback.
+ * `submissionState` (`not_started|started|rollback_in_progress|
+ * rollback_complete`) records whether native submission began or the
+ * mutually exclusive pre-submission rollback fence won; see
+ * `markNativeSubmissionStarted()` and `launchClaimRollbackEligibility()`
+ * below for why this axis exists and how it gates rollback.
  *
  * `acceptance_proven` requires a fully canonical native turn reference bound
  * to this claim's own route; a raw/fresh locator, a PID, a prompt-write
@@ -123,7 +125,8 @@ import {
   validateProcessIdentity,
 } from "./process-control.mjs";
 
-export const LAUNCH_CLAIM_SCHEMA_VERSION = 1;
+export const LAUNCH_CLAIM_SCHEMA_VERSION = 2;
+const LEGACY_LAUNCH_CLAIM_SCHEMA_VERSION = 1;
 
 /** The closed acceptance axis. Never collapsed with native turn state, settlement, submission, or completion. */
 export const LAUNCH_ACCEPTANCE_VALUES = Object.freeze([
@@ -141,7 +144,9 @@ export const LAUNCH_ACCEPTANCE_VALUES = Object.freeze([
  * `submissionState` is `started`, and that combination is never
  * rollback-eligible (see `launchClaimRollbackEligibility()`).
  */
-export const SUBMISSION_STATES = Object.freeze(["not_started", "started"]);
+export const SUBMISSION_STATES = Object.freeze([
+  "not_started", "started", "rollback_in_progress", "rollback_complete",
+]);
 
 /**
  * The closed lease kinds a launch claim may bind against, reused directly
@@ -401,6 +406,10 @@ function claimIdentityKey({ ownerRootId, agentId, jobId, attemptId }) {
   return `${ownerRootId}\0${agentId}\0${jobId}\0${attemptId}`;
 }
 
+function claimJobIdentityKey({ ownerRootId, agentId, jobId }) {
+  return `${ownerRootId}\0${agentId}\0${jobId}`;
+}
+
 function bindLiveHarnessTurnToClaim(liveHarnessTurn, identity, label) {
   const key = claimIdentityKey(identity);
   const existingKey = LIVE_TURN_CLAIM_BINDING.get(liveHarnessTurn);
@@ -539,8 +548,8 @@ function canonicalizeLeaseBindings(leaseBindings, boundIdentity, boundRoute, bou
 // before this lock may share an event loop with a live Driver connection.
 // ---------------------------------------------------------------------------
 
-function resolveLaunchClaimRoot() {
-  return path.join(resolvePluginStateRoot(), "launch-claims", `v${LAUNCH_CLAIM_SCHEMA_VERSION}`);
+function resolveLaunchClaimRoot(version = LAUNCH_CLAIM_SCHEMA_VERSION) {
+  return path.join(resolvePluginStateRoot(), "launch-claims", `v${version}`);
 }
 
 function jobDigest({ ownerRootId, agentId, jobId }) {
@@ -559,6 +568,10 @@ function jobDigest({ ownerRootId, agentId, jobId }) {
 export function resolveLaunchClaimDirectory({ ownerRootId, agentId, jobId }) {
   const identity = assertBindingIdentity({ ownerRootId, agentId, jobId });
   return path.join(resolveLaunchClaimRoot(), jobDigest(identity));
+}
+
+function resolveLegacyLaunchClaimDirectory(identity) {
+  return path.join(resolveLaunchClaimRoot(LEGACY_LAUNCH_CLAIM_SCHEMA_VERSION), jobDigest(identity));
 }
 
 function claimFileName(attemptId) {
@@ -748,11 +761,14 @@ function writeAtomicClaimFile(filePath, data, { createOnly = false } = {}) {
 
 const LAUNCH_CLAIM_FIELDS = Object.freeze([
   "version", "ownerRootId", "agentId", "jobId", "attemptId",
-  "route", "leaseBindings", "assignedMessageIds", "inputDigest",
+  "route", "leaseState", "leaseIntent", "leaseBindings", "assignedMessageIds", "inputDigest",
   "acceptance", "nativeTurnRef", "nativeSessionRef", "acceptanceEvidenceAt", "sanitizedDetail",
   "submissionState", "submissionStartedAt",
   "createdAt", "updatedAt",
 ]);
+const LEGACY_LAUNCH_CLAIM_FIELDS = Object.freeze(
+  LAUNCH_CLAIM_FIELDS.filter((field) => !["leaseState", "leaseIntent"].includes(field))
+);
 
 const LEASE_RECEIPT_FIELDS = Object.freeze([
   "kind", "keyFields", "capacity", "routeDigest", "ownerRootId", "agentId", "jobId", "evidenceDigest",
@@ -844,8 +860,8 @@ function validateLeaseReceipt(receipt, index, label) {
 }
 
 function validateLeaseBindingsList(value, label) {
-  if (!Array.isArray(value) || value.length === 0) {
-    throw new Error(`${label} requires at least one authority lease binding before any possible native submission.`);
+  if (!Array.isArray(value)) {
+    throw new Error(`${label} must be an authority lease binding array.`);
   }
   if (value.length > MAX_LEASE_BINDINGS) {
     throw new Error(`${label} declares more lease bindings than the closed lease-kind vocabulary admits.`);
@@ -899,6 +915,7 @@ function assertSubmissionCrossFieldInvariants(submissionState, submissionStarted
     }
     return;
   }
+  if (["rollback_in_progress", "rollback_complete"].includes(submissionState)) return;
   if (submissionStartedAt === null) {
     throw new Error(`${label} submissionState started requires a submission-started timestamp.`);
   }
@@ -937,9 +954,13 @@ function validateLaunchClaimRecord(parsed) {
   const identity = assertBindingIdentity(snapshot);
   const attemptId = assertIdentityText(snapshot.attemptId, `${label} attemptId`);
   const route = validateVersionThreeRoute(snapshot.route, `${label} route`);
+  const leaseState = ["intended", "acquired"].includes(snapshot.leaseState) ? snapshot.leaseState : null;
+  if (leaseState == null) throw new Error(`${label} has an unsupported leaseState.`);
+  const leaseIntent = validateLeaseBindingsList(snapshot.leaseIntent, `${label} leaseIntent`);
+  if (leaseIntent.length === 0) throw new Error(`${label} requires at least one exact lease intent.`);
   const leaseBindings = validateLeaseBindingsList(snapshot.leaseBindings, `${label} leaseBindings`);
   const expectedRouteDigest = routeDigestOf(route);
-  for (const receipt of leaseBindings) {
+  for (const receipt of [...leaseIntent, ...leaseBindings]) {
     if (receipt.ownerRootId !== identity.ownerRootId || receipt.agentId !== identity.agentId || receipt.jobId !== identity.jobId) {
       throw new Error(`${label} lease binding identity does not match this launch claim's own owner root/Agent/job.`);
     }
@@ -949,6 +970,15 @@ function validateLaunchClaimRecord(parsed) {
         `${label} lease binding route digest does not match this launch claim's full canonical route/capability snapshot.`
       );
     }
+  }
+  if (leaseState === "intended" && leaseBindings.length !== 0) {
+    throw new Error(`${label} intended lease must not claim acquired bindings.`);
+  }
+  if (
+    leaseState === "acquired" &&
+    JSON.stringify(leaseBindings) !== JSON.stringify(leaseIntent)
+  ) {
+    throw new Error(`${label} acquired lease must bind exactly its durable pre-acquisition intent.`);
   }
   const assignedMessageIds = assertAssignedMessageIds(snapshot.assignedMessageIds, `${label} assignedMessageIds`);
   const inputDigest = assertInputDigest(snapshot.inputDigest);
@@ -985,6 +1015,8 @@ function validateLaunchClaimRecord(parsed) {
     jobId: identity.jobId,
     attemptId,
     route,
+    leaseState,
+    leaseIntent,
     leaseBindings,
     assignedMessageIds,
     inputDigest,
@@ -1000,6 +1032,26 @@ function validateLaunchClaimRecord(parsed) {
   });
 }
 
+function validateLegacyLaunchClaimRecord(parsed) {
+  const snapshot = plainRecordSnapshot(parsed, "Legacy launch claim record");
+  assertClosedFieldSet(snapshot, LEGACY_LAUNCH_CLAIM_FIELDS, "Legacy launch claim record");
+  if (snapshot.version !== LEGACY_LAUNCH_CLAIM_SCHEMA_VERSION) {
+    throw taggedError(
+      "unsupported_version",
+      `Legacy launch claim record declares unsupported schema version ${JSON.stringify(snapshot.version ?? null)}.`
+    );
+  }
+  if (!Array.isArray(snapshot.leaseBindings) || snapshot.leaseBindings.length === 0) {
+    throw new Error("Legacy launch claim record requires nonempty acquired lease bindings.");
+  }
+  return validateLaunchClaimRecord({
+    ...snapshot,
+    version: LAUNCH_CLAIM_SCHEMA_VERSION,
+    leaseState: "acquired",
+    leaseIntent: snapshot.leaseBindings,
+  });
+}
+
 /**
  * Read and validate one durable claim record. Beyond
  * `validateLaunchClaimRecord()` itself, this additionally proves the record
@@ -1008,7 +1060,7 @@ function validateLaunchClaimRecord(parsed) {
  * failure throws with a closed `.code` rather than being silently skipped or
  * deleted.
  */
-function readClaimFile(filePath, expectedDir) {
+function readClaimFile(filePath, expectedDir, { legacy = false } = {}) {
   let raw;
   try {
     raw = fs.readFileSync(filePath, "utf8");
@@ -1023,11 +1075,13 @@ function readClaimFile(filePath, expectedDir) {
   }
   let record;
   try {
-    record = validateLaunchClaimRecord(parsed);
+    record = legacy ? validateLegacyLaunchClaimRecord(parsed) : validateLaunchClaimRecord(parsed);
   } catch (error) {
     throw taggedError(error.code ?? "invalid_shape", `Launch claim record ${filePath} is corrupt: ${error.message}`);
   }
-  const derivedDir = resolveLaunchClaimDirectory(record);
+  const derivedDir = legacy
+    ? resolveLegacyLaunchClaimDirectory(record)
+    : resolveLaunchClaimDirectory(record);
   const expectedFile = path.join(derivedDir, claimFileName(record.attemptId));
   if (expectedDir !== derivedDir || filePath !== expectedFile) {
     throw taggedError(
@@ -1038,7 +1092,7 @@ function readClaimFile(filePath, expectedDir) {
   return record;
 }
 
-function readClaimFiles(claimDir) {
+function readClaimFiles(claimDir, options = {}) {
   let entries = [];
   try {
     entries = fs.readdirSync(claimDir, { withFileTypes: true });
@@ -1048,7 +1102,7 @@ function readClaimFiles(claimDir) {
   const records = [];
   for (const entry of entries) {
     if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-    records.push(readClaimFile(path.join(claimDir, entry.name), claimDir));
+    records.push(readClaimFile(path.join(claimDir, entry.name), claimDir, options));
   }
   return records;
 }
@@ -1060,8 +1114,8 @@ function readClaimFiles(claimDir) {
  * a second `attemptId` before ever writing a second file -- so this fails
  * closed rather than guessing which one is authoritative.
  */
-function readSingleClaimRecord(claimDir) {
-  const records = readClaimFiles(claimDir);
+function readSingleClaimRecord(claimDir, options = {}) {
+  const records = readClaimFiles(claimDir, options);
   if (records.length === 0) return null;
   if (records.length > 1) {
     throw taggedError(
@@ -1072,14 +1126,171 @@ function readSingleClaimRecord(claimDir) {
   return records[0];
 }
 
+function readCurrentOrMigrateWhileLocked(identity) {
+  const currentDir = resolveLaunchClaimDirectory(identity);
+  const current = readSingleClaimRecord(currentDir);
+  const legacy = readSingleClaimRecord(resolveLegacyLaunchClaimDirectory(identity), { legacy: true });
+  if (current && legacy && JSON.stringify(current) !== JSON.stringify(legacy)) {
+    throw taggedError(
+      "ambiguous_launch_claim_versions",
+      "Legacy and current launch claims disagree for the same owner root, Agent, and job."
+    );
+  }
+  if (current) return current;
+  if (!legacy) return null;
+  ensureDirectory(currentDir);
+  writeAtomicClaimFile(
+    path.join(currentDir, claimFileName(legacy.attemptId)),
+    legacy,
+    { createOnly: true },
+  );
+  return readSingleClaimRecord(currentDir);
+}
+
 // ---------------------------------------------------------------------------
 // Public surface.
 // ---------------------------------------------------------------------------
 
-/** Read the one launch claim for a job, or `null` if none exists yet. Read-only; no lock. */
+/** Read the one launch claim for a job, migrating an immutable v1 record to v2 when needed. */
 export function readLaunchClaim({ ownerRootId, agentId, jobId }) {
   const identity = assertBindingIdentity({ ownerRootId, agentId, jobId });
-  return readSingleClaimRecord(resolveLaunchClaimDirectory(identity));
+  const claimDir = resolveLaunchClaimDirectory(identity);
+  const current = readSingleClaimRecord(claimDir);
+  const legacy = readSingleClaimRecord(resolveLegacyLaunchClaimDirectory(identity), { legacy: true });
+  if (current && legacy && JSON.stringify(current) !== JSON.stringify(legacy)) {
+    throw taggedError(
+      "ambiguous_launch_claim_versions",
+      "Legacy and current launch claims disagree for the same owner root, Agent, and job."
+    );
+  }
+  if (current) return current;
+  if (!legacy) return null;
+  const lock = acquireDirectoryLock(claimDir);
+  try {
+    return readCurrentOrMigrateWhileLocked(identity);
+  } finally {
+    releaseDirectoryLock(lock);
+  }
+}
+
+const MAX_RECONCILIATION_CLAIM_DIRECTORIES = 4096;
+const MAX_RECONCILIATION_FILES_PER_DIRECTORY = 4;
+
+function scanClaimRoot(version, ownerRootId) {
+  const root = resolveLaunchClaimRoot(version);
+  let entries = [];
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  }
+  const directories = entries.filter((entry) => entry.isDirectory() && !entry.name.startsWith("."));
+  if (directories.length > MAX_RECONCILIATION_CLAIM_DIRECTORIES) {
+    throw taggedError(
+      "launch_claim_scan_bound_exceeded",
+      "Launch claim reconciliation scan exceeds its fixed directory bound."
+    );
+  }
+  const records = [];
+  for (const entry of directories) {
+    const directory = path.join(root, entry.name);
+    const files = fs.readdirSync(directory, { withFileTypes: true })
+      .filter((candidate) => candidate.isFile() && candidate.name.endsWith(".json"));
+    if (files.length > MAX_RECONCILIATION_FILES_PER_DIRECTORY) {
+      throw taggedError(
+        "launch_claim_scan_bound_exceeded",
+        "Launch claim reconciliation scan exceeds its fixed per-directory file bound."
+      );
+    }
+    const matching = [];
+    for (const file of files) {
+      const filePath = path.join(directory, file.name);
+      let parsed;
+      try {
+        parsed = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      } catch {
+        throw taggedError("corrupt_json", "Launch claim reconciliation encountered invalid JSON.");
+      }
+      if (typeof parsed?.ownerRootId !== "string") {
+        throw taggedError("invalid_shape", "Launch claim reconciliation encountered an invalid owner root identity.");
+      }
+      if (parsed.ownerRootId !== ownerRootId) continue;
+      matching.push(readClaimFile(filePath, directory, {
+        legacy: version === LEGACY_LAUNCH_CLAIM_SCHEMA_VERSION,
+      }));
+    }
+    if (matching.length > 1) {
+      throw taggedError(
+        "multiple_launch_claims_present",
+        "More than one launch claim record is present for one current-root job activation."
+      );
+    }
+    if (matching[0]) records.push(matching[0]);
+  }
+  return records;
+}
+
+/** Bounded internal inventory for one exact owner root; never exposes prompt/input text. */
+export function listLaunchClaimsForOwnerRoot({ ownerRootId }) {
+  const root = assertIdentityText(ownerRootId, "Launch claim owner root ID");
+  const claims = new Map();
+  for (const record of scanClaimRoot(LAUNCH_CLAIM_SCHEMA_VERSION, root)) {
+    claims.set(claimJobIdentityKey(record), record);
+  }
+  for (const legacy of scanClaimRoot(LEGACY_LAUNCH_CLAIM_SCHEMA_VERSION, root)) {
+    const key = claimJobIdentityKey(legacy);
+    const current = claims.get(key);
+    if (current && JSON.stringify(current) !== JSON.stringify(legacy)) {
+      throw taggedError(
+        "ambiguous_launch_claim_versions",
+        "Legacy and current launch claims disagree for the same owner root, Agent, and job."
+      );
+    }
+    if (!current) claims.set(key, legacy);
+  }
+  return Object.freeze([...claims.values()]);
+}
+
+/**
+ * Verify that a detached worker is consuming the exact claim its parent
+ * prepared. This recomputes the private input digest but never creates or
+ * advances durable state.
+ */
+export function verifyPreparedLaunchClaim(input) {
+  const snapshot = plainRecordSnapshot(input, "Prepared launch claim verification input");
+  assertNoUnknownFields(snapshot, [
+    "ownerRootId", "agentId", "jobId", "attemptId", "route",
+    "assignedMessageIds", "preparedInput", "turnOptions",
+  ], "Prepared launch claim verification input");
+  const identity = assertBindingIdentity(snapshot);
+  const stored = readLaunchClaim(identity);
+  if (!stored) throw taggedError("not_found", `No launch claim exists for job ${identity.jobId}.`);
+  const attemptId = assertIdentityText(snapshot.attemptId, "Prepared launch claim attemptId");
+  const route = validateVersionThreeRoute(snapshot.route, "Prepared launch claim route");
+  const assignedMessageIds = assertAssignedMessageIds(
+    snapshot.assignedMessageIds, "Prepared launch claim assignedMessageIds"
+  );
+  const inputDigest = computeInputDigest(
+    assignedMessageIds,
+    assertPreparedInputText(snapshot.preparedInput, "Prepared launch claim input"),
+    canonicalTurnOptionsText(snapshot.turnOptions ?? null, "Prepared launch claim turnOptions"),
+  );
+  if (
+    stored.attemptId !== attemptId ||
+    JSON.stringify(stored.route) !== JSON.stringify(route) ||
+    JSON.stringify(stored.assignedMessageIds) !== JSON.stringify(assignedMessageIds) ||
+    stored.inputDigest !== inputDigest
+  ) {
+    throw taggedError("prepared_claim_mismatch", "Detached worker input does not match its durable prepared launch claim.");
+  }
+  if (["rollback_in_progress", "rollback_complete"].includes(stored.submissionState)) {
+    throw taggedError("rollback_fenced", "Detached worker is fenced by durable pre-submission rollback.");
+  }
+  if (stored.leaseState !== "acquired") {
+    throw taggedError("lease_not_acquired", "Detached worker launch claim has not durably bound its intended lease.");
+  }
+  return stored;
 }
 
 const CREATE_INPUT_FIELDS = Object.freeze([
@@ -1146,7 +1357,9 @@ function createLaunchClaimWhileLocked(prepared) {
     identity, canonicalAttemptId, canonicalRoute, canonicalLeaseBindings,
     canonicalAssignedMessageIds, canonicalInputDigest, claimDir,
   } = prepared;
-  const existing = readSingleClaimRecord(claimDir);
+  const leaseState = prepared.leaseState ?? "acquired";
+  const leaseIntent = prepared.leaseIntent ?? canonicalLeaseBindings;
+  const existing = readCurrentOrMigrateWhileLocked(identity);
   if (existing) {
     if (existing.attemptId !== canonicalAttemptId) {
       throw taggedError(
@@ -1157,6 +1370,8 @@ function createLaunchClaimWhileLocked(prepared) {
     }
     const identical = (
       JSON.stringify(existing.route) === JSON.stringify(canonicalRoute) &&
+      existing.leaseState === leaseState &&
+      JSON.stringify(existing.leaseIntent) === JSON.stringify(leaseIntent) &&
       JSON.stringify(existing.leaseBindings) === JSON.stringify(canonicalLeaseBindings) &&
       JSON.stringify(existing.assignedMessageIds) === JSON.stringify(canonicalAssignedMessageIds) &&
       existing.inputDigest === canonicalInputDigest
@@ -1178,6 +1393,8 @@ function createLaunchClaimWhileLocked(prepared) {
     jobId: identity.jobId,
     attemptId: canonicalAttemptId,
     route: canonicalRoute,
+    leaseState,
+    leaseIntent,
     leaseBindings: canonicalLeaseBindings,
     assignedMessageIds: canonicalAssignedMessageIds,
     inputDigest: canonicalInputDigest,
@@ -1213,7 +1430,8 @@ function createLaunchClaimWhileLocked(prepared) {
  * logged, or returned.
  *
  * @param {{ownerRootId: string, agentId: string, jobId: string, attemptId: string,
- *   route: *, leaseBindings: *[], assignedMessageIds: string[], preparedInput: string}} input
+ *   route: *, leaseBindings: *[], assignedMessageIds: string[], preparedInput: string,
+ *   turnOptions?: object|null}} input
  */
 export function createLaunchClaim(input) {
   const prepared = prepareLaunchClaimCreate(input);
@@ -1236,10 +1454,107 @@ export async function createLaunchClaimAsync(input) {
   }
 }
 
+const INTENT_INPUT_FIELDS = Object.freeze([
+  "ownerRootId", "agentId", "jobId", "attemptId", "route", "expectedLease",
+  "assignedMessageIds", "preparedInput", "turnOptions",
+]);
+
+function expectedLeaseReceipt(expectedLease, identity, route) {
+  const snapshot = plainRecordSnapshot(expectedLease, "Launch claim expected lease");
+  const kind = snapshot.kind;
+  if (!["instance", "native_session"].includes(kind)) {
+    throw new Error("Launch claim expected lease kind must be instance or native_session.");
+  }
+  const expectedFields = kind === "instance"
+    ? ["kind", "capacityClass", "capacityLimit"]
+    : ["kind", "nativeSessionId"];
+  assertClosedFieldSet(snapshot, expectedFields, "Launch claim expected lease");
+  const keyFields = kind === "instance"
+    ? Object.freeze({ harnessId: route.harnessId, instanceKey: route.instanceKey })
+    : Object.freeze({
+        harnessId: route.harnessId,
+        instanceKey: route.instanceKey,
+        nativeSessionId: assertIdentityText(snapshot.nativeSessionId, "Launch claim expected native session ID"),
+      });
+  const capacity = kind === "instance"
+    ? validateStoredCapacity(
+        { class: snapshot.capacityClass, limit: snapshot.capacityLimit },
+        "Launch claim expected instance capacity",
+      )
+    : Object.freeze({ class: null, limit: 1 });
+  const routeDigest = routeDigestOf(route);
+  return Object.freeze({
+    kind,
+    keyFields,
+    capacity,
+    routeDigest,
+    ...identity,
+    evidenceDigest: evidenceDigestOf({ kind, keyFields, capacity, routeDigest, ...identity }),
+  });
+}
+
+/** Persist exact launch and lease intent before acquiring the intended holder. */
+export function createLaunchIntent(input) {
+  const snapshot = plainRecordSnapshot(input, "Launch claim intent input");
+  assertNoUnknownFields(snapshot, INTENT_INPUT_FIELDS, "Launch claim intent input");
+  if (!Object.hasOwn(snapshot, "turnOptions")) throw new Error("Launch claim intent requires turnOptions.");
+  const identity = assertBindingIdentity(snapshot);
+  const canonicalRoute = validateVersionThreeRoute(snapshot.route, "Launch claim intent route");
+  const leaseIntent = expectedLeaseReceipt(snapshot.expectedLease, identity, canonicalRoute);
+  const assignedMessageIds = assertAssignedMessageIds(snapshot.assignedMessageIds, "Launch claim intent assignedMessageIds");
+  const inputDigest = computeInputDigest(
+    assignedMessageIds,
+    assertPreparedInputText(snapshot.preparedInput, "Launch claim intent preparedInput"),
+    canonicalTurnOptionsText(snapshot.turnOptions ?? null, "Launch claim intent turnOptions"),
+  );
+  const prepared = {
+    identity,
+    canonicalAttemptId: assertIdentityText(snapshot.attemptId, "Launch claim intent attemptId"),
+    canonicalRoute,
+    canonicalLeaseBindings: Object.freeze([]),
+    canonicalAssignedMessageIds: assignedMessageIds,
+    canonicalInputDigest: inputDigest,
+    leaseState: "intended",
+    leaseIntent: [leaseIntent],
+    claimDir: resolveLaunchClaimDirectory(identity),
+  };
+  const lock = acquireDirectoryLock(prepared.claimDir);
+  try { return createLaunchClaimWhileLocked(prepared); }
+  finally { releaseDirectoryLock(lock); }
+}
+
+/** Bind the exact branded acquisition to its already durable intent. */
+export function bindLaunchClaimLease({ ownerRootId, agentId, jobId, attemptId, lease }) {
+  const identity = assertBindingIdentity({ ownerRootId, agentId, jobId });
+  const claimDir = resolveLaunchClaimDirectory(identity);
+  const lock = acquireDirectoryLock(claimDir);
+  try {
+    const { filePath, record } = loadClaimForMutation(identity, attemptId, "Launch claim lease binding");
+    if (record.leaseState === "acquired") return record;
+    if (record.submissionState !== "not_started" || record.acceptance !== "not_submitted") {
+      throw new Error("Launch claim lease binding must precede native submission.");
+    }
+    const receipt = leaseBindingReceipt(
+      lease, identity, record.route, routeDigestOf(record.route), "Launch claim acquired lease",
+    );
+    if (JSON.stringify([receipt]) !== JSON.stringify(record.leaseIntent)) {
+      throw new Error("Acquired lease does not match the durable pre-acquisition intent.");
+    }
+    const updated = validateLaunchClaimRecord({
+      ...record,
+      leaseState: "acquired",
+      leaseBindings: [receipt],
+      updatedAt: nowIso(),
+    });
+    writeAtomicClaimFile(filePath, updated);
+    return updated;
+  } finally { releaseDirectoryLock(lock); }
+}
+
 function loadClaimForMutation(identity, attemptId, label) {
   const canonicalAttemptId = assertIdentityText(attemptId, `${label} attemptId`);
   const claimDir = resolveLaunchClaimDirectory(identity);
-  const record = readSingleClaimRecord(claimDir);
+  const record = readCurrentOrMigrateWhileLocked(identity);
   if (!record) {
     throw taggedError("not_found", `No launch claim exists for job ${identity.jobId}.`);
   }
@@ -1267,6 +1582,12 @@ function prepareClaimIdentityInput(input, fields, label) {
 function markNativeSubmissionStartedWhileLocked({ identity, attemptId }) {
   const { filePath, record } = loadClaimForMutation(identity, attemptId, "Launch claim submission-started");
   if (record.submissionState === "started") return { started: false, record };
+  if (["rollback_in_progress", "rollback_complete"].includes(record.submissionState)) {
+    throw new Error("Launch claim submission-started is fenced by a pre-submission rollback.");
+  }
+  if (record.leaseState !== "acquired") {
+    throw new Error("Launch claim submission-started requires durable acquired lease proof.");
+  }
   if (record.acceptance !== "not_submitted") {
     throw new Error(
       `Launch claim submission-started refuses to start submission after acceptance has already been recorded ` +
@@ -1619,7 +1940,7 @@ export const LAUNCH_CLAIM_ROLLBACK_REASONS = Object.freeze([
  */
 export function launchClaimRollbackEligibility(record) {
   const validated = validateLaunchClaimRecord(record);
-  const stored = readSingleClaimRecord(resolveLaunchClaimDirectory(validated));
+  const stored = readLaunchClaim(validated);
   if (!stored || JSON.stringify(stored) !== JSON.stringify(validated)) {
     throw new Error(
       "Launch claim rollback-eligibility requires the exact currently durable record for this job; a " +
@@ -1645,4 +1966,72 @@ export function launchClaimRollbackEligibility(record) {
     return Object.freeze({ eligible: false, reason: "acceptance_unknown_never_rollback_safe", token });
   }
   return Object.freeze({ eligible: false, reason: "acceptance_proven_never_rollback_safe", token });
+}
+
+const ROLLBACK_INPUT_FIELDS = Object.freeze(["ownerRootId", "agentId", "jobId", "token"]);
+
+/**
+ * Win the durable pre-submission rollback fence. The caller must present the
+ * exact fresh eligibility token; once this write wins, no stale worker can
+ * cross the native-submission fence for this attempt.
+ */
+export function beginPreSubmissionRollback(input) {
+  const snapshot = plainRecordSnapshot(input, "Launch claim rollback input");
+  assertNoUnknownFields(snapshot, ROLLBACK_INPUT_FIELDS, "Launch claim rollback input");
+  const identity = assertBindingIdentity(snapshot);
+  const token = plainRecordSnapshot(snapshot.token, "Launch claim rollback token");
+  assertClosedFieldSet(token, ["attemptId", "acceptance", "submissionState", "updatedAt"], "Launch claim rollback token");
+  const claimDir = resolveLaunchClaimDirectory(identity);
+  const lock = acquireDirectoryLock(claimDir);
+  try {
+    const record = readCurrentOrMigrateWhileLocked(identity);
+    if (!record || record.attemptId !== token.attemptId || record.acceptance !== token.acceptance ||
+      record.submissionState !== token.submissionState || record.updatedAt !== token.updatedAt) {
+      throw taggedError("stale_rollback_token", "Launch claim rollback token is stale or does not name the current attempt.");
+    }
+    const eligibility = record.acceptance === "acceptance_rejected" ||
+      (record.acceptance === "not_submitted" && record.submissionState === "not_started");
+    if (!eligibility) throw taggedError("rollback_not_eligible", "Launch claim is not safely rollback-eligible.");
+    const updatedAt = nowIso();
+    const updated = validateLaunchClaimRecord({
+      ...record,
+      submissionState: "rollback_in_progress",
+      updatedAt,
+    });
+    writeAtomicClaimFile(path.join(claimDir, claimFileName(record.attemptId)), updated);
+    return updated;
+  } finally {
+    releaseDirectoryLock(lock);
+  }
+}
+
+const ROLLBACK_COMPLETE_INPUT_FIELDS = Object.freeze([
+  "ownerRootId", "agentId", "jobId", "attemptId",
+]);
+
+/** Mark the durable tombstone complete only after callers finish cleanup. */
+export function completePreSubmissionRollback(input) {
+  const prepared = prepareClaimIdentityInput(
+    input, ROLLBACK_COMPLETE_INPUT_FIELDS, "Launch claim rollback-complete input"
+  );
+  const lock = acquireDirectoryLock(prepared.claimDir);
+  try {
+    const { filePath, record } = loadClaimForMutation(
+      prepared.identity, prepared.attemptId, "Launch claim rollback-complete"
+    );
+    if (record.submissionState === "rollback_complete") return record;
+    if (record.submissionState !== "rollback_in_progress") {
+      throw taggedError("rollback_not_owned", "Launch claim rollback is not in progress.");
+    }
+    const updatedAt = nowIso();
+    const updated = validateLaunchClaimRecord({
+      ...record,
+      submissionState: "rollback_complete",
+      updatedAt,
+    });
+    writeAtomicClaimFile(filePath, updated);
+    return updated;
+  } finally {
+    releaseDirectoryLock(lock);
+  }
 }

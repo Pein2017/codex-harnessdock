@@ -10,10 +10,11 @@ with or endorsed by OpenAI. The public maintainer is Pein2017:
 https://github.com/Pein2017.
 
 HarnessDock for Codex is a checkout-owned Codex Plugin with one durable Agent supervisor
-and a static Harness Driver seam. Two Harnesses are admitted: **Claude Code**,
-which runs in headless stream-json mode, and the Experimental **OpenCode
-Explorer**, a read-only repository scout served by an operator-owned loopback
-Server. Each Harness remains responsible for its own authentication,
+and a static Harness Driver seam. Three Harnesses are admitted: **Claude Code**,
+which runs in headless stream-json mode; Experimental **Pi**, a native
+`openai-codex` session Harness; and the Experimental **OpenCode Explorer**, a
+read-only repository scout served by an operator-owned loopback Server. Each
+Harness remains responsible for its own authentication,
 configuration, sessions, and tool execution. A caller states the whole route --
 Harness, full model, topology, and behavioral authority -- on every spawn; there
 is no default Harness and nothing is inferred. A further Harness requires its
@@ -107,7 +108,7 @@ delegation, safe phase, and nullable timing evidence while keeping delivery and
 internal execution evidence out of the list surface. Deeper evidence remains
 available through operator diagnostics.
 `wait-agent` reports at most one update for an untargeted call: by default a
-completion with the complete stored Claude final message for parent synthesis,
+completion with the complete stored final message for parent synthesis,
 or one coalesced safe
 progress update when explicitly requested. The model-facing wait has a fixed
 3,600,000 ms (one-hour) completion-first window and accepts no timeout
@@ -118,13 +119,13 @@ update. Multiple targets return one completion-only all-settled barrier in
 caller order and cannot combine with progress wakeup. A barrier timeout is
 status-only with no partial completion delivery.
 Completion and settled barrier receipts additionally carry optional closed
-metrics: Claude-reported durations, turn/tokens, and `reported_cost_usd` when
+metrics: provider-reported durations, turn/tokens, and `reported_cost_usd` when
 present, plus Plugin-observed tool/attempt counts. Reported cost is not a
 subscription bill or charge estimate. After a bounded reconnect, provider
 fields describe the final native attempt; Plugin attempt/recovery/tool counters
 span the retained attempts.
 `read-agent-messages` retrieves recent outer-assistant text from the exact
-Agent's bound native Claude transcript without activation.
+Agent's admitted native history without activation.
 
 The runtime model surface normalizes accepted aliases to four canonical IDs:
 `claude-haiku-4-5`, `claude-sonnet-5`, `claude-opus-5`, and
@@ -144,12 +145,19 @@ arguments, and `x-high` maps to `xhigh`. Older model IDs, dated backend snapshot
 IDs, and other Claude models fail before Claude launches. Follow-up turns
 inherit the Agent's selected model.
 
+`pi` admits only provider `openai-codex` and exact models
+`openai-codex/gpt-5.6-luna`, `openai-codex/gpt-5.6-terra`, and
+`openai-codex/gpt-5.6-sol`. Every new Pi turn, including an exact-session
+follow-up, explicitly supplies `low`, `medium`, `high`, `xhigh`, or `max`;
+there is no default effort, model substitution, or automatic recovery.
+
 Every Agent states an immutable `topology`. A `leaf` Agent runs its own task;
 for Claude that maps to the runtime's `delegation_mode: "leaf"`, which appends a
 bounded Codex-lead role envelope and denies Claude Code's native `Agent` and
 `Workflow` tools. Only exact `claude-opus-5` or `claude-fable-5` with
 `topology: "native_orchestrator"` may act as an experimental Native Agent Team
-lead; the OpenCode Explorer admits `leaf` only. The public registry stays flat: only
+lead; Pi and the OpenCode Explorer admit `leaf` only; Pi native orchestration is
+disabled. The public registry stays flat: only
 the durable parent is a HarnessDock Agent. Initialization definition/tool names are
 necessary, but transport is live-validated only after a named member launches
 asynchronously and a correlated `SendMessage` to that launched member name
@@ -241,8 +249,8 @@ native Claude process permits it:
 | Targeting | Agent tree | Flat `/root/<task_name>` topology; exact mutation target |
 | Send / follow-up | Message versus activation distinction | `send_message` queues an idle Agent; `followup_task` guarantees delivery or activation |
 | Wait | Untargeted mailbox activity/timeout; completion separately enters parent mailbox | Completion-first event-wakeup join; one exact target is a single-turn join that may expose one explicit safe progress milestone, while multiple targets remain a completion-only all-settled barrier |
-| History | No model-facing transcript reader | Root-scoped recent outer-assistant history from the Agent's bound native Claude transcript |
-| Residency | Runtime can unload and reload | Each Claude turn exits; logical terminal Agent history remains listed and can be resumed when its receipt proves it safe |
+| History | No model-facing transcript reader | Root-scoped recent outer-assistant history from the Agent's admitted native history |
+| Residency | Runtime can unload and reload | Claude turns exit; Pi retains exact-session continuation; logical terminal history remains listed when its route supports it |
 
 `list_agents` intentionally includes logical nonresident terminal history.
 `wait_agent` is also intentionally narrower than a host-agent mailbox: it
@@ -277,22 +285,26 @@ OpenSpec change.
 
 There is no public `cancel`, `cancel_job`, archive, close, delete-history, or
 Agent deletion operation. `interrupt_agent` stops only the current turn. A
-successful graceful interruption retains exact-session continuation when the
-receipt proves it; forced termination without flush evidence becomes an
-errored, non-resumable turn while preserving the Agent record. Its public
-receipt contains only `agent_name` and `status`; control evidence stays in
-operator diagnostics.
+successful Claude graceful interruption retains exact-session continuation when
+the receipt proves it; forced termination without flush evidence becomes an
+errored, non-resumable turn while preserving the Agent record. A Pi interrupt
+request is nonterminal and may report `settlement_unknown`; wait for settlement
+before deciding whether its exact session can continue. Its public receipt
+contains only `agent_name` and `status`; control evidence stays in operator
+diagnostics.
 
 ## Durable delivery and continuation
 
 `send_message` records a durable Agent-mailbox entry. It delivers to an active
-turn when possible. For an idle resumable Agent it returns `queued_no_turn` and
-does not start a Claude process. Its successful public receipt contains only
+turn when possible. Pi acknowledges active input; its exact native session
+serializes that input. For an idle resumable Agent it returns `queued_no_turn`
+and does not start a native process. Its successful public receipt contains only
 `agent_name` and `delivery`; complete message, assignment, job,
 steering, and timestamp evidence remains in the durable operator state.
 `followup_task` uses the same mailbox but guarantees work: it delivers to an
 active turn, or starts one exact-session or receipt-proven safe-fresh turn and
-assigns queued entries in order. Its successful public receipt contains only
+assigns queued entries in order. Pi resumes only its exact session and never
+safe-fresh recovers. Its successful public receipt contains only
 `agent_name` and `delivery`.
 
 If an Agent's first activation ends in `auth_or_permission`, the failure and
@@ -424,9 +436,25 @@ Inspect the current evidence without a model call with:
 node plugins/codex-harnessdock/bootstrap/harnessdock-runtime.mjs readiness
 ```
 
+## Pi (Experimental)
+
+Pi is a first-class native-session Harness. It starts no provider other than
+`openai-codex`, and admits only `openai-codex/gpt-5.6-luna`,
+`openai-codex/gpt-5.6-terra`, and `openai-codex/gpt-5.6-sol` with `leaf`.
+Each new turn requires explicit `low`, `medium`, `high`, `xhigh`, or `max`
+reasoning effort. `write: false` permits only `read`, `grep`, `find`, and `ls`;
+`write: true` additionally permits `bash`, `edit`, and `write`.
+
+There is no global Pi capacity ceiling, but the same exact native session is
+serialized. Pi resumes that exact session only, acknowledges active input, and
+keeps asynchronous assistant history available through `read_agent_messages`.
+It has no automatic recovery and no native orchestration. An interrupt request
+is nonterminal and may return `settlement_unknown`; wait for settlement before
+another turn.
+
 ## OpenCode Explorer (Experimental)
 
-The second admitted Harness is a read-only repository scout. Everything it needs
+The OpenCode Explorer is a read-only repository scout. Everything it needs
 is operator-owned; the Plugin starts, installs, configures, and repairs nothing.
 
 - **Server.** One loopback Server, named by `OPENCODE_SERVER_URL` in the tracked
@@ -443,17 +471,18 @@ is operator-owned; the Plugin starts, installs, configures, and repairs nothing.
   read/list/glob/grep/lsp allowed, dotenv reads denied, and external-directory
   access denied. The Driver validates the Server's own resolved policy against
   that contract and refuses a route whose policy has drifted.
-- **Route.** Exact `opencode-go/deepseek-v4-flash`, `leaf` only, `write: false`
-  only, no reasoning effort, capacity one turn at a time, `fresh_only`
-  continuation. Interruption and assistant history are unsupported and answer
-  with a receipt rather than an error. Driver and capability maturity are
+- **Route.** Exact `openai/gpt-5.6-luna`, `openai/gpt-5.6-terra`, or
+  `openai/gpt-5.6-sol`; `leaf` only, `write: false` only, no reasoning effort,
+  no HarnessDock capacity ceiling, and `fresh_only` continuation. Interruption and
+  assistant history are unsupported and answer with a receipt rather than an
+  error. No `-fast` variants are admitted. Driver and capability maturity are
   Experimental.
 - **CLI attach is diagnostic only.** Attaching to the Server with the OpenCode
   CLI is an operator debugging aid. It is never a runtime dependency, never a
   fallback path, and no Skill or MCP tool may invoke it. TUI automation is
   forbidden.
 
-Inspect what is admitted and ready, for both Harnesses, without a model call:
+Inspect what is admitted and ready, for all admitted Harnesses, without a model call:
 
 ```bash
 node runtime/operator-cli.mjs list-harnesses --all --json
@@ -466,7 +495,7 @@ Either surface reports readiness; neither selects a route.
 
 The Plugin never falls back on its own. A route it cannot serve -- an
 unavailable Harness, a model that Harness does not admit, a topology or
-authority its capabilities refuse, or an instance already at capacity -- is
+authority its capabilities refuse, or a capacity-limited instance already at capacity -- is
 reported as a refusal with a closed reason. It is never silently retried on
 another Harness, another model, or another instance, and an unavailable Harness
 is never removed from the static registry. Codex decides what to do next and
@@ -772,16 +801,15 @@ a placeholder in the current API. The multi-Harness plan of record is
 `docs/handoffs/2026-08-13-multi-harness-implementation.md`, which this section
 links rather than restates.
 
-- **Phase R -- physical rename.** The remaining `cc-`/`CC` identifiers become
-  HarnessDock names in one mechanical pass. It runs *after* Phase B is complete
-  and *before* a third Harness is admitted, so exactly one generation carries
-  both the rename and a two-Harness surface.
+- **Phase R -- physical rename.** This historical pre-admission sequence placed
+  the remaining `cc-`/`CC` rename before a third Harness; it no longer describes
+  current route admission.
 - **DeepSeek Harness** and **Grok Build** are later, independent probes. Each
   needs its own accepted OpenSpec, its own Driver, and its own readiness
   evidence; neither depends on the other, and neither is admitted by adding a
   model identifier to an existing route.
-- **Pi is reference-only.** It informs design and is never a runtime, install,
-  Git-object, remote, merge, or worktree dependency.
+- **Pi reference-only.** This pre-admission note is retired; the current Pi
+  Harness contract is above.
 - **TUI automation is forbidden.** No Harness is driven by scripting its
   terminal interface. A Harness is admitted through a documented programmatic
   surface -- a headless protocol or a local API -- or it is not admitted.

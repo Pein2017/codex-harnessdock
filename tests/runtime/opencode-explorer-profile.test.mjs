@@ -63,9 +63,6 @@ import { createFakeOpencodeServer } from "./fixtures/fake-opencode-server.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const templatePath = path.join(root, "config", "opencode", "codex-explorer.md");
 const modulePath = path.join(root, "runtime", "opencode-explorer-profile.mjs");
-const compatibilityFixture = JSON.parse(
-  fs.readFileSync(path.join(root, "tests", "runtime", "fixtures", "opencode-compatibility.json"), "utf8")
-);
 
 /**
  * A synthetic absolute path stands in for the Server's own tool-output
@@ -324,25 +321,21 @@ describe("opencode explorer template: reviewed default-deny operator profile", (
 // ---------------------------------------------------------------------------
 
 describe("opencode explorer route: frozen constants bound to captured evidence", () => {
-  it("admits exactly the five discovered full model identifiers", () => {
+  it("admits exactly the three OpenAI subscription full model identifiers", () => {
     assert.equal(OPENCODE_HARNESS_ID, "opencode");
-    assert.equal(OPENCODE_EXPLORER_PROVIDER_ID, "opencode-go");
-    assert.equal(OPENCODE_EXPLORER_MODEL_ID, "deepseek-v4-flash");
-    assert.equal(OPENCODE_EXPLORER_MODEL, "opencode-go/deepseek-v4-flash");
-    assert.equal(OPENCODE_EXPLORER_MODEL, compatibilityFixture.modelRoute.exact);
+    assert.equal(OPENCODE_EXPLORER_PROVIDER_ID, "openai");
+    assert.equal(OPENCODE_EXPLORER_MODEL_ID, "gpt-5.6-luna");
+    assert.equal(OPENCODE_EXPLORER_MODEL, "openai/gpt-5.6-luna");
     assert.deepEqual(OPENCODE_EXPLORER_MODELS, [
-      "opencode-go/deepseek-v4-flash",
-      "opencode-go/deepseek-v4-pro",
       "openai/gpt-5.6-luna",
       "openai/gpt-5.6-terra",
       "openai/gpt-5.6-sol",
     ]);
-    assert.equal(OPENCODE_EXPLORER_PROFILE_NAME, compatibilityFixture.profile.name);
+    assert.equal(OPENCODE_EXPLORER_PROFILE_NAME, "codex-explorer");
   });
 
-  it("keeps continuation at the mode the compatibility probe actually proved", () => {
+  it("keeps the only continuation mode the route proves", () => {
     assert.equal(OPENCODE_EXPLORER_CONTINUATION, "fresh_only");
-    assert.equal(OPENCODE_EXPLORER_CONTINUATION, compatibilityFixture.continuation.mode);
     assert.equal(OPENCODE_EXPLORER_CAPABILITIES.values.continuation, OPENCODE_EXPLORER_CONTINUATION);
   });
 
@@ -933,7 +926,7 @@ describe("opencode explorer readiness: contract-shaped, live-validated, no model
 
   it("blocks a missing, disconnected, or substituted model route", () => {
     const broken = exactProviders();
-    broken[4] = { ...broken[4], model: { id: "gpt-5.6-sol-fast", providerID: "openai" } };
+    broken[2] = { ...broken[2], model: { id: "gpt-5.6-sol-fast", providerID: "openai" } };
     for (const providers of [
       exactProviders().slice(0, -1),
       exactProviders().map((provider, index) => index === 1 ? { ...provider, providerConnected: false } : provider),

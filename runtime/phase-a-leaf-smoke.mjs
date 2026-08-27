@@ -63,10 +63,15 @@ import {
 import { acquireInstanceLease } from "./instance-admission-lease.mjs";
 import { readJobFile, resolveJobFile, resolveJobLogFile, writeJobFile } from "./job-store.mjs";
 import { runClaudeTaskSession } from "./job-supervisor.mjs";
-import { readLaunchClaim } from "./launch-claim.mjs";
+import {
+  bindLaunchClaimLease,
+  createLaunchIntent,
+  readLaunchClaim,
+} from "./launch-claim.mjs";
 import { resolvePluginStateRoot } from "./paths.mjs";
 import { validateProcessIdentity } from "./process-control.mjs";
 import { runVersionThreeWorkerLoop } from "./v3-worker-loop.mjs";
+import { rollbackPreparedVersionThreeTurn } from "./v3-worker-entry.mjs";
 import { SOURCE_ROOT } from "./version.mjs";
 import {
   MAX_WITNESS_BASENAME_CHARS,
@@ -803,6 +808,28 @@ export async function runPhaseALeafSmoke(options = {}) {
       });
       const reservation = store.reserveActivation(agent.agentId, jobId, { initial: true });
       if (!reservation.reserved) throw new Error("Phase-A activation reservation failed.");
+      state.claimIdentity = { ownerRootId, agentId: agent.agentId, jobId, attemptId };
+      const preparedTurn = driver.prepareTurn({
+        route,
+        taskInput: PHASE_A_PROMPT,
+        turnOptions: { effort: PHASE_A_EFFORT },
+        turnId: jobId,
+      });
+      createLaunchIntent({
+        ownerRootId,
+        agentId: agent.agentId,
+        jobId,
+        attemptId,
+        route,
+        expectedLease: {
+          kind: "instance",
+          capacityClass: PHASE_A_CAPACITY_CLASS,
+          capacityLimit: 1,
+        },
+        assignedMessageIds: reservation.assignedMessages.map((message) => message.messageId),
+        preparedInput: PHASE_A_PROMPT,
+        turnOptions: preparedTurn.turnOptions,
+      });
       const lease = acquireInstanceLease({
         ownerRootId,
         agentId: agent.agentId,
@@ -813,12 +840,7 @@ export async function runPhaseALeafSmoke(options = {}) {
         capacityClass: PHASE_A_CAPACITY_CLASS,
         capacityLimit: 1,
       });
-      const preparedTurn = driver.prepareTurn({
-        route,
-        taskInput: PHASE_A_PROMPT,
-        turnOptions: { effort: PHASE_A_EFFORT },
-        turnId: jobId,
-      });
+      bindLaunchClaimLease({ ownerRootId, agentId: agent.agentId, jobId, attemptId, lease });
       createSupervisorJob(cwd, jobId);
       supervisorJob = jobId;
       deadlineSignal = AbortSignal.timeout(options.maxMs ?? DEFAULT_MAX_MS);
@@ -841,8 +863,12 @@ export async function runPhaseALeafSmoke(options = {}) {
         signal: deadlineSignal,
       };
       state.driver = driver;
-      state.claimIdentity = { ownerRootId, agentId: agent.agentId, jobId };
     } catch {
+      try {
+        if (state.claimIdentity && readLaunchClaim(state.claimIdentity)) {
+          rollbackPreparedVersionThreeTurn({ cwd, ...state.claimIdentity });
+        }
+      } catch { /* the smoke reports durable setup failure without weakening its fence */ }
       state.status = "unverified";
       state.failureClass = "durable_setup_failed";
       return;
@@ -878,6 +904,11 @@ export async function runPhaseALeafSmoke(options = {}) {
     })();
 
     if (launchError) {
+      try {
+        if (claim?.acceptance === "not_submitted" && claim.submissionState === "not_started") {
+          rollbackPreparedVersionThreeTurn({ cwd, ...state.claimIdentity });
+        }
+      } catch { /* failure remains unverified and the claim stays fail-closed */ }
       state.lifecycle.nativeAcceptance = claim
         ? acceptanceOf(claim)
         : acceptanceOfLaunchError(launchError);

@@ -441,10 +441,11 @@ export function buildVersionThreeTerminalJob(snapshot, launchClaim, normalizedRe
     },
     // The public completion payload keeps its version-two shape. A
     // version-three continuation pointer is a Driver-validated envelope, not a
-    // Claude session ID, and this generation exposes no public operation that
-    // could resume from one -- so the event states `not_resumable` and names
-    // where the exact pointer actually lives instead of renaming a foreign
-    // locator into a Claude-shaped field.
+    // Claude session ID. `followup_task` resumes from the Agent record itself;
+    // this legacy completion field cannot encode that neutral pointer, so it
+    // states where the pointer lives instead of renaming a foreign locator into
+    // a Claude-shaped field. The separately frozen `blocking` projection owns
+    // the public same-Agent retry decision.
     resumability: {
       classification: "not_resumable",
       blockingReason: continuationProjection.mode === "exact_session"

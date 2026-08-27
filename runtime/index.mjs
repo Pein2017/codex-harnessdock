@@ -16,7 +16,7 @@ export { HARNESSDOCK_MCP_API_GENERATION } from "./mcp-api.mjs";
  * @property {(input: object) => Promise<object>} followup_task
  * @property {(input?: object) => Promise<object>} wait_agent
  * @property {(input: object) => Promise<object>} interrupt_agent
- * @property {(input: object) => object} read_agent_messages
+ * @property {(input: object) => Promise<object>} read_agent_messages
  * @property {(input?: object) => object} list_agents
  * @property {(input?: object) => Promise<object>} list_harnesses
  */
