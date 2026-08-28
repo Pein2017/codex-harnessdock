@@ -305,6 +305,13 @@ describe("operator doctor", () => {
         refreshExpiresAt: null,
         refreshLocallyExpired: null,
       }),
+      identityCutover: {
+        state: "adopted",
+        receipt: {
+          operation: "adoption",
+          adopted_at: "2026-08-28T12:00:00.000Z",
+        },
+      },
       probeMcp: async () => ({
         healthy: true,
         tools: [
@@ -357,6 +364,11 @@ describe("operator doctor", () => {
       report.checks.find((check) => check.id === "claude-auth").summary,
       /provider liveness was not validated/,
     );
+    const identity = report.checks.find((check) => check.id === "identity-cutover");
+    assert.equal(identity.status, "pass");
+    assert.match(identity.summary, /explicitly adopted as authoritative/i);
+    assert.equal(identity.details.operation, "adoption");
+    assert.equal(identity.details.adoptedAt, "2026-08-28T12:00:00.000Z");
     const compatibilityShells = report.checks.find((check) => check.id === "plugin-compatibility-shells");
     assert.equal(compatibilityShells.status, "pass");
     assert.equal(compatibilityShells.details.coverageState, "first_install");

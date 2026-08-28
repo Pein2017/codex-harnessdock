@@ -42,12 +42,21 @@ function resolveRoots(options = {}) {
     options.receiptFile ?? path.join(newRoot, "operator", "identity-cutover.json"),
     "receiptFile",
   );
-  return { env, dataRoot, oldRoot, newRoot, receiptFile };
+  const adoptionFile = asPath(
+    options.adoptionFile ?? path.join(newRoot, "operator", "identity-adoption.json"),
+    "adoptionFile",
+  );
+  return { env, dataRoot, oldRoot, newRoot, receiptFile, adoptionFile };
 }
 
 export function defaultIdentityCutoverFile(env = process.env) {
   rejectRetiredOverride(env);
   return path.join(codexHomeFrom(env), "plugins", "data", CURRENT_DATA_NAMESPACE, "operator", "identity-cutover.json");
+}
+
+export function defaultIdentityAdoptionFile(env = process.env) {
+  rejectRetiredOverride(env);
+  return path.join(codexHomeFrom(env), "plugins", "data", CURRENT_DATA_NAMESPACE, "operator", "identity-adoption.json");
 }
 
 function exists(directory) {
@@ -79,6 +88,15 @@ function hasManagedIdentityData(directory) {
     return fs.readdirSync(directory).some((entry) => entry !== "compatibility-shells");
   } catch {
     return true;
+  }
+}
+
+function hasAdoptableIdentityData(directory) {
+  if (!isDirectory(directory)) return false;
+  try {
+    return fs.readdirSync(directory).some((entry) => entry !== "compatibility-shells" && entry !== "operator");
+  } catch {
+    return false;
   }
 }
 
@@ -128,6 +146,38 @@ function readAcceptedReceipt(filePath) {
   return value;
 }
 
+function readAcceptedAdoptionReceipt(filePath, roots) {
+  if (!exists(filePath)) return null;
+  const value = readJson(filePath);
+  if (
+    !value ||
+    value.version !== IDENTITY_CUTOVER_VERSION ||
+    value.status !== "accepted" ||
+    value.operation !== "adoption" ||
+    typeof value.adopted_at !== "string" ||
+    !Number.isFinite(Date.parse(value.adopted_at)) ||
+    !/[zZ]$/.test(value.adopted_at) ||
+    new Date(value.adopted_at).toISOString() !== value.adopted_at ||
+    value.current_namespace !== CURRENT_DATA_NAMESPACE ||
+    value.legacy_namespace !== LEGACY_DATA_NAMESPACE ||
+    typeof value.current_root !== "string" ||
+    path.resolve(value.current_root) !== roots.newRoot ||
+    typeof value.legacy_root !== "string" ||
+    path.resolve(value.legacy_root) !== roots.oldRoot ||
+    value.legacy_root_absent !== true ||
+    value.cutover_backup_absent !== true ||
+    value.state_validated !== true ||
+    value.current_root_authoritative !== true ||
+    value.legacy_data_recovery_required !== false ||
+    !Array.isArray(value.writable_roots) ||
+    value.writable_roots.length !== 1 ||
+    typeof value.writable_roots[0] !== "string" ||
+    path.resolve(value.writable_roots[0]) !== roots.newRoot ||
+    !hasAdoptableIdentityData(roots.newRoot)
+  ) return null;
+  return value;
+}
+
 function validPendingReceipt(value, roots) {
   return Boolean(
     value &&
@@ -166,6 +216,11 @@ function readPendingReceipt(roots, options = {}) {
 export function readIdentityCutoverReceipt(options = {}) {
   const roots = resolveRoots(options);
   return readAcceptedReceipt(roots.receiptFile);
+}
+
+export function readIdentityAdoptionReceipt(options = {}) {
+  const roots = resolveRoots(options);
+  return readAcceptedAdoptionReceipt(roots.adoptionFile, roots);
 }
 
 function visitFiles(root, visitor) {
@@ -294,10 +349,18 @@ export function inspectIdentityCutover(options = {}) {
     return { state: "conflicting", ...roots, old_present: true, new_present: true };
   }
   if (newPresent) {
-    const receipt = readAcceptedReceipt(roots.receiptFile);
-    return receipt
-      ? { state: "migrated", ...roots, receipt, old_present: false, new_present: true }
-      : {
+    const cutoverReceipt = readAcceptedReceipt(roots.receiptFile);
+    const adoptionReceipt = readAcceptedAdoptionReceipt(roots.adoptionFile, roots);
+    if (cutoverReceipt && adoptionReceipt) {
+      return { state: "conflicting", ...roots, old_present: false, new_present: true };
+    }
+    if (cutoverReceipt) {
+      return { state: "migrated", ...roots, receipt: cutoverReceipt, old_present: false, new_present: true };
+    }
+    if (adoptionReceipt) {
+      return { state: "adopted", ...roots, receipt: adoptionReceipt, old_present: false, new_present: true };
+    }
+    return {
           state: "rollback_required",
           ...roots,
           recovery_receipt: readPendingReceipt(roots, options),
@@ -307,6 +370,61 @@ export function inspectIdentityCutover(options = {}) {
   }
   if (oldPresent) return { state: "pending", ...roots, old_present: true, new_present: false };
   return { state: "absent", ...roots, old_present: false, new_present: false };
+}
+
+export function adoptPluginIdentity(options = {}) {
+  const roots = resolveRoots(options);
+  if (options.currentRootAuthoritative !== true) {
+    throw new Error("Identity adoption requires explicit confirmation that the current root is authoritative.");
+  }
+  if (options.legacyDataRecoveryRequired !== false) {
+    throw new Error("Identity adoption requires legacy data recovery to be stated explicitly as false.");
+  }
+
+  const current = inspectIdentityCutover(options);
+  if (current.state === "adopted" && "receipt" in current) return { ...current.receipt, idempotent: true };
+  if (exists(roots.oldRoot)) throw new Error("Identity adoption requires the legacy data root to be absent.");
+  if (!hasAdoptableIdentityData(roots.newRoot)) {
+    throw new Error("Identity adoption current data root is unavailable or has no authoritative state.");
+  }
+  if (exists(roots.receiptFile)) {
+    throw new Error("Identity adoption refuses an existing or malformed cutover receipt.");
+  }
+  if (exists(roots.adoptionFile)) {
+    throw new Error("Identity adoption refuses to overwrite an invalid adoption receipt.");
+  }
+  const backupDirectory = path.join(roots.dataRoot, ".codex-harnessdock-backups");
+  if (exists(backupDirectory)) {
+    throw new Error("Identity adoption requires the cutover backup boundary to be absent.");
+  }
+
+  validateState(roots.newRoot);
+  if (exists(roots.oldRoot) || exists(backupDirectory)) {
+    throw new Error("Identity adoption evidence changed before receipt creation.");
+  }
+  const receipt = {
+    version: IDENTITY_CUTOVER_VERSION,
+    status: "accepted",
+    operation: "adoption",
+    adopted_at: timestamp(options),
+    current_namespace: CURRENT_DATA_NAMESPACE,
+    current_root: roots.newRoot,
+    legacy_namespace: LEGACY_DATA_NAMESPACE,
+    legacy_root: roots.oldRoot,
+    legacy_root_absent: true,
+    cutover_backup_absent: true,
+    state_validated: true,
+    current_root_authoritative: true,
+    legacy_data_recovery_required: false,
+    writable_roots: [roots.newRoot],
+  };
+  writePrivateJson(roots.adoptionFile, receipt);
+  const accepted = readAcceptedAdoptionReceipt(roots.adoptionFile, roots);
+  if (!accepted || exists(roots.oldRoot) || exists(backupDirectory)) {
+    fs.rmSync(roots.adoptionFile, { force: true });
+    throw new Error("Identity adoption could not preserve its accepted evidence.");
+  }
+  return accepted;
 }
 
 export function cutoverPluginIdentity(options = {}) {

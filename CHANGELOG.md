@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add an explicit one-time identity-adoption receipt for an authoritative
+  current data root when the legacy root and cutover recovery boundary are
+  both absent.
+
 ## 0.22.0 - 2026-08-28
 
 - Replace the fixed Pi and OpenCode model/effort constants with bounded,

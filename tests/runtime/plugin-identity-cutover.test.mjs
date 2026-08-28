@@ -5,9 +5,12 @@ import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import {
+  adoptPluginIdentity,
+  defaultIdentityAdoptionFile,
   defaultIdentityCutoverFile,
   inspectIdentityCutover,
   cutoverPluginIdentity,
+  readIdentityAdoptionReceipt,
   rollbackInstalledIdentity,
   rollbackPluginIdentity,
 } from "../../runtime/plugin-identity-cutover.mjs";
@@ -53,6 +56,12 @@ function roots() {
   };
 }
 
+function adoptionRoots() {
+  const target = roots();
+  fs.renameSync(target.oldRoot, target.newRoot);
+  return target;
+}
+
 afterEach(() => {
   while (temporaryDirectories.length) {
     fs.rmSync(temporaryDirectories.pop(), { recursive: true, force: true });
@@ -60,6 +69,101 @@ afterEach(() => {
 });
 
 describe("HarnessDock identity data cutover", () => {
+  it("adopts one explicitly confirmed authoritative current root without inventing a cutover", () => {
+    const target = adoptionRoots();
+    assert.equal(inspectIdentityCutover(target).state, "rollback_required");
+    assert.equal(
+      defaultIdentityAdoptionFile({ CODEX_HOME: target.codexHome }),
+      path.join(target.newRoot, "operator", "identity-adoption.json"),
+    );
+
+    const receipt = adoptPluginIdentity({
+      ...target,
+      currentRootAuthoritative: true,
+      legacyDataRecoveryRequired: false,
+      now: "2026-08-28T12:00:00.000Z",
+    });
+    assert.deepEqual(receipt, {
+      version: 1,
+      status: "accepted",
+      operation: "adoption",
+      adopted_at: "2026-08-28T12:00:00.000Z",
+      current_namespace: "codex-harnessdock",
+      current_root: target.newRoot,
+      legacy_namespace: "cc",
+      legacy_root: target.oldRoot,
+      legacy_root_absent: true,
+      cutover_backup_absent: true,
+      state_validated: true,
+      current_root_authoritative: true,
+      legacy_data_recovery_required: false,
+      writable_roots: [target.newRoot],
+    });
+    assert.deepEqual(readIdentityAdoptionReceipt(target), receipt);
+    assert.equal(inspectIdentityCutover(target).state, "adopted");
+    assert.deepEqual(adoptPluginIdentity({
+      ...target,
+      currentRootAuthoritative: true,
+      legacyDataRecoveryRequired: false,
+    }), { ...receipt, idempotent: true });
+  });
+
+  it("refuses adoption without exact authority, absence, and valid-state evidence", () => {
+    const missingAuthority = adoptionRoots();
+    assert.throws(
+      () => adoptPluginIdentity({ ...missingAuthority, legacyDataRecoveryRequired: false }),
+      /current root.*authoritative/i,
+    );
+
+    const recoveryRequired = adoptionRoots();
+    assert.throws(
+      () => adoptPluginIdentity({ ...recoveryRequired, currentRootAuthoritative: true, legacyDataRecoveryRequired: true }),
+      /legacy data recovery.*false/i,
+    );
+
+    const legacyPresent = adoptionRoots();
+    fs.mkdirSync(legacyPresent.oldRoot);
+    assert.throws(
+      () => adoptPluginIdentity({ ...legacyPresent, currentRootAuthoritative: true, legacyDataRecoveryRequired: false }),
+      /legacy data root.*absent/i,
+    );
+
+    const backupPresent = adoptionRoots();
+    fs.mkdirSync(path.join(backupPresent.dataRoot, ".codex-harnessdock-backups"));
+    assert.throws(
+      () => adoptPluginIdentity({ ...backupPresent, currentRootAuthoritative: true, legacyDataRecoveryRequired: false }),
+      /backup.*absent/i,
+    );
+
+    const malformed = adoptionRoots();
+    fs.writeFileSync(path.join(malformed.newRoot, "state", "broken.json"), "not-json\n");
+    assert.throws(
+      () => adoptPluginIdentity({ ...malformed, currentRootAuthoritative: true, legacyDataRecoveryRequired: false }),
+      /malformed durable state/i,
+    );
+
+    const invalidReceipt = adoptionRoots();
+    fs.mkdirSync(path.join(invalidReceipt.newRoot, "operator"));
+    fs.writeFileSync(path.join(invalidReceipt.newRoot, "operator", "identity-adoption.json"), JSON.stringify({
+      version: 1,
+      status: "accepted",
+      operation: "adoption",
+      current_root: 42,
+    }));
+    assert.equal(inspectIdentityCutover(invalidReceipt).state, "rollback_required");
+    assert.throws(
+      () => adoptPluginIdentity({ ...invalidReceipt, currentRootAuthoritative: true, legacyDataRecoveryRequired: false }),
+      /invalid adoption receipt/i,
+    );
+
+    const absent = roots();
+    fs.rmSync(absent.oldRoot, { recursive: true, force: true });
+    assert.throws(
+      () => adoptPluginIdentity({ ...absent, currentRootAuthoritative: true, legacyDataRecoveryRequired: false }),
+      /current data root.*unavailable/i,
+    );
+  });
+
   it("derives the new default namespace and rejects the retired override", () => {
     const codexHome = "/tmp/harnessdock-codex-home";
     assert.equal(

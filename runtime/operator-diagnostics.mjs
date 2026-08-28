@@ -780,6 +780,8 @@ export async function runDoctor(options = {}) {
         : "pass";
     const summary = identity.state === "migrated"
       ? "HarnessDock data namespace is migrated with one accepted cutover receipt."
+      : identity.state === "adopted"
+        ? "HarnessDock data namespace is explicitly adopted as authoritative without legacy recovery."
       : identity.state === "pending"
         ? "Legacy data namespace is pending explicit identity cutover; no migration was executed."
         : identity.state === "absent"
@@ -795,7 +797,9 @@ export async function runDoctor(options = {}) {
         state: identity.state,
         currentNamespace: "codex-harnessdock",
         legacyNamespace: "cc",
+        operation: identity.receipt?.operation ?? (identity.state === "migrated" ? "cutover" : null),
         cutoverAt: identity.receipt?.cutover_at ?? null,
+        adoptedAt: identity.receipt?.adopted_at ?? null,
         backupRoot: identity.receipt?.backup_root ?? null,
       },
       status === "pass" ? null : "Stop lifecycle work and inspect the identity cutover receipt before migration or rollback.",
