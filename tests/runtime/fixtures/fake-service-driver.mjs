@@ -180,7 +180,11 @@ export function createFakeServiceDriver(options = {}) {
         maturity: "experimental",
         detailCode: instance.detailCode,
         routes: instance.readiness === "ready"
-          ? { models: ["fake-service-standard"], interaction: capabilities.values.interaction }
+          ? {
+            models: ["fake-service-standard"],
+            effortsByModel: { "fake-service-standard": ["high"] },
+            interaction: capabilities.values.interaction,
+          }
           : null,
       }));
     },
@@ -192,6 +196,7 @@ export function createFakeServiceDriver(options = {}) {
         model: request.model,
         topology: request.topology,
         authority: request.authority,
+        effort: request.effort,
         driverVersion,
         capabilities,
       };

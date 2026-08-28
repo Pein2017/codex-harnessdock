@@ -485,7 +485,7 @@ describe("canonical Agent runtime CLI", () => {
     const test = fixture();
     const spawned = run(test, [
       "spawn_agent", "--harness", "claude-code", "--write=false", "--task-name", "transport_team",
-      "--model", "claude-opus-5", "--topology", "native_orchestrator", "--json",
+      "--model", "claude-opus-5", "--reasoning-effort", "high", "--topology", "native_orchestrator", "--json",
       "session=team-close fail=transport",
     ]);
     const closed = waitForAgent(test, spawned.agent_name, (value) => value.status === "errored");
@@ -522,7 +522,7 @@ describe("canonical Agent runtime CLI", () => {
   it("exposes all seven operations with flat exact targeting and duplicate-name rejection", () => {
     const test = fixture();
     const spawned = run(test, [
-      "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "alpha", "--model", "claude-sonnet-5", "--json", "session=alpha delay=700",
+      "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "alpha", "--model", "claude-sonnet-5", "--reasoning-effort", "high", "--json", "session=alpha delay=700",
     ]);
     assert.deepEqual(Object.keys(spawned).sort(), [
       "agent_name", "authority", "delegation_mode", "elapsed_seconds", "harness",
@@ -532,7 +532,7 @@ describe("canonical Agent runtime CLI", () => {
     assert.equal(spawned.model, "claude-sonnet-5");
     assert.match(spawned.status, /^(starting|working)$/);
     assert.throws(
-      () => run(test, ["spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "alpha", "--model", "claude-sonnet-5", "--json", "duplicate"]),
+      () => run(test, ["spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "alpha", "--model", "claude-sonnet-5", "--reasoning-effort", "high", "--json", "duplicate"]),
       /already belongs/
     );
     const selected = agent(test, "/root/alpha");
@@ -541,21 +541,21 @@ describe("canonical Agent runtime CLI", () => {
     assert.equal(prefix.status, 1);
     assert.match(prefix.stderr, /No Agent with that exact ID, path, or name/);
     assert.throws(
-      () => run(test, ["spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "forked", "--fork-turns", "all", "--json", "forbidden"]),
+      () => run(test, ["spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "forked", "--reasoning-effort", "high", "--fork-turns", "all", "--json", "forbidden"]),
       /Unknown option --fork-turns/
     );
   });
 
   it("keeps Agent roots isolated while operator all-agents remains explicit and read-only", () => {
     const test = fixture("root-a");
-    const alpha = run(test, ["spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "alpha", "--model", "claude-opus-5", "--json", "session=alpha delay=50"]);
+    const alpha = run(test, ["spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "alpha", "--model", "claude-opus-5", "--reasoning-effort", "high", "--json", "session=alpha delay=50"]);
     waitForAgent(test, alpha.agent_name, (value) => value.status === "completed");
     const foreignEnv = { ...test.env, CODEX_THREAD_ID: "root-b" };
     assert.deepEqual(list(test, { env: foreignEnv }).agents, []);
     const foreign = command(test, ["send_message", alpha.agent_name, "foreign", "--json"], { env: foreignEnv });
     assert.equal(foreign.status, 1);
     assert.match(foreign.stderr, /No Agent with that exact ID, path, or name/);
-    const beta = run(test, ["spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "beta", "--model", "claude-sonnet-5", "--json", "session=beta delay=50"], { env: foreignEnv });
+    const beta = run(test, ["spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "beta", "--model", "claude-sonnet-5", "--reasoning-effort", "high", "--json", "session=beta delay=50"], { env: foreignEnv });
     waitForAgent(test, beta.agent_name, (value) => value.status === "completed", { env: foreignEnv });
 
     const operator = run(test, [
@@ -574,8 +574,8 @@ describe("canonical Agent runtime CLI", () => {
   it("runs two Agents concurrently and leaves their terminal histories nonresident", async () => {
     const test = fixture();
     const launches = await Promise.all([
-      runAsync(test, ["spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "agent_a", "--model", "claude-sonnet-5", "--json", "session=a delay=500"]),
-      runAsync(test, ["spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "agent_b", "--model", "claude-opus-5", "--json", "session=b delay=500"]),
+      runAsync(test, ["spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "agent_a", "--model", "claude-sonnet-5", "--reasoning-effort", "high", "--json", "session=a delay=500"]),
+      runAsync(test, ["spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "agent_b", "--model", "claude-opus-5", "--reasoning-effort", "high", "--json", "session=b delay=500"]),
     ]);
     assert.deepEqual(launches.map((entry) => entry.status).sort(), [0, 0]);
     const agents = launches.map((entry) => JSON.parse(entry.stdout));
@@ -592,7 +592,7 @@ describe("canonical Agent runtime CLI", () => {
   it("durably dispatches an active send_message and records acknowledgement", () => {
     const test = fixture();
     const spawned = run(test, [
-      "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "active", "--model", "claude-sonnet-5", "--json", "session=active delay=1000",
+      "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "active", "--model", "claude-sonnet-5", "--reasoning-effort", "high", "--json", "session=active delay=1000",
     ]);
     const stored = agent(test, spawned.agent_name);
     const started = waitForJob(test, stored.activeJobId, (value) => value.status === "running" && Boolean(value.pid));
@@ -611,7 +611,7 @@ describe("canonical Agent runtime CLI", () => {
   it("queues an idle message and assigns it to an exact-session follow-up", () => {
     const test = fixture();
     const spawned = run(test, [
-      "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "resume", "--model", "claude-opus-5", "--json", "session=resume delay=60",
+      "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "resume", "--model", "claude-opus-5", "--reasoning-effort", "high", "--json", "session=resume delay=60",
     ]);
     const terminal = waitForAgent(test, spawned.agent_name, (value) => value.status === "completed");
     assert.equal(terminal.continuation.mode, "exact_session");
@@ -661,7 +661,7 @@ describe("canonical Agent runtime CLI", () => {
     const test = fixture();
     const spawned = run(test, [
       "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "history",
-      "--model", "claude-sonnet-5", "--json", "session=history delay=40",
+      "--model", "claude-sonnet-5", "--reasoning-effort", "high", "--json", "session=history delay=40",
     ]);
     const terminal = waitForAgent(test, spawned.agent_name, (value) => value.status === "completed");
     const before = fs.readFileSync(
@@ -751,7 +751,7 @@ describe("canonical Agent runtime CLI", () => {
   it("keeps list and wait completion delivery unread until a later acknowledgement", () => {
     const test = fixture();
     const spawned = run(test, [
-      "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "delivery", "--model", "claude-sonnet-5", "--json", "session=delivery delay=60",
+      "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "delivery", "--model", "claude-sonnet-5", "--reasoning-effort", "high", "--json", "session=delivery delay=60",
     ]);
     waitForAgent(test, spawned.agent_name, (value) => value.status === "completed");
     const firstList = list(test);
@@ -774,7 +774,7 @@ describe("canonical Agent runtime CLI", () => {
       harness: "claude-code",
       route_maturity: "experimental",
       model: "claude-sonnet-5",
-      reasoning_effort: null,
+      reasoning_effort: "high",
       authority: "behavioral_read_only",
       delegation_mode: "leaf",
       phase: "responding",
@@ -825,7 +825,7 @@ describe("canonical Agent runtime CLI", () => {
     const test = fixture();
     const spawned = run(test, [
       "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "progress_stream",
-      "--model", "claude-sonnet-5", "--json", "session=progress-stream delay=2000",
+      "--model", "claude-sonnet-5", "--reasoning-effort", "high", "--json", "session=progress-stream delay=2000",
     ]);
     const progressAgent = agent(test, spawned.agent_name);
     waitForJob(test, progressAgent.activeJobId, (value) => Number(value.publicProgress?.revision ?? 0) >= 2);
@@ -862,7 +862,7 @@ describe("canonical Agent runtime CLI", () => {
   it("interrupts only a running Agent turn and keeps the logical Agent record", () => {
     const test = fixture();
     const spawned = run(test, [
-      "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "interruptible", "--model", "claude-opus-5", "--json", "session=interrupt delay=5000",
+      "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "interruptible", "--model", "claude-opus-5", "--reasoning-effort", "high", "--json", "session=interrupt delay=5000",
     ]);
     const stored = agent(test, spawned.agent_name);
     waitForJob(test, stored.activeJobId, (value) => value.status === "running" && Boolean(value.pid));
@@ -920,25 +920,25 @@ describe("canonical Agent runtime CLI", () => {
     const unsupportedModel = command(test, [
       "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false",
       "--task-name", "unsupported_model",
-      "--model", "fable-5",
+      "--model", "fable-5", "--reasoning-effort", "high",
       "--json", "must fail before Claude starts",
     ]);
     assert.equal(unsupportedModel.status, 1);
-    assert.match(unsupportedModel.stderr, /does not serve model/);
+    assert.match(unsupportedModel.stderr, /Unsupported Claude model/);
 
     for (const unsupported of ["haiku-4-5", "claude-haiku-4-5-20251001"]) {
       const rejected = command(test, [
         "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false",
         "--task-name", `unsupported_${unsupported.replaceAll("-", "_")}`,
-        "--model", unsupported,
+        "--model", unsupported, "--reasoning-effort", "high",
         "--json", "dated or partial IDs are not public inputs",
       ]);
       assert.equal(rejected.status, 1);
-      assert.match(rejected.stderr, /does not serve model/);
+      assert.match(rejected.stderr, /Unsupported Claude model/);
     }
 
     const missingModel = command(test, [
-      "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "missing_model", "--json", "must fail before Claude starts",
+      "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "missing_model", "--reasoning-effort", "high", "--json", "must fail before Claude starts",
     ]);
     assert.equal(missingModel.status, 1);
     assert.match(missingModel.stderr, /model must be non-empty text/);
@@ -946,7 +946,7 @@ describe("canonical Agent runtime CLI", () => {
     assert.deepEqual(invocations(test), []);
   });
 
-  it("preserves full-access terminal-parity environment and delegates a copied bootstrap to the checkout", () => {
+  it("preserves full-access terminal-parity environment and delegates a copied bootstrap to the checkout", (testContext) => {
     const test = fixture();
     const canonicalManifest = path.join(
       "/data/CoordExp/codex-harnessdock",
@@ -955,7 +955,10 @@ describe("canonical Agent runtime CLI", () => {
       ".codex-plugin",
       "plugin.json",
     );
-    if (!fs.existsSync(canonicalManifest) || JSON.parse(fs.readFileSync(canonicalManifest, "utf8")).name !== "codex-harnessdock") {
+    const canonicalPlugin = fs.existsSync(canonicalManifest)
+      ? JSON.parse(fs.readFileSync(canonicalManifest, "utf8"))
+      : null;
+    if (canonicalPlugin?.name !== "codex-harnessdock") {
       // The candidate is intentionally uninstalled, and between the source
       // rename and the operator relocation the live path does not exist at
       // all. The fixed production bootstrap must fail closed either way and
@@ -967,16 +970,23 @@ describe("canonical Agent runtime CLI", () => {
       assert.match(output, /\/data\/CoordExp\/codex-harnessdock/);
       return;
     }
+    const candidateManifest = path.join(root, "plugins", "codex-harnessdock", ".codex-plugin", "plugin.json");
+    const candidatePlugin = JSON.parse(fs.readFileSync(candidateManifest, "utf8"));
+    if (canonicalPlugin.version !== candidatePlugin.version) {
+      testContext.skip("canonical Plugin has not been promoted to the candidate version");
+      return;
+    }
     const spawned = run(test, [
-      "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "parity", "--model", "claude-opus-5",
+      "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "parity", "--model", "claude-opus-5", "--reasoning-effort", "high",
       "--json", "session=parity delay=60",
     ]);
     waitForAgent(test, spawned.agent_name, (value) => value.status === "completed");
     const invocation = invocations(test)[0];
-    for (const flag of ["--effort", "--settings", "--permission-mode", "--allowedTools", "--strict-mcp-config"]) {
+    for (const flag of ["--settings", "--permission-mode", "--allowedTools", "--strict-mcp-config"]) {
       assert.equal(invocation.args.includes(flag), false, flag);
     }
     assert.equal(invocation.args[invocation.args.indexOf("--model") + 1], "claude-opus-5");
+    assert.equal(invocation.args[invocation.args.indexOf("--effort") + 1], "high");
     assert.equal(invocation.args.includes("--dangerously-skip-permissions"), true);
     assert.deepEqual(
       invocation.args.flatMap((value, index) => value === "--disallowedTools" ? [invocation.args[index + 1]] : []),
@@ -1047,7 +1057,7 @@ describe("canonical Agent runtime CLI", () => {
     const test = fixture();
     const spawned = run(test, [
       "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--task-name", "write_parity",
-      "--model", "claude-sonnet-5", "--write=false", "--json", "session=write-parity delay=40",
+      "--model", "claude-sonnet-5", "--reasoning-effort", "high", "--write=false", "--json", "session=write-parity delay=40",
     ]);
     const terminal = waitForAgent(test, spawned.agent_name, (value) => value.status === "completed");
     // The authority is frozen at creation: a follow-up that tries to state one
@@ -1079,7 +1089,7 @@ describe("canonical Agent runtime CLI", () => {
 
     const rejected = command(test, [
       "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "contradictory",
-      "--model", "claude-sonnet-5", "--dangerously-skip-permissions", "--json", "must fail",
+      "--model", "claude-sonnet-5", "--reasoning-effort", "high", "--dangerously-skip-permissions", "--json", "must fail",
     ]);
     assert.equal(rejected.status, 1);
     assert.match(rejected.stderr, /Unknown option --dangerously-skip-permissions/);
@@ -1089,7 +1099,7 @@ describe("canonical Agent runtime CLI", () => {
     const test = fixture();
     const spawned = run(test, [
       "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "auth_loss",
-      "--model", "claude-sonnet-5", "--json", "fail=auth",
+      "--model", "claude-sonnet-5", "--reasoning-effort", "high", "--json", "fail=auth",
     ]);
     waitForAgent(test, spawned.agent_name, (value) => value.status === "errored");
     const wait = run(test, ["wait_agent", "--timeout-ms", "0", "--json"]);
@@ -1105,7 +1115,7 @@ describe("canonical Agent runtime CLI", () => {
     const test = fixture();
     const spawned = run(test, [
       "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "account_limit",
-      "--model", "claude-sonnet-5", "--json", "fail=account_limit",
+      "--model", "claude-sonnet-5", "--reasoning-effort", "high", "--json", "fail=account_limit",
     ]);
     waitForAgent(test, spawned.agent_name, (value) => value.status === "errored");
     const wait = run(test, ["wait_agent", "--timeout-ms", "0", "--json"]);
@@ -1121,7 +1131,7 @@ describe("canonical Agent runtime CLI", () => {
     const test = fixture();
     const spawned = run(test, [
       "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "session_drift",
-      "--model", "claude-sonnet-5", "--json", "session=driftbase delay=40",
+      "--model", "claude-sonnet-5", "--reasoning-effort", "high", "--json", "session=driftbase delay=40",
     ]);
     const terminal = waitForAgent(test, spawned.agent_name, (value) => value.status === "completed");
     const firstWait = run(test, ["wait_agent", "--timeout-ms", "0", "--json"]);
@@ -1150,7 +1160,7 @@ describe("canonical Agent runtime CLI", () => {
     const test = fixture();
     const spawned = run(test, [
       "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "lost_worker",
-      "--model", "claude-sonnet-5", "--json", "session=lost delay=30000",
+      "--model", "claude-sonnet-5", "--reasoning-effort", "high", "--json", "session=lost delay=30000",
     ]);
     const stored = agent(test, spawned.agent_name);
     // The Claude turn and its own detached worker are both structurally lost
@@ -1183,7 +1193,7 @@ describe("canonical Agent runtime CLI", () => {
   it("delivers an interrupted wait receipt with a null block and keeps the Agent follow-up resumable", () => {
     const test = fixture();
     const spawned = run(test, [
-      "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "graceful_interrupt", "--model", "claude-opus-5",
+      "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "graceful_interrupt", "--model", "claude-opus-5", "--reasoning-effort", "high",
       "--json", "session=graceful-interrupt delay=5000",
     ]);
     const stored = agent(test, spawned.agent_name);

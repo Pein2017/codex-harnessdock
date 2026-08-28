@@ -64,7 +64,7 @@ describe("typed HarnessDock MCP server", () => {
       openWorldHint: false,
     });
     const spawn = listed.tools.find((tool) => tool.name === "spawn_agent");
-    assert.deepEqual(new Set(spawn.inputSchema.required), new Set(["task_name", "message", "harness", "model", "topology", "write"]));
+    assert.deepEqual(new Set(spawn.inputSchema.required), new Set(["task_name", "message", "harness", "model", "reasoning_effort", "topology", "write"]));
     assert.equal(Object.hasOwn(spawn.inputSchema.properties, "fork_turns"), false);
     assert.equal(Object.hasOwn(spawn.inputSchema.properties, "execution_profile"), false);
     assert.equal(Object.hasOwn(spawn.inputSchema.properties, "allowed_tools"), false);
@@ -76,6 +76,7 @@ describe("typed HarnessDock MCP server", () => {
     assert.match(spawn.inputSchema.properties.write.description, /Required behavioral authority[\s\S]*false[\s\S]*true permits[\s\S]*Process access is unchanged/i);
     const followup = listed.tools.find((tool) => tool.name === "followup_task");
     assert.equal(Object.hasOwn(followup.inputSchema.properties, "allowed_tools"), false);
+    assert.deepEqual(Object.keys(followup.inputSchema.properties).sort(), ["message", "target"]);
     const wait = listed.tools.find((tool) => tool.name === "wait_agent");
     assert.equal(Object.hasOwn(wait.inputSchema.properties, "timeout_ms"), false);
     assert.equal(Object.hasOwn(wait.inputSchema.properties, "targets"), true);
@@ -346,6 +347,7 @@ describe("typed HarnessDock MCP server", () => {
         message: "bounded task",
         harness: "claude-code",
         model: "claude-sonnet-5",
+        reasoning_effort: "high",
         topology: "leaf",
         write: false,
       }],
@@ -371,6 +373,7 @@ describe("typed HarnessDock MCP server", () => {
       task_name: "permission_probe",
       message: "inspect only",
       model: "claude-haiku-4-5",
+      reasoning_effort: "high",
     };
     const omitted = await client.callTool({ name: "spawn_agent", arguments: base, _meta: meta });
     assert.equal(omitted.isError, true);

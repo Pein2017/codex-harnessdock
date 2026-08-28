@@ -61,11 +61,18 @@ export function versionThreeRoute(overrides = {}) {
     model: "fake-service-large",
     topology: "leaf",
     authority: "behavioral_read_only",
+    effort: "high",
     driverVersion: V3_DRIVER_VERSION,
     capabilitySchemaVersion: ROUTE_CAPABILITY_SCHEMA_VERSION,
     capabilities: versionThreeCapabilities(),
     ...overrides,
   };
+}
+
+/** A real pre-effort version-three route: readable history, never a new transport route. */
+export function legacyVersionThreeRoute(overrides = {}) {
+  const { effort: _effort, ...route } = versionThreeRoute(overrides);
+  return route;
 }
 
 /**
@@ -99,6 +106,11 @@ export function versionThreeAgentRecord(base, overrides = {}) {
     updatedAt: timestamp,
     ...overrides,
   };
+}
+
+/** A serialized pre-effort Agent fixture retained for inspection compatibility. */
+export function legacyVersionThreeAgentRecord(base, overrides = {}) {
+  return versionThreeAgentRecord(base, { route: legacyVersionThreeRoute(), ...overrides });
 }
 
 /** A version-three job record an older runtime must refuse to own. */

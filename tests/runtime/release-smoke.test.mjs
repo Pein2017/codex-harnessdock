@@ -6,8 +6,10 @@ import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import {
+  assertNoLeakedConfiguration,
   isClaudeSubscriptionLimit,
   probeInstalledMcp,
+  projectNativeRouteDiscovery,
   runNativeTeamWitness,
   runPaidSmoke,
   runReleaseSmoke,
@@ -164,6 +166,11 @@ describe("release smoke", () => {
           agentCount: 0,
           harnessCount: ADMITTED_GENERATION_HARNESS_IDS.length,
           schemaRejected: true,
+          nativeRoutes: [
+            { harness: "claude-code", status: "available", detail: null, maturity: "stable", instances: [{ readiness: "ready", liveValidated: true, maturity: "stable", capacity: null, models: ["claude-sonnet-5"], efforts: ["low"], effortsByModel: { "claude-sonnet-5": ["low"] } }] },
+            { harness: "pi", status: "unavailable", detail: "inspection_failed", maturity: "experimental", instances: [] },
+            { harness: "opencode", status: "available", detail: null, maturity: "experimental", instances: [{ readiness: "ready", liveValidated: true, maturity: "experimental", capacity: 1, models: ["openai/gpt-5.6-luna"], efforts: ["low", "high"], effortsByModel: { "openai/gpt-5.6-luna": ["low", "high"] } }] },
+          ],
           paid: { requested: false, status: "skipped" },
         };
       },
@@ -173,6 +180,14 @@ describe("release smoke", () => {
     assert.equal(probeOptions.realClaude, false);
     assert.equal(report.skills.length, 8);
     assert.equal(report.tools.length, 8);
+    // Fresh native-route discovery rides the same zero-model list_harnesses
+    // call; an unavailable native Harness is reported, never a smoke failure.
+    assert.equal(report.nativeRouteDiscovery.length, 3);
+    assert.equal(report.nativeRouteDiscovery.find((route) => route.harness === "pi").status, "unavailable");
+    assert.deepEqual(
+      report.nativeRouteDiscovery.find((route) => route.harness === "opencode").instances[0].effortsByModel,
+      { "openai/gpt-5.6-luna": ["low", "high"] },
+    );
     assert.equal(report.compatibilityShells.valid, true);
     assert.equal(report.compatibilityShells.count, 0);
     assert.equal(report.compatibilityShells.coverageState, "unmanaged");
@@ -298,6 +313,62 @@ describe("release smoke", () => {
     assert.equal(report.tools.length, 8);
     assert.equal(report.agentCount, 0);
     assert.deepEqual(report.paid, { requested: false, status: "skipped" });
+  });
+
+  it("projects a bounded redacted native-route discovery and classifies availability", () => {
+    const projected = projectNativeRouteDiscovery([
+      {
+        harness: "pi",
+        maturity: "experimental",
+        instances: [{
+          instance: "pi-local",
+          readiness: "ready",
+          live_validated: true,
+          maturity: "experimental",
+          capacity: null,
+          routes: {
+            models: ["openai-codex/gpt-5.6-luna"],
+            reasoningEfforts: ["low", "medium", "high"],
+            effortsByModel: { "openai-codex/gpt-5.6-luna": ["low", "medium", "high"] },
+          },
+        }],
+      },
+      { harness: "opencode", unavailable: "server_unreachable", instances: [] },
+      {
+        harness: "claude-code",
+        instances: [
+          { readiness: "ready", routes: { models: ["claude-sonnet-5"], reasoningEfforts: ["low"], effortsByModel: {} } },
+          { readiness: "ready", routes: { models: ["claude-opus-5"], reasoningEfforts: ["low"], effortsByModel: {} } },
+        ],
+      },
+    ]);
+    assert.equal(projected.find((route) => route.harness === "pi").status, "available");
+    assert.deepEqual(
+      projected.find((route) => route.harness === "pi").instances[0].effortsByModel,
+      { "openai-codex/gpt-5.6-luna": ["low", "medium", "high"] },
+    );
+    assert.equal(projected.find((route) => route.harness === "opencode").status, "unavailable");
+    assert.equal(projected.find((route) => route.harness === "opencode").detail, "server_unreachable");
+    assert.equal(projected.find((route) => route.harness === "claude-code").status, "ambiguous");
+    // Route drift: a listed instance that cannot be freshly proven ready.
+    const drift = projectNativeRouteDiscovery([{ harness: "pi", instances: [{ readiness: "unknown", routes: null }] }]);
+    assert.equal(drift[0].status, "drift");
+    assert.equal(drift[0].detail, "discovery_unknown");
+  });
+
+  it("fails closed when a discovery projection carries an endpoint or credential", () => {
+    assert.doesNotThrow(() => assertNoLeakedConfiguration(
+      [{ harness: "pi", status: "available", instances: [{ models: ["openai-codex/gpt-5.6-luna"], efforts: ["low"] }] }],
+      "test",
+    ));
+    assert.throws(
+      () => assertNoLeakedConfiguration([{ harness: "opencode", detail: "http://127.0.0.1:4096/provider" }], "test"),
+      /disallowed configuration text/i,
+    );
+    assert.throws(
+      () => assertNoLeakedConfiguration([{ note: "PI_CODING_AGENT_DIR=/home/op/.pi" }], "test"),
+      /disallowed configuration text/i,
+    );
   });
 
   it("distinguishes bounded subscription compatibility fallbacks from a generic HTTP 429", () => {

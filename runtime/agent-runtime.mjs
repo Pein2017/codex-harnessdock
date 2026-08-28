@@ -31,7 +31,6 @@ import {
   validateHarnessCapabilities,
 } from "./harness-capabilities.mjs";
 import {
-  validateCanonicalRoute,
   validateInstanceInspection,
 } from "./harness-contract.mjs";
 import {
@@ -39,8 +38,8 @@ import {
   assertNoHarnessImplementationSelector,
   assertStatedHarnessId,
   harnessExecutionLifecycle,
+  acceptDriverRoute,
   createDriverScope,
-  harnessAdmitsModel,
   resolveDriverV2,
 } from "./harness-registry.mjs";
 import { createInternalAgentRuntime, preparedStartDisposition } from "./internal-runtime.mjs";
@@ -1032,9 +1031,13 @@ class AgentRuntime {
   async followupVersionThreeAgent(input, initialAgent, driver) {
     const store = this.versionThreeStore();
     const taskInput = assertText(input.message, "followup_task message");
-    const turnOptions = input.reasoning_effort == null
-      ? null
-      : { effort: input.reasoning_effort };
+    if (input.reasoning_effort != null) {
+      throw new Error("followup_task inherits its immutable accepted route; reasoning_effort is not an input.");
+    }
+    const requestedTurnOptions = null;
+    const turnOptions = typeof initialAgent.route?.effort === "string"
+      ? { effort: initialAgent.route.effort }
+      : null;
 
     this.reconcile();
     let agent = store.resolveTarget(initialAgent.agentId);
@@ -1046,7 +1049,7 @@ class AgentRuntime {
     // follow-up delivered there is steering for the current turn, not a new
     // turn on which a different reasoning effort could take effect.
     if (agent.activeJobId) {
-      if (turnOptions != null) {
+      if (requestedTurnOptions != null) {
         throw new Error(
           "followup_task reasoning_effort applies only when activating a new turn; " +
           "this Agent already has an active version-three turn."
@@ -1122,37 +1125,20 @@ class AgentRuntime {
     if (typeof input.write !== "boolean") {
       throw new Error(`${label} requires explicit boolean write authority.`);
     }
-    if (!harnessAdmitsModel(harnessId, model)) {
-      throw new Error(
-        `Harness ${harnessId} does not serve model ${JSON.stringify(model)}. A model is stated in full and ` +
-        `is never aliased, completed, or substituted.`
-      );
+    if (typeof input.reasoning_effort !== "string" || !input.reasoning_effort.trim()) {
+      throw new Error(`${label} requires explicit reasoning_effort.`);
     }
     // One route-time readiness observation, through the runtime's own seam.
     const observed = await this.jobs.inspectRouteInstance(harnessId);
     const driver = observed.driver;
-    const validated = [...observed.inspections];
-    const inspection = validated.find((candidate) => candidate.readiness === "ready");
-    if (!inspection) {
-      const observed = validated
-        .map((candidate) => `${candidate.readiness}/${candidate.detailCode}`)
-        .join(", ") || "none";
-      throw new Error(
-        `Harness ${harnessId} has no ready logical instance (${observed}). Nothing is started, repaired, or ` +
-        `substituted for it.`
-      );
-    }
     const request = {
       harnessId,
       model,
       topology,
       authority: input.write ? "behavioral_write" : "behavioral_read_only",
+      ...(input.reasoning_effort == null ? {} : { effort: input.reasoning_effort }),
     };
-    const route = validateCanonicalRoute(driver.validateRoute(request, inspection), {
-      driver,
-      inspection,
-      request,
-    });
+    const { route, inspection } = acceptDriverRoute(driver, request, observed.inspections);
     assertAdmittedInteraction(route.capabilities, `Harness ${harnessId} route`);
     return Object.freeze({
       driver,
@@ -1195,10 +1181,13 @@ class AgentRuntime {
     // Reasoning effort is Driver-discriminated: the Driver that owns the accepted
     // route decides whether one is admitted at all, and it decides here, before
     // anything durable exists. A route that proves no effort refuses it.
+    const acceptedTurnOptions = typeof accepted.route.effort === "string"
+      ? { effort: accepted.route.effort }
+      : (input.reasoning_effort == null ? null : { effort: input.reasoning_effort });
     accepted.driver.prepareTurn({
       route: accepted.route,
       taskInput: message,
-      turnOptions: input.reasoning_effort == null ? null : { effort: input.reasoning_effort },
+      turnOptions: acceptedTurnOptions,
       turnId: jobId,
     });
     if (harnessExecutionLifecycle(accepted.route.harnessId) === "version_three_worker") {
@@ -1208,7 +1197,7 @@ class AgentRuntime {
         description: input.description,
         message,
         jobId,
-        turnOptions: input.reasoning_effort == null ? null : { effort: input.reasoning_effort },
+        turnOptions: acceptedTurnOptions,
       });
     }
     const driver = this.jobs.driverForHarness(accepted.route.harnessId);

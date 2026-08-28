@@ -64,26 +64,18 @@ import {
   assertNativeReferenceEnvelope,
   boundedDriverReceipt,
   driverPreTransportRejection,
+  isBoundedRouteAtom,
+  splitFullModelRoute,
 } from "./harness-contract.mjs";
-import { ROUTE_CAPABILITY_SCHEMA_VERSION } from "./harness-capabilities.mjs";
+import { ROUTE_CAPABILITY_NAMES, ROUTE_CAPABILITY_SCHEMA_VERSION, validateRouteCapabilitySnapshot } from "./harness-capabilities.mjs";
 import {
+  createOpencodeDiscoveryClient,
   createOpencodeSession,
   createOpencodeTurnClient,
+  discoverOpencodeProviderRoutes,
+  isLoopbackOpencodeUrl,
   submitOpencodePrompt,
 } from "./opencode-client.mjs";
-import {
-  OPENCODE_EXPLORER_AUTHORITY,
-  OPENCODE_EXPLORER_CAPABILITIES,
-  OPENCODE_EXPLORER_PROFILE_NAME,
-  OPENCODE_EXPLORER_TOPOLOGY,
-  OPENCODE_HARNESS_ID,
-  OpencodeRouteError,
-  assertOpencodeRouteCapabilities,
-  inspectOpencodeExplorerInstance,
-  opencodeExplorerModelRoute,
-  opencodeExplorerInstanceKey,
-  validateOpencodeExplorerRouteRequest,
-} from "./opencode-explorer-profile.mjs";
 import {
   OPENCODE_PROMPT_PREFIX_VERSION,
   buildOpencodeExplorerPromptEnvelope,
@@ -98,7 +90,50 @@ import { plainRecordSnapshot } from "./plain-record.mjs";
 import { terminalMetricsFromEvidence } from "./terminal-metrics.mjs";
 
 export const OPENCODE_DRIVER_VERSION = "opencode@1";
-export const OPENCODE_DRIVER_TITLE = "OpenCode read-only Explorer (experimental)";
+export const OPENCODE_DRIVER_TITLE = "OpenCode native routes (experimental)";
+export const OPENCODE_HARNESS_ID = "opencode";
+
+class OpencodeRouteError extends Error {
+  constructor(code, message) {
+    super(message);
+    this.name = "OpencodeRouteError";
+    this.code = code;
+  }
+}
+
+function opencodeInstanceKey(serverUrl) {
+  if (!isLoopbackOpencodeUrl(serverUrl)) {
+    throw new OpencodeRouteError("invalid_server_url", "An OpenCode instance key requires the configured literal-IP loopback origin.");
+  }
+  return `opencode-server-${createHash("sha256").update(new URL(String(serverUrl)).origin).digest("hex").slice(0, 16)}`;
+}
+
+const OPENCODE_NATIVE_CAPABILITIES = validateRouteCapabilitySnapshot({
+  capabilitySchemaVersion: ROUTE_CAPABILITY_SCHEMA_VERSION,
+  driverMaturity: "experimental",
+  values: {
+    activeInput: "initial_only", authorityEnforcement: "prompt_only", automaticRecovery: "none",
+    continuation: "fresh_only", history: "unavailable", interaction: "noninteractive_fixed_policy",
+    interruptRequest: "unsupported", leafEnforcement: "prompt_only", nativeOrchestration: "opaque_bounded",
+    turnObservation: "unavailable",
+  },
+  maturity: Object.fromEntries(ROUTE_CAPABILITY_NAMES.map((name) => [name, "experimental"])),
+}, "OpenCode native route capabilities");
+
+function opencodeModelParts(model) {
+  const parts = splitFullModelRoute(model);
+  if (!parts) throw new OpencodeRouteError("foreign_route", "OpenCode route model must be provider/model.");
+  return { providerId: parts.provider, modelId: parts.model };
+}
+
+function nativeRouteFacts(routes) {
+  return Object.freeze({
+    models: Object.freeze(routes.map((route) => route.model)),
+    effortsByModel: Object.freeze(Object.fromEntries(routes.map((route) => [route.model, Object.freeze([...route.efforts])]))),
+    topologies: Object.freeze(["leaf"]),
+    ...OPENCODE_NATIVE_CAPABILITIES.values,
+  });
+}
 
 /**
  * The one fixed configuration key this Driver declares. Basic-auth credentials
@@ -119,6 +154,7 @@ export const OPENCODE_TURN_LOCATOR_KEYS = Object.freeze([
   "providerId",
   "sessionId",
   "userMessageId",
+  "variant",
 ]);
 
 /** Closed reasons this Driver refuses a turn before its native transport. */
@@ -336,7 +372,7 @@ export function createOpencodeDriver(options = {}) {
   });
   // Resolving the origin here, once, is what makes the instance key fixed: a
   // scope can restate the configured URL but never choose a different one.
-  const fixedInstanceKey = opencodeExplorerInstanceKey(
+  const fixedInstanceKey = opencodeInstanceKey(
     createOpencodeTurnClient(clientOptions).serverUrl
   );
 
@@ -351,7 +387,7 @@ export function createOpencodeDriver(options = {}) {
     };
   }
 
-  function turnReference({ sessionId, userMessageId, attemptId, providerId, modelId }) {
+  function turnReference({ sessionId, userMessageId, attemptId, providerId, modelId, variant }) {
     return {
       version: 1,
       harnessId: OPENCODE_HARNESS_ID,
@@ -364,6 +400,7 @@ export function createOpencodeDriver(options = {}) {
         attemptId,
         providerId,
         modelId,
+        variant,
       },
     };
   }
@@ -379,14 +416,36 @@ export function createOpencodeDriver(options = {}) {
         `${label} names a logical instance this Driver is not configured for.`
       );
     }
-    if (!opencodeExplorerModelRoute(fields.model)) {
-      throw new OpencodeRouteError("foreign_route", `${label} names a model this Driver does not admit.`);
-    }
-    if (fields.topology !== OPENCODE_EXPLORER_TOPOLOGY || fields.authority !== OPENCODE_EXPLORER_AUTHORITY) {
+    opencodeModelParts(fields.model);
+    if (fields.topology !== "leaf" || !["behavioral_read_only", "behavioral_write"].includes(fields.authority)) {
       throw new OpencodeRouteError("foreign_route", `${label} names a topology or authority this route does not admit.`);
     }
-    assertOpencodeRouteCapabilities(fields.capabilities);
+    if (!isBoundedRouteAtom(fields.effort)) {
+      throw new OpencodeRouteError("foreign_route", `${label} lacks an explicit native effort.`);
+    }
+    const capabilities = validateRouteCapabilitySnapshot(fields.capabilities, `${label} capabilities`);
+    if (JSON.stringify(capabilities) !== JSON.stringify(OPENCODE_NATIVE_CAPABILITIES)) {
+      throw new OpencodeRouteError("foreign_route", `${label} claims unsupported native capabilities.`);
+    }
     return fields;
+  }
+
+  async function inspectNative(scope) {
+    const declared = scope?.env?.OPENCODE_SERVER_URL;
+    if (declared && opencodeInstanceKey(declared) !== fixedInstanceKey) {
+      return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: "blocked", liveValidated: false, maturity: "experimental", detailCode: "not_configured", routes: null };
+    }
+    try {
+      const handle = createOpencodeDiscoveryClient({ ...clientOptions, env: fixedEnv, directory: scope?.workspaceRoot });
+      const discovered = await discoverOpencodeProviderRoutes(handle, { signal: scope?.signal });
+      if (!discovered.ok) {
+        const blocked = "code" in discovered && discovered.code === "auth_failed";
+        return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: blocked ? "blocked" : "unavailable", liveValidated: false, maturity: "experimental", detailCode: blocked ? "not_authenticated" : "service_unreachable", routes: null };
+      }
+      return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: "ready", liveValidated: true, maturity: "experimental", detailCode: "ready", routes: nativeRouteFacts(discovered.routes) };
+    } catch {
+      return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: "unavailable", liveValidated: false, maturity: "experimental", detailCode: "service_unreachable", routes: null };
+    }
   }
 
   /** The bounded facts a terminal result carries about how it was produced. */
@@ -576,7 +635,8 @@ export function createOpencodeDriver(options = {}) {
       parentMessageId: userMessageId,
       providerId: context.providerId,
       modelId: context.modelId,
-      agent: OPENCODE_EXPLORER_PROFILE_NAME,
+      variant: context.variant,
+      agent: null,
       attemptId: context.attemptId,
     });
     if (selected.ok) return completedTerminal({ nativeTurnRef, selected, context });
@@ -637,24 +697,7 @@ export function createOpencodeDriver(options = {}) {
      * nothing, and creates no session.
      */
     async inspectInstances(scope) {
-      const declared = scope?.env?.OPENCODE_SERVER_URL;
-      if (declared && opencodeExplorerInstanceKey(declared) !== fixedInstanceKey) {
-        return [{
-          harnessId: OPENCODE_HARNESS_ID,
-          instanceKey: fixedInstanceKey,
-          readiness: "blocked",
-          liveValidated: false,
-          maturity: "experimental",
-          detailCode: "not_configured",
-          routes: null,
-        }];
-      }
-      const report = await inspectOpencodeExplorerInstance({
-        ...clientOptions,
-        signal: scope?.signal ?? undefined,
-        heldCapacity: heldCapacity(fixedInstanceKey),
-      });
-      return [report.inspection];
+      return [await inspectNative(scope)];
     },
 
     /**
@@ -664,7 +707,10 @@ export function createOpencodeDriver(options = {}) {
      * here, before any session could exist.
      */
     validateRoute(request, inspection) {
-      const validated = validateOpencodeExplorerRouteRequest(request);
+      if (!request || typeof request !== "object" || Array.isArray(request) ||
+          Object.keys(request).some((key) => !["harnessId", "model", "topology", "authority", "effort"].includes(key))) {
+        throw new OpencodeRouteError("route_not_admitted", "OpenCode route contains an unsupported selector.");
+      }
       if (inspection?.instanceKey !== fixedInstanceKey) {
         throw new OpencodeRouteError(
           "instance_not_configured",
@@ -677,28 +723,35 @@ export function createOpencodeDriver(options = {}) {
           `The OpenCode instance is ${inspection.readiness} (${inspection.detailCode}); no route is admitted.`
         );
       }
+      const model = opencodeModelParts(request?.model) && request.model;
+      const effort = isBoundedRouteAtom(request?.effort) ? request.effort : null;
+      if (request?.topology !== "leaf" || !["behavioral_read_only", "behavioral_write"].includes(request?.authority) || !effort ||
+          !inspection.routes?.effortsByModel?.[model]?.includes(effort)) {
+        throw new OpencodeRouteError("route_not_admitted", "OpenCode requires one freshly advertised exact model, leaf topology, authority, and effort.");
+      }
       return {
         harnessId: OPENCODE_HARNESS_ID,
         instanceKey: fixedInstanceKey,
-        model: validated.model,
-        topology: validated.topology,
-        authority: validated.authority,
+        model,
+        topology: request.topology,
+        authority: request.authority,
+        effort,
         driverVersion: OPENCODE_DRIVER_VERSION,
-        capabilities: OPENCODE_EXPLORER_CAPABILITIES,
+        capabilities: OPENCODE_NATIVE_CAPABILITIES,
       };
     },
 
     /** Pure: builds Task 4's envelope and binds its digest. No I/O, no session. */
     prepareTurn(input) {
       const route = assertOwnedRoute(input?.route, "Prepared turn");
-      if (input?.turnOptions != null) {
+      if (JSON.stringify(input?.turnOptions) !== JSON.stringify({ effort: route.effort })) {
         throw new OpencodeRouteError(
           "turn_options_not_admitted",
-          "The OpenCode Explorer route proves no turn option, including reasoning effort."
+          "The OpenCode turn must retain its accepted explicit effort."
         );
       }
-      const promptEnvelope = buildOpencodeExplorerPromptEnvelope(input?.taskInput);
-      const promptText = renderOpencodeExplorerPrompt(input?.taskInput);
+      const promptEnvelope = buildOpencodeExplorerPromptEnvelope(input?.taskInput, route.authority);
+      const promptText = renderOpencodeExplorerPrompt(input?.taskInput, route.authority);
       return {
         harnessId: OPENCODE_HARNESS_ID,
         driverVersion: OPENCODE_DRIVER_VERSION,
@@ -709,7 +762,7 @@ export function createOpencodeDriver(options = {}) {
         inputDigest: `sha256:${createHash("sha256")
           .update(JSON.stringify([OPENCODE_PROMPT_PREFIX_VERSION, route.model, promptText]))
           .digest("hex")}`,
-        turnOptions: null,
+        turnOptions: { effort: route.effort },
       };
     },
 
@@ -723,27 +776,27 @@ export function createOpencodeDriver(options = {}) {
     async revalidatePreparedTurn(prepared, scope) {
       assertOwnedRoute(prepared?.route, "Prepared turn");
       const declared = scope?.env?.OPENCODE_SERVER_URL;
-      if (declared && opencodeExplorerInstanceKey(declared) !== fixedInstanceKey) {
+      if (declared && opencodeInstanceKey(declared) !== fixedInstanceKey) {
         throw new OpencodeRouteError(
           "instance_not_configured",
           "The turn scope names a logical instance this Driver is not configured for."
         );
       }
-      const report = await inspectOpencodeExplorerInstance({
-        ...clientOptions,
-        signal: scope?.signal ?? undefined,
-        heldCapacity: heldCapacity(fixedInstanceKey),
-      });
-      if (report.inspection.readiness !== "ready") {
+      const inspection = await inspectNative(scope);
+      if (inspection.readiness !== "ready") {
         throw new OpencodeRouteError(
           "instance_not_ready",
-          `The OpenCode instance is ${report.inspection.readiness} (${report.inspection.detailCode}); ` +
-            "no native turn is started."
+          `The OpenCode instance is ${inspection.readiness} (${inspection.detailCode}); ` +
+          "no native turn is started."
         );
       }
+      const accepted = driver.validateRoute({ harnessId: OPENCODE_HARNESS_ID, model: prepared.route.model, topology: prepared.route.topology, authority: prepared.route.authority, effort: prepared.route.effort }, inspection);
+      if (["model", "topology", "authority", "effort", "instanceKey"].some((key) => accepted[key] !== prepared.route[key])) {
+        throw new OpencodeRouteError("route_not_admitted", "The accepted OpenCode route drifted before transport.");
+      }
       return Object.freeze({
-        readinessDetailCode: report.inspection.detailCode,
-        serverVersion: report.facts.serverVersion,
+        readinessDetailCode: inspection.detailCode,
+        serverVersion: null,
         workspaceRoot: scope?.workspaceRoot ?? null,
       });
     },
@@ -792,9 +845,7 @@ export function createOpencodeDriver(options = {}) {
           throw new Error(`An OpenCode turn locator requires bounded text for ${key}.`);
         }
       }
-      if (!opencodeExplorerModelRoute(`${locator.providerId}/${locator.modelId}`)) {
-        throw new Error("An OpenCode turn locator must name the exact admitted provider and model.");
-      }
+      opencodeModelParts(`${locator.providerId}/${locator.modelId}`);
       return reference;
     },
 
@@ -830,7 +881,7 @@ export function createOpencodeDriver(options = {}) {
           "turn_identity_unprovable",
           "An OpenCode turn requires its durable turn identity before any native submission."
         );
-        promptText = renderOpencodeExplorerPrompt(prepared?.promptEnvelope?.taskInput);
+        promptText = renderOpencodeExplorerPrompt(prepared?.promptEnvelope?.taskInput, route.authority);
         releaseCapacity = claimCapacity(fixedInstanceKey);
       } catch (error) {
         if (releaseCapacity) releaseCapacity();
@@ -842,13 +893,13 @@ export function createOpencodeDriver(options = {}) {
       let nativeTurnRef;
       let userMessageId;
       try {
-        const admittedModel = opencodeExplorerModelRoute(route.model);
+        const admittedModel = opencodeModelParts(route.model);
         const turnClient = createOpencodeTurnClient(clientOptions);
         const workspaceRoot = input?.launchContext?.workspaceRoot ?? scope?.workspaceRoot ?? null;
         const created = await createOpencodeSession(turnClient, {
-          agent: OPENCODE_EXPLORER_PROFILE_NAME,
           providerId: admittedModel.providerId,
           modelId: admittedModel.modelId,
+          variant: route.effort,
           directory: workspaceRoot ?? undefined,
           signal: scope?.signal ?? undefined,
         });
@@ -883,6 +934,7 @@ export function createOpencodeDriver(options = {}) {
               attemptId,
               providerId: admittedModel.providerId,
               modelId: admittedModel.modelId,
+              variant: route.effort,
             }),
             { driver, route: prepared.route, kind: "turn" }
           );
@@ -896,9 +948,9 @@ export function createOpencodeDriver(options = {}) {
         const dispatched = submitOpencodePrompt(turnClient, {
           sessionId,
           messageId: userMessageId,
-          agent: OPENCODE_EXPLORER_PROFILE_NAME,
           providerId: admittedModel.providerId,
           modelId: admittedModel.modelId,
+          variant: route.effort,
           text: promptText,
           directory: workspaceRoot ?? undefined,
           signal: scope?.signal ?? undefined,
@@ -927,6 +979,7 @@ export function createOpencodeDriver(options = {}) {
               attemptId,
               providerId: admittedModel.providerId,
               modelId: admittedModel.modelId,
+              variant: route.effort,
               usageIdentity,
               // Plugin-observed wall clock only. Nothing derives a cache hit, a
               // price, or a charge from it.

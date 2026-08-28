@@ -15,8 +15,7 @@
  * older runtime that meets version-three queue state must fail closed while
  * leaving its owner untouched.
  *
- * Reasoning effort is deliberately absent: it is turn-scoped, it does not
- * change Agent identity or authority, and some Harnesses admit it per prompt.
+ * Reasoning effort is immutable route lineage. New routes never infer it.
  */
 
 import { Buffer } from "node:buffer";
@@ -137,7 +136,7 @@ function fromClosedSet(value, key, values, label) {
  * publishes, which are not part of route identity at all. Revalidating a
  * canonical route returns the same canonical route.
  */
-export function validateVersionThreeRoute(route, label = "Version-three route") {
+function validateVersionThreeRouteInternal(route, label, allowUnknownEffort) {
   const snapshot = plainRecordSnapshot(route, label);
   for (const key of Object.keys(snapshot)) {
     if (!V3_ROUTE_FIELDS.includes(key)) {
@@ -172,6 +171,11 @@ export function validateVersionThreeRoute(route, label = "Version-three route") 
     "driverVersion",
     label
   );
+  const hasEffort = Object.hasOwn(snapshot, "effort");
+  const effort = hasEffort
+    ? boundedText(requiredValue(snapshot, "effort", label), "effort", label)
+    : null;
+  if (!allowUnknownEffort && effort === null) requiredValue(snapshot, "effort", label);
   const capabilitySchemaVersion = requiredValue(snapshot, "capabilitySchemaVersion", label);
   if (capabilitySchemaVersion !== ROUTE_CAPABILITY_SCHEMA_VERSION) {
     throw new Error(
@@ -200,13 +204,26 @@ export function validateVersionThreeRoute(route, label = "Version-three route") 
     model,
     topology,
   };
+  if (effort !== null) values.effort = effort;
   /** @type {Record<string, *>} */
   const canonical = {};
-  for (const key of V3_ROUTE_FIELDS) canonical[key] = values[key];
+  for (const key of V3_ROUTE_FIELDS) {
+    if (key !== "effort" || effort !== null) canonical[key] = values[key];
+  }
   if (Buffer.byteLength(JSON.stringify(canonical), "utf8") > MAX_ROUTE_BYTES) {
     throw new Error(`${label} exceeds its durable bound.`);
   }
   return Object.freeze(canonical);
+}
+
+/** New route identity: effective effort is mandatory and never inferred. */
+export function validateVersionThreeRoute(route, label = "Version-three route") {
+  return validateVersionThreeRouteInternal(route, label, false);
+}
+
+/** Pre-effort V3 history remains readable; no activation seam accepts it. */
+export function validateStoredVersionThreeRoute(route, label = "Stored version-three route") {
+  return validateVersionThreeRouteInternal(route, label, true);
 }
 
 /** Stable serialization of one canonical route, for immutability comparison. */

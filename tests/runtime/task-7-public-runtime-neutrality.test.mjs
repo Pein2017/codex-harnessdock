@@ -509,6 +509,7 @@ describe("Task 7.4 — DriverScope is a least-authority value", () => {
     const { route } = acceptDriverRoute(driver, {
       harnessId: driver.harnessId,
       model: "fake-model",
+      effort: "high",
       topology: "leaf",
       authority: "behavioral_read_only",
     }, inspections);

@@ -1119,12 +1119,14 @@ export function createClaudeCodeDriverV2(options = {}) {
           `${JSON.stringify(request?.model ?? null)}: a route is persisted as stated.`
         );
       }
+      const effort = validateClaudeTurnOptions(validated.model, { effort: request?.effort }).effort;
       return {
         harnessId: CLAUDE_CODE_HARNESS_ID,
         instanceKey: inspection.instanceKey,
         model: validated.model,
         topology: request.topology,
         authority: request.authority,
+        effort,
         driverVersion: CLAUDE_CODE_V2_DRIVER_VERSION,
         capabilities: claudeRouteCapabilities(request.topology),
       };

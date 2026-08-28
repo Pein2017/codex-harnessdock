@@ -221,9 +221,10 @@ const EXPECTED_LINEAGE_FIELDS = Object.freeze([
   "parentMessageId",
   "providerId",
   "sessionId",
+  "variant",
 ]);
 
-const REQUIRED_LINEAGE_FIELDS = Object.freeze(["modelId", "parentMessageId", "providerId", "sessionId"]);
+const REQUIRED_LINEAGE_FIELDS = Object.freeze(["modelId", "parentMessageId", "providerId", "sessionId", "variant"]);
 
 export class OpencodeResultError extends Error {
   constructor(code, message, extra = {}) {
@@ -360,6 +361,7 @@ function requireExpectedLineage(expected) {
     parentMessageId: fields.parentMessageId,
     providerId: fields.providerId,
     modelId: fields.modelId,
+    variant: fields.variant,
     agent: fields.agent ?? null,
     attemptId: fields.attemptId ?? null,
   });
@@ -432,6 +434,7 @@ export function selectOpencodeExplorerFinalResult(response, expected) {
     ["parentID", info.parentID, lineage.parentMessageId],
     ["providerID", info.providerID, lineage.providerId],
     ["modelID", info.modelID, lineage.modelId],
+    ["variant", info.variant, lineage.variant],
   ]) {
     if (actual !== wanted) return failure("lineage_mismatch", { field });
   }
@@ -528,6 +531,7 @@ export function selectOpencodeExplorerFinalResult(response, expected) {
       parentMessageId: lineage.parentMessageId,
       providerId: lineage.providerId,
       modelId: lineage.modelId,
+      variant: lineage.variant,
       agent: lineage.agent,
       attemptId: lineage.attemptId,
     }),

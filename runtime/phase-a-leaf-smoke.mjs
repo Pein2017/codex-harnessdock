@@ -777,6 +777,7 @@ export async function runPhaseALeafSmoke(options = {}) {
         model: PHASE_A_MODEL,
         topology: PHASE_A_TOPOLOGY,
         authority: PHASE_A_AUTHORITY,
+        effort: PHASE_A_EFFORT,
       }, inspections);
     } catch {
       state.status = "unverified";

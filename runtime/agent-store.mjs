@@ -32,6 +32,7 @@ import {
   jobDurableStateVersion,
   normalizeWriteGeneration,
   validateVersionThreeRoute,
+  validateStoredVersionThreeRoute,
   versionThreeRouteText,
 } from "./durable-state-v3.mjs";
 import {
@@ -470,7 +471,7 @@ function validateVersionThreeAgent(agent) {
   if (agent.route == null) {
     throw new Error(`${label} requires one immutable route; version alone is not a migration.`);
   }
-  const route = validateVersionThreeRoute(agent.route, `${label} route`);
+  const route = validateStoredVersionThreeRoute(agent.route, `${label} route`);
   const ownership = validateTurnOwnership(agent.liveTurnOwnership, `${label} live turn ownership`);
   if (ownership && agent.activeJobId != null && ownership.jobId !== agent.activeJobId) {
     throw new Error(`${label} live turn ownership names a job that is not its active job.`);
@@ -783,6 +784,7 @@ function assertVersionThreeLifecycleUnavailable(agent, operation) {
  */
 function assertVersionThreeLifecycleOwned(agent, generation, operation) {
   if (agent?.version !== AGENT_RECORD_VERSION_V3) return false;
+  validateVersionThreeRoute(agent.route, `Version-three Agent ${agent.path ?? agent.agentId} activation route`);
   // A version-three record whose route runs the version-one supervisor is
   // created and driven by the generation that states its route, so its
   // activation and turn transitions belong to that generation too. The

@@ -228,7 +228,7 @@ export async function runDetachedVersionThreeTurn(input) {
     store, agent, jobId, claim.assignedMessageIds
   );
   const driver = resolveDriverV2(route.harnessId, { env });
-  const turnOptions = input.turnOptions ?? null;
+  const turnOptions = claim.turnOptions ?? null;
   const preparedTurn = driver.prepareTurn({
     route,
     taskInput,

@@ -38,6 +38,7 @@ export function fakeAssistantMessage(overrides = {}) {
     providerID: "openai",
     mode: "primary",
     agent: "codex-explorer",
+    variant: "high",
     path: { cwd: "/opt/operator-owned/workspace", root: "/opt/operator-owned/workspace" },
     cost: 0.001,
     tokens: { total: 100, input: 80, output: 20, reasoning: 0, cache: { read: 0, write: 0 } },
@@ -122,6 +123,7 @@ export function createFakeOpencodeServer(scenario = {}) {
       parentID: body?.messageID ?? "msg_user_fake",
       modelID: body?.model?.modelID ?? "gpt-5.6-luna",
       providerID: body?.model?.providerID ?? "openai",
+      variant: body?.variant,
       agent: body?.agent ?? "codex-explorer",
     });
     return {

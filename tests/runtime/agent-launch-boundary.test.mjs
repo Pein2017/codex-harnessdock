@@ -107,6 +107,7 @@ describe("Agent durable launch boundary", () => {
         harness: "claude-code",
         task_name: "missing_model",
         message: "must not launch",
+        reasoning_effort: "high",
         write: false,
       }),
       /spawn_agent model must be non-empty text/
@@ -147,7 +148,7 @@ describe("Agent durable launch boundary", () => {
         // a shorthand the route resolves.
         name: "alias model",
         input: { model: "fable" },
-        error: /does not serve model/,
+        error: /exact model claude-fable-5.*alias "fable"/,
       },
       {
         name: "retired tool allowlist",
@@ -171,6 +172,7 @@ describe("Agent durable launch boundary", () => {
           task_name: `invalid_${testCase.name.replace(/[^a-z]+/g, "_")}`,
           message: "must not persist",
           model: "claude-sonnet-5",
+          reasoning_effort: "high",
           write: false,
           ...testCase.input,
         }),
@@ -259,6 +261,7 @@ describe("Agent durable launch boundary", () => {
         task_name: "incompatible_spawn",
         message: "must not persist",
         model: "claude-sonnet-5",
+        reasoning_effort: "high",
         write: false,
       }),
       /incompatible with HarnessDock runtime surface/,
@@ -282,6 +285,7 @@ describe("Agent durable launch boundary", () => {
       followupSetup.runtime.followupTask({
         target: agent.agentId,
         message: "must remain outside the mailbox",
+        reasoning_effort: "high",
       }),
       /incompatible with HarnessDock runtime surface/,
     );
@@ -320,6 +324,7 @@ describe("Agent durable launch boundary", () => {
     const result = await runtime.followupTask({
       target: agent.agentId,
       message: "continue in the already-running process",
+      reasoning_effort: "high",
     });
     assert.equal(result.delivery, "dispatched_active");
     assert.equal(readinessCalled, false);
@@ -483,6 +488,7 @@ describe("Agent durable launch boundary", () => {
       task_name: "boundary",
       message: "launch after readiness",
       model: "claude-sonnet-5",
+      reasoning_effort: "high",
       write: false,
     });
 
@@ -493,7 +499,7 @@ describe("Agent durable launch boundary", () => {
       // it froze at creation.
       route_maturity: "experimental",
       model: "claude-sonnet-5",
-      reasoning_effort: null,
+      reasoning_effort: "high",
       authority: "behavioral_read_only",
       delegation_mode: "leaf",
       phase: null,
@@ -538,6 +544,7 @@ describe("Agent durable launch boundary", () => {
         task_name: "prepare_race",
         message: "initial prompt",
         model: "claude-opus-5",
+        reasoning_effort: "high",
         write: false,
       }),
       /injected prepare failure/
@@ -565,6 +572,7 @@ describe("Agent durable launch boundary", () => {
       jobId: "prepared-loser",
       agentId: agent.agentId,
       model: "sonnet",
+      effort: "high",
     });
     const stored = readJobFile(workspace, prepared.jobId);
     assert.ok(stored);
@@ -593,6 +601,7 @@ describe("Agent durable launch boundary", () => {
       jobId: "prepared-crash-window",
       agentId: agent.agentId,
       model: "sonnet",
+      effort: "high",
     });
     const reservation = runtime.store.reserveActivation(agent.agentId, prepared.jobId);
     assert.equal(reservation.reserved, true);
@@ -645,6 +654,7 @@ describe("Agent durable launch boundary", () => {
       jobId: "prepared-initial-crash",
       agentId: agent.agentId,
       model: "sonnet",
+      effort: "high",
     });
     const activation = runtime.store.reserveActivation(agent.agentId, prepared.jobId, { initial: true });
     assert.equal(activation.reserved, true);
@@ -703,6 +713,7 @@ describe("Agent durable launch boundary", () => {
     const followup = await runtime.followupTask({
       target: agent.agentId,
       message: "follow-up after recovery",
+      reasoning_effort: "high",
     });
     assert.equal(reserveOptions?.initial, true);
     assert.deepEqual(followup, {

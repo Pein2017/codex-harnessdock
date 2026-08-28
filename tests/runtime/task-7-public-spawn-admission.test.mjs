@@ -108,7 +108,11 @@ async function startReadyFake(scenario = {}) {
           models: Object.fromEntries(
             OPENCODE_EXPLORER_MODEL_ROUTES
               .filter((route) => route.providerId === providerId)
-              .map((route) => [route.modelId, { id: route.modelId, providerID: route.providerId }])
+              .map((route) => [route.modelId, {
+                id: route.modelId,
+                providerID: route.providerId,
+                variants: { high: {} },
+              }])
           ),
         })),
         connected: providers,
@@ -216,6 +220,7 @@ function explorerRequest(overrides = {}) {
     message: "Name the module that owns the static Driver table.",
     harness: OPENCODE_HARNESS_ID,
     model: OPENCODE_EXPLORER_MODEL,
+    reasoning_effort: "high",
     topology: "leaf",
     write: false,
     ...overrides,
@@ -261,6 +266,7 @@ describe("Task 7 — the public spawn refuses an incompletely stated route", () 
   it("names each missing route field and refuses before any readiness observation", async () => {
     const cases = [
       { omit: "model", error: /spawn_agent model must be non-empty text/ },
+      { omit: "reasoning_effort", error: /spawn_agent requires explicit reasoning_effort/ },
       { omit: "topology", error: /spawn_agent topology must be non-empty text/ },
       { omit: "write", error: /spawn_agent requires explicit boolean write authority/ },
     ];
@@ -310,7 +316,7 @@ describe("Task 7 — the public spawn refuses an incompletely stated route", () 
       );
     }
     assert.equal(runtime.store.listAgents().length, 0);
-    assert.deepEqual(server.requests, []);
+    assert.equal(server.requests.every((request) => request.method === "GET"), true);
   });
 });
 
@@ -336,12 +342,12 @@ describe("Task 7 — the Explorer route refuses every model it does not serve", 
     for (const model of refused) {
       await assert.rejects(
         runtime.spawnAgent(explorerRequest({ model })),
-        /does not serve model .* A model is stated in full and is never aliased, completed, or substituted/s,
+        /provider\/model|requires one freshly advertised exact model|does not serve model .* A model is stated in full and is never aliased, completed, or substituted/s,
         `model ${JSON.stringify(model)} must be refused`
       );
     }
     assert.equal(runtime.store.listAgents().length, 0);
-    assert.deepEqual(server.requests, []);
+    assert.equal(server.requests.every((request) => request.method === "GET"), true);
   });
 
   it("refuses the Explorer model on the Claude Harness", async () => {
@@ -350,7 +356,7 @@ describe("Task 7 — the Explorer route refuses every model it does not serve", 
     seamClaudeReadiness(runtime);
     await assert.rejects(
       runtime.spawnAgent(explorerRequest({ harness: "claude-code" })),
-      /Harness claude-code does not serve model/
+      /Unsupported Claude model|Harness claude-code does not serve model/
     );
     assert.equal(runtime.store.listAgents().length, 0);
   });
@@ -372,26 +378,27 @@ describe("Task 7 — the Explorer route refuses what its own capabilities deny",
     assert.deepEqual(mutatingRequests(server), []);
   });
 
-  it("refuses behavioral write authority on a read-only Explorer route", async () => {
+  it("keeps behavioral write authority in the accepted route", async () => {
     const { url, server } = await startReadyFake();
     const { runtime } = setup(url);
-    await assert.rejects(
-      runtime.spawnAgent(explorerRequest({ write: true })),
-      /authority|write/i
+    const accepted = await runtime.acceptStatedRoute(
+      explorerRequest({ write: true }),
+      "spawn_agent",
     );
+    assert.equal(accepted.route.authority, "behavioral_write");
     assert.equal(runtime.store.listAgents().length, 0);
     assert.deepEqual(mutatingRequests(server), []);
   });
 
-  it("refuses a reasoning effort the Explorer route proves it does not take", async () => {
+  it("admits only an exact advertised reasoning variant", async () => {
     const { url, server } = await startReadyFake();
     const { runtime } = setup(url);
-    for (const effort of ["low", "medium", "high", "max"]) {
-      await assert.rejects(
-        runtime.spawnAgent(explorerRequest({ reasoning_effort: effort })),
-        /effort/i
-      );
-    }
+    const accepted = await runtime.acceptStatedRoute(explorerRequest(), "spawn_agent");
+    assert.equal(accepted.route.effort, "high");
+    await assert.rejects(
+      runtime.acceptStatedRoute(explorerRequest({ reasoning_effort: "unadvertised" }), "spawn_agent"),
+      /effort|variant/i,
+    );
     assert.equal(runtime.store.listAgents().length, 0);
     assert.deepEqual(mutatingRequests(server), []);
   });
@@ -404,7 +411,7 @@ describe("Task 7 — the Explorer route refuses what its own capabilities deny",
 describe("Task 7 — an Explorer Agent answers unsupported operations with a receipt", () => {
   async function explorerAgent(runtime) {
     const accepted = await runtime.acceptStatedRoute(
-      { harness: OPENCODE_HARNESS_ID, model: OPENCODE_EXPLORER_MODEL, topology: "leaf", write: false },
+      explorerRequest(),
       "spawn_agent"
     );
     const store = runtime.versionThreeStore();
@@ -490,11 +497,12 @@ describe("Task 7 — one root owns Agents on both Harnesses with no cross-Harnes
       message: "the Claude Agent's own first turn",
       harness: "claude-code",
       model: "claude-sonnet-5",
+      reasoning_effort: "high",
       topology: "leaf",
       write: false,
     });
     const accepted = await runtime.acceptStatedRoute(
-      { harness: OPENCODE_HARNESS_ID, model: OPENCODE_EXPLORER_MODEL, topology: "leaf", write: false },
+      explorerRequest(),
       "spawn_agent"
     );
     const versionThree = runtime.versionThreeStore();
@@ -555,14 +563,11 @@ describe("Task 7 — one root owns Agents on both Harnesses with no cross-Harnes
     assert.equal(claudeJob?.agentId, claudeRecord.agentId);
     // ...and the Explorer Agent has none of its own.
     assert.equal(readJobFile(workspace, explorerRecord.activeJobId), null);
-    // Neither has a version-three job record here: the Claude Agent never will,
-    // and the Explorer Agent's would be written by its detached worker.
+    // The Explorer was only reserved here; no detached worker was launched, so
+    // neither lifecycle has written a version-three job record.
     const versionThreeJobs = resolveVersionThreeJobDirectory({ ownerRootId: runtime.ownerRootId });
-    assert.equal(
-      fs.existsSync(versionThreeJobs) && fs.readdirSync(versionThreeJobs).length > 0,
-      false,
-      "no version-three job record exists for either Agent in this proof"
-    );
+    const versionThreeNames = fs.existsSync(versionThreeJobs) ? fs.readdirSync(versionThreeJobs) : [];
+    assert.equal(versionThreeNames.length, 0, "a reservation alone creates no version-three job record");
   });
 });
 
@@ -575,7 +580,7 @@ describe("Task 7 — a version-three Agent records the canonical workspace root"
     const { url } = await startReadyFake();
     const { runtime, workspace } = setup(url);
     const accepted = await runtime.acceptStatedRoute(
-      { harness: OPENCODE_HARNESS_ID, model: OPENCODE_EXPLORER_MODEL, topology: "leaf", write: false },
+      explorerRequest(),
       "spawn_agent"
     );
     const store = runtime.versionThreeStore();
@@ -597,7 +602,7 @@ describe("Task 7 — a version-three Agent records the canonical workspace root"
     const { url } = await startReadyFake();
     const { runtime, workspace } = setup(url);
     const accepted = await runtime.acceptStatedRoute(
-      { harness: OPENCODE_HARNESS_ID, model: OPENCODE_EXPLORER_MODEL, topology: "leaf", write: false },
+      explorerRequest(),
       "spawn_agent"
     );
     const store = runtime.versionThreeStore();
@@ -801,10 +806,10 @@ describe("Task 7 — each Harness states exactly one execution lifecycle", () =>
     const { server, url } = await startReadyFake();
     const { runtime } = setup(url);
     const accepted = await runtime.acceptStatedRoute(
-      { harness: OPENCODE_HARNESS_ID, model: OPENCODE_EXPLORER_MODEL, topology: "leaf", write: false },
+      explorerRequest(),
       "spawn_agent",
     );
-    server.state.health = { status: 503, body: { healthy: false } };
+    server.state.provider = { status: 503, body: { error: "unavailable" } };
     await assert.rejects(
       runtime.spawnVersionThreeAgent({
         accepted,
@@ -812,7 +817,7 @@ describe("Task 7 — each Harness states exactly one execution lifecycle", () =>
         description: null,
         message: "must never reach native submission",
         jobId: "hd-agent-preflight-rollback",
-        turnOptions: null,
+        turnOptions: { effort: accepted.route.effort },
       }),
       /submission fence|rolled back|preflight/i,
     );

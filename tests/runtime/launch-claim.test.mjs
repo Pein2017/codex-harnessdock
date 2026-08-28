@@ -203,7 +203,7 @@ function fakeLiveHarnessTurn({ route = versionThreeRoute(), live = {} } = {}) {
 
 const RECORD_FIELDS = [
   "version", "ownerRootId", "agentId", "jobId", "attemptId",
-  "route", "leaseState", "leaseIntent", "leaseBindings", "assignedMessageIds", "inputDigest",
+  "route", "leaseState", "leaseIntent", "leaseBindings", "assignedMessageIds", "turnOptions", "inputDigest",
   "acceptance", "nativeTurnRef", "nativeSessionRef", "acceptanceEvidenceAt", "sanitizedDetail",
   "submissionState", "submissionStartedAt",
   "createdAt", "updatedAt",
@@ -219,6 +219,7 @@ function materializeLegacyVersionOne(record) {
   const legacy = { ...record, version: 1 };
   delete legacy.leaseState;
   delete legacy.leaseIntent;
+  delete legacy.turnOptions;
   fs.rmSync(currentDirectory, { recursive: true, force: true });
   fs.mkdirSync(legacyDirectory, { recursive: true, mode: 0o700 });
   const fileName = `${createHash("sha256").update(record.attemptId).digest("hex")}.json`;
@@ -238,6 +239,7 @@ describe("launch claim: closed identity and durable binding", () => {
     assert.equal(record.attemptId, "attempt-1");
     assert.deepEqual(record.route, versionThreeRoute());
     assert.deepEqual(record.assignedMessageIds, ["message-1"]);
+    assert.equal(record.turnOptions, null);
     assert.match(record.inputDigest, /^sha256:[0-9a-f]{64}$/);
     assert.equal(record.acceptance, "not_submitted");
     assert.equal(record.nativeTurnRef, null);
@@ -306,7 +308,9 @@ describe("launch claim: closed identity and durable binding", () => {
     setup();
     const prepared = createLaunchClaim(claimInput());
     materializeLegacyVersionOne(prepared);
-    assert.deepEqual(createLaunchClaim(claimInput()), prepared);
+    const legacyCompatible = { ...prepared };
+    delete legacyCompatible.turnOptions;
+    assert.deepEqual(createLaunchClaim(claimInput()), legacyCompatible);
   });
 
   it("fails closed when valid v1 and v2 records disagree", () => {
@@ -719,6 +723,42 @@ describe("launch claim: corrupt and partial durable records", () => {
     const [fileName] = fs.readdirSync(dir).filter((entry) => entry.endsWith(".json"));
     return path.join(dir, fileName);
   }
+
+  it("reads a pre-effort launch claim but refuses every activation mutation", () => {
+    setup();
+    const record = createLaunchClaim(claimInput());
+    const filePath = claimFilePath();
+    const { effort: _effort, ...legacyRoute } = record.route;
+    const routeDigest = createHash("sha256").update(JSON.stringify(legacyRoute)).digest("hex");
+    const legacyReceipt = (receipt) => {
+      const updated = { ...receipt, routeDigest };
+      updated.evidenceDigest = createHash("sha256").update(JSON.stringify({
+        kind: updated.kind,
+        keyFields: updated.keyFields,
+        capacity: updated.capacity,
+        routeDigest,
+        ownerRootId: updated.ownerRootId,
+        agentId: updated.agentId,
+        jobId: updated.jobId,
+      })).digest("hex");
+      return updated;
+    };
+    const legacy = {
+      ...record,
+      route: legacyRoute,
+      leaseIntent: record.leaseIntent.map(legacyReceipt),
+      leaseBindings: record.leaseBindings.map(legacyReceipt),
+    };
+    fs.writeFileSync(filePath, JSON.stringify(legacy));
+
+    assert.equal(Object.hasOwn(readLaunchClaim(binding()).route, "effort"), false);
+    const bytes = fs.readFileSync(filePath);
+    assert.throws(
+      () => markNativeSubmissionStarted({ ...binding(), attemptId: "attempt-1" }),
+      /explicit.*effort/i,
+    );
+    assert.deepEqual(fs.readFileSync(filePath), bytes);
+  });
 
   it("fails closed on invalid JSON without deleting the file", () => {
     setup();

@@ -149,6 +149,7 @@ async function setup(options = {}) {
     model: "claude-sonnet-5",
     topology: "leaf",
     authority: "behavioral_read_only",
+    effort: "high",
   }, inspections);
   const v3Route = { ...route, capabilitySchemaVersion: route.capabilities.capabilitySchemaVersion };
 

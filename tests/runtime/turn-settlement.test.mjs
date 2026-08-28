@@ -67,7 +67,7 @@ async function validatedServiceResult(resultOverride) {
   );
   const accepted = acceptDriverRoute(
     driver,
-    { harnessId: "fake-service", model: "standard-tier", topology: "leaf", authority: "behavioral_read_only" },
+    { harnessId: "fake-service", model: "standard-tier", effort: "high", topology: "leaf", authority: "behavioral_read_only" },
     inspections,
   );
   const scope = createDriverScope(scopeInput(driver, { route: accepted.route }));

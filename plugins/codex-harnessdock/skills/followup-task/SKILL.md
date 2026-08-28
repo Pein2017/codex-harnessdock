@@ -8,16 +8,16 @@ description: 'Experimental: deliver work to a running Agent or activate its prov
 > **Experimental.** May activate an Agent; cannot reactivate an idle Codex parent.
 
 Call `mcp__codex_harnessdock__followup_task` with exact current-root `target` and
-`message`; optional `reasoning_effort` where admitted. Every new Pi turn needs
-`low`, `medium`, `high`, `xhigh`, or `max`; active input preserves its effort. Trusted Codex
+`message` only. The Agent's frozen route effort is inherited for every turn,
+including each new Pi or OpenCode turn; this tool accepts no `reasoning_effort`. Trusted Codex
 metadata owns cwd/root. If unavailable, report Plugin startup or discovery failure; never use a shell fallback.
 
 Release drift: use the exact retained Skill path; latest-version instructions
 are emergency-only; `HARNESSDOCK_MCP_RESTART_REQUIRED` means new Codex task. Never repair Plugin Cache.
 
-- The whole route -- Harness, model, topology, behavioral authority -- is
-  frozen at creation and inherited unchanged. This tool accepts no `write`,
-  `harness`, or `topology`: a different route means a new Agent.
+- The whole route -- Harness, model, topology, behavioral authority, and
+  reasoning effort -- is frozen at creation and inherited unchanged. This tool
+  accepts no `write`, `harness`, `topology`, or `reasoning_effort`, and a different route means a new Agent.
 - An idle Pi Agent resumes its exact session only, without automatic recovery;
   an active Pi turn acknowledges serialized input. Other routes may use exact
   or receipt-proven safe-fresh continuation. Never substitute a Terminal

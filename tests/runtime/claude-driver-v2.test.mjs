@@ -179,6 +179,7 @@ async function acceptRoute(driver, request = {}) {
     model: "claude-sonnet-5",
     topology: "leaf",
     authority: "behavioral_read_only",
+    effort: request.effort ?? DEFAULT_EFFORT_BY_MODEL.get(request.model ?? "claude-sonnet-5"),
     ...request,
   }, inspections).route;
 }
@@ -372,7 +373,7 @@ describe("Claude Code canonical route validation", () => {
   it("never resolves an alias, an unsupported model, or an unsupported native team route", async () => {
     const { driver } = makeDriver();
     await assert.rejects(async () => acceptRoute(driver, { model: "opus" }), /exact model/);
-    await assert.rejects(async () => acceptRoute(driver, { model: "gpt-5" }), /Unsupported Claude model/);
+    await assert.rejects(async () => acceptRoute(driver, { model: "gpt-5", effort: "high" }), /Unsupported Claude model/);
     await assert.rejects(
       async () => acceptRoute(driver, { model: "claude-sonnet-5", topology: "native_orchestrator" }),
       /claude_orchestrator delegation requires exact model/,

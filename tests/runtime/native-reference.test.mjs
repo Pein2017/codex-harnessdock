@@ -572,6 +572,7 @@ function routeRequest(overrides = {}) {
   return {
     harnessId: FAKE_SERVICE_HARNESS_ID,
     model: "standard-tier",
+    effort: "high",
     topology: "leaf",
     authority: "behavioral_read_only",
     ...overrides,

@@ -37,6 +37,7 @@ const MESSAGE_ID = "msg_assistant_usage";
 const PARENT_ID = "msg_user_usage";
 const PROVIDER_ID = "opencode-go";
 const MODEL_ID = "deepseek-v4-flash";
+const VARIANT = "high";
 
 function assistantInfo(overrides = {}) {
   return {
@@ -49,6 +50,7 @@ function assistantInfo(overrides = {}) {
     providerID: PROVIDER_ID,
     mode: "primary",
     agent: "codex-explorer",
+    variant: VARIANT,
     path: { cwd: "/opt/operator-owned/workspace", root: "/opt/operator-owned" },
     cost: 0.25,
     tokens: { total: 900, input: 700, output: 150, reasoning: 50, cache: { read: 600, write: 40 } },
@@ -65,6 +67,7 @@ function expectedLineage() {
     modelId: MODEL_ID,
     agent: "codex-explorer",
     attemptId: "att_usage",
+    variant: VARIANT,
   };
 }
 

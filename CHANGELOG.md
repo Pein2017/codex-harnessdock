@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+## 0.22.0 - 2026-08-28
+
+- Replace the fixed Pi and OpenCode model/effort constants with bounded,
+  zero-inference native discovery at list and spawn time. `list_harnesses`
+  and `spawn_agent` now project the routes Pi resolves from its local
+  `PI_CODING_AGENT_DIR` RPC configuration and the connected OpenCode Server
+  resolves from its `/provider` catalog and variants; a static checkout-owned
+  Driver registry still admits only `claude-code`, `opencode`, and `pi`, and an
+  unavailable, ambiguous, or changed route fails closed rather than aliasing,
+  inferring, or substituting a nearby one.
+- Require an explicit `reasoning_effort` for every Pi and OpenCode spawn,
+  freshly validated against the exact native model or variant; follow-up
+  inherits that frozen effort. No Driver stores or uses a discovered native
+  default. OpenCode maps the stated effort to exactly one advertised variant
+  and omits an agent selector so the Server keeps its native local
+  agent/configuration.
+- Keep `write` a prompt-and-receipt authority only across native routes: it no
+  longer selects Pi native tools, argv, or process permissions, and OpenCode
+  inherits the same native plugins, MCP servers, tools, and sandbox for
+  `write: true` and `write: false`. Restore Pi's native extensions, skills,
+  prompt templates, and tools without copying or exposing their configuration.
+- Report bounded, redacted fresh native-route discovery in `npm run doctor`
+  and the zero-model `npm run smoke:release`, distinguishing unavailable,
+  ambiguous, and route-drift conditions without a model call, Server start, or
+  configuration enumeration.
+- **BREAKING (task-facing).** Bump the MCP API generation to 7 and the plugin
+  minor version to 0.22.0. An MCP process that discovered generation 6 assumed
+  fixed native model/effort enums and now fails restart-required before any
+  operation; a newly loaded MCP observes later local Pi/OpenCode configuration
+  changes through fresh discovery without a HarnessDock reload.
+
 ## 0.21.0 - 2026-08-27
 
 - Add the first-class Pi RPC Harness for exactly

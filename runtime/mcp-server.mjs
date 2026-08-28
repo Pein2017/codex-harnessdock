@@ -16,7 +16,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 
-import { ADMITTED_GENERATION_HARNESS_IDS, ADMITTED_MODEL_IDS } from "./harness-registry.mjs";
+import { isBoundedRouteAtom, isBoundedRouteText } from "./harness-contract.mjs";
+import { ADMITTED_GENERATION_HARNESS_IDS } from "./harness-registry.mjs";
 import { HARNESSDOCK_MCP_API_GENERATION } from "./mcp-api.mjs";
 import { removeRuntimeLoaderMarker, resolveGitCommonDirectory } from "./promotion-gate.mjs";
 import { PACKAGE_VERSION } from "./version.mjs";
@@ -44,10 +45,13 @@ const PROMOTION_GATE_DIRECTORY = path.join(
   "codex-harnessdock-promotion-gate",
 );
 // One source for both the typed schema and runtime validation.
-const MODEL_IDS = [...ADMITTED_MODEL_IDS];
 const HARNESS_IDS = [...ADMITTED_GENERATION_HARNESS_IDS];
 const TOPOLOGIES = ["leaf", "native_orchestrator"];
-const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
+const boundedRouteText = z.string().min(1).max(256).refine(
+  isBoundedRouteText,
+  "must be bounded exact route text",
+);
+const boundedRouteAtom = boundedRouteText.refine(isBoundedRouteAtom, "must be one bounded route atom");
 const MODEL_FACING_WAIT_TIMEOUT_MS = 3_600_000;
 
 const exactTarget = z.string().trim().min(1).describe(
@@ -55,18 +59,18 @@ const exactTarget = z.string().trim().min(1).describe(
 );
 const message = z.string().trim().min(1);
 const executionFields = {
-  reasoning_effort: z.enum(EFFORTS).optional(),
+  reasoning_effort: boundedRouteAtom,
 };
 const TOOL_DEFINITIONS = Object.freeze({
   list_harnesses: {
     description:
-      "Experimental: list the Harnesses this checkout admits, with each logical instance's readiness, route constraints, capability maturity, and capacity. This observes state only.",
+      "Experimental: list the Harnesses this checkout admits, with each instance's readiness, capability maturity, capacity, and the exact model and reasoning-effort choices freshly discovered from native Pi/OpenCode configuration. Observes state only; enumerates no native config, plugins, MCP, or tools.",
     inputSchema: z.object({}).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   spawn_agent: {
     description:
-      "Experimental: start one durable Agent asynchronously on an explicitly stated route. The Harness, full model, topology, and behavioral authority are all required and are frozen on the Agent; none of them is defaulted, inferred, or aliased.",
+      "Experimental: start one durable Agent asynchronously on an explicitly stated route. The Harness, full model, reasoning effort, topology, and behavioral authority are all required, freshly validated against native discovery, and frozen on the Agent; none is defaulted, inferred, or aliased.",
     inputSchema: z.object({
       task_name: z.string().regex(/^[a-z0-9_]+$/),
       message,
@@ -74,9 +78,7 @@ const TOOL_DEFINITIONS = Object.freeze({
       harness: z.enum(/** @type {[string, ...string[]]} */ (HARNESS_IDS)).describe(
         "Required Harness this Agent runs on. There is no default Harness."
       ),
-      model: z.enum(/** @type {[string, ...string[]]} */ (MODEL_IDS)).describe(
-        "Required full model identifier admitted by the stated Harness."
-      ),
+      model: boundedRouteText.describe("Required full model identifier; the selected Harness freshly validates it."),
       topology: z.enum(/** @type {[string, ...string[]]} */ (TOPOLOGIES)).describe(
         "Required topology: leaf runs the task itself; native_orchestrator is admitted only by a Harness whose route proves it."
       ),
@@ -95,8 +97,8 @@ const TOOL_DEFINITIONS = Object.freeze({
   },
   followup_task: {
     description:
-      "Experimental: deliver work or activate one proven Agent continuation asynchronously. The Agent's route and behavioral authority are immutable and inherited; only its turn-scoped reasoning effort may be stated where the route admits one.",
-    inputSchema: z.object({ target: exactTarget, message, ...executionFields }).strict(),
+      "Experimental: deliver work or activate one proven Agent continuation asynchronously. The Agent's immutable route, including reasoning effort, is inherited.",
+    inputSchema: z.object({ target: exactTarget, message }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
   wait_agent: {
@@ -370,7 +372,7 @@ export function createCcMcpServer(options = {}) {
     {
       capabilities: { experimental: { [CODEX_SANDBOX_META_KEY]: {} } },
       instructions:
-        "Use the eight Experimental Agent tools. list_harnesses observes which Harnesses this checkout admits and what each instance reports. Spawn starts one Agent asynchronously on an explicitly stated Harness, full model, topology, and behavioral authority, all of which are then frozen on that Agent; follow-up inherits them. wait_agent has implementation-defined completion-priority, wakes on durable activity, has a fixed one-hour upper bound, and takes no timeout argument. Targets form one to eight exact targets joined as either one exact turn or an all-settled barrier; only one target may opt into one progress update. A completion token is acknowledged exactly once on a later wait only if needed. After a quiet timeout, call wait_agent again instead of list_agents or read_agent_messages. list_agents observes logical Agent Cards without delivery. Tool calls are scoped by trusted Codex metadata.",
+        "Use the eight Experimental Agent tools. list_harnesses observes which Harnesses this checkout admits and the exact models and reasoning-effort choices each instance freshly discovers from native configuration; it enumerates no native config, plugins, MCP, or tools. Spawn starts one Agent asynchronously on an explicitly stated Harness, full model, reasoning effort, topology, and behavioral authority, all freshly validated against native discovery and then frozen on that Agent; follow-up inherits them, including effort. wait_agent has implementation-defined completion-priority, wakes on durable activity, has a fixed one-hour upper bound, and takes no timeout argument. Targets form one to eight exact targets joined as either one exact turn or an all-settled barrier; only one target may opt into one progress update. A completion token is acknowledged exactly once on a later wait only if needed. After a quiet timeout, call wait_agent again instead of list_agents or read_agent_messages. list_agents observes logical Agent Cards without delivery. Tool calls are scoped by trusted Codex metadata.",
     }
   );
 

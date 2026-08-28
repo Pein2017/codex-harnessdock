@@ -110,7 +110,7 @@ import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { validateVersionThreeRoute } from "./durable-state-v3.mjs";
+import { validateStoredVersionThreeRoute, validateVersionThreeRoute } from "./durable-state-v3.mjs";
 import { durableTurnEvidence } from "./harness-contract.mjs";
 import { acquiredLeaseEvidence } from "./instance-admission-lease.mjs";
 import {
@@ -298,9 +298,10 @@ function assertPreparedInputText(value, label) {
  * input text, and the canonical bounded turn-option bag -- never accepted as
  * caller-supplied authority, and never a Driver-supplied digest (see
  * `createLaunchClaim()`, which never exposes an `inputDigest` input field at
- * all). Only the digest is ever persisted; `preparedInput` and `turnOptions`
- * are used only transiently, in memory, to compute it, and are never written
- * to durable state, logged, or echoed back. Order is significant: swapping two message
+ * all). `preparedInput` is never persisted. The exact bounded `turnOptions`
+ * are persisted because a detached worker must reproduce the prepared native
+ * request without inventing or re-resolving Driver-owned effective options.
+ * Order is significant: swapping two message
  * identities' order produces a different digest, exactly matching current
  * Agent mailbox activation-order semantics.
  */
@@ -328,8 +329,8 @@ function computeInputDigest(assignedMessageIds, preparedInput, turnOptionsText) 
  * whose Driver owns no turn options -- has its own reserved text, so omission
  * can never collide with a stated bag.
  */
-function canonicalTurnOptionsText(value, label) {
-  if (value === null) return "none";
+function canonicalTurnOptions(value, label) {
+  if (value === null) return null;
   if (typeof value !== "object" || Array.isArray(value)) {
     throw new Error(`${label} must be one bounded option record or null.`);
   }
@@ -338,7 +339,12 @@ function canonicalTurnOptionsText(value, label) {
   if (Buffer.byteLength(text, "utf8") > MAX_TURN_OPTIONS_BYTES) {
     throw new Error(`${label} exceeds ${MAX_TURN_OPTIONS_BYTES} bytes.`);
   }
-  return `stated\0${text}`;
+  return canonical;
+}
+
+function canonicalTurnOptionsText(value, label) {
+  const canonical = canonicalTurnOptions(value, label);
+  return canonical === null ? "none" : `stated\0${JSON.stringify(canonical)}`;
 }
 
 /**
@@ -761,13 +767,13 @@ function writeAtomicClaimFile(filePath, data, { createOnly = false } = {}) {
 
 const LAUNCH_CLAIM_FIELDS = Object.freeze([
   "version", "ownerRootId", "agentId", "jobId", "attemptId",
-  "route", "leaseState", "leaseIntent", "leaseBindings", "assignedMessageIds", "inputDigest",
+  "route", "leaseState", "leaseIntent", "leaseBindings", "assignedMessageIds", "turnOptions", "inputDigest",
   "acceptance", "nativeTurnRef", "nativeSessionRef", "acceptanceEvidenceAt", "sanitizedDetail",
   "submissionState", "submissionStartedAt",
   "createdAt", "updatedAt",
 ]);
 const LEGACY_LAUNCH_CLAIM_FIELDS = Object.freeze(
-  LAUNCH_CLAIM_FIELDS.filter((field) => !["leaseState", "leaseIntent"].includes(field))
+  LAUNCH_CLAIM_FIELDS.filter((field) => !["leaseState", "leaseIntent", "turnOptions"].includes(field))
 );
 
 const LEASE_RECEIPT_FIELDS = Object.freeze([
@@ -944,7 +950,13 @@ function assertTimestampMonotonicity(createdAt, updatedAt, acceptanceEvidenceAt,
 function validateLaunchClaimRecord(parsed) {
   const label = "Launch claim record";
   const snapshot = plainRecordSnapshot(parsed, label);
-  assertClosedFieldSet(snapshot, LAUNCH_CLAIM_FIELDS, label);
+  // Claims written before effective options became a durable worker handoff
+  // remain readable. Their next native operation receives null and the owning
+  // Driver must freshly prove an effective option or fail closed.
+  const hasTurnOptions = Object.hasOwn(snapshot, "turnOptions");
+  assertClosedFieldSet(snapshot, hasTurnOptions
+    ? LAUNCH_CLAIM_FIELDS
+    : LAUNCH_CLAIM_FIELDS.filter((field) => field !== "turnOptions"), label);
   if (snapshot.version !== LAUNCH_CLAIM_SCHEMA_VERSION) {
     throw taggedError(
       "unsupported_version",
@@ -953,7 +965,7 @@ function validateLaunchClaimRecord(parsed) {
   }
   const identity = assertBindingIdentity(snapshot);
   const attemptId = assertIdentityText(snapshot.attemptId, `${label} attemptId`);
-  const route = validateVersionThreeRoute(snapshot.route, `${label} route`);
+  const route = validateStoredVersionThreeRoute(snapshot.route, `${label} route`);
   const leaseState = ["intended", "acquired"].includes(snapshot.leaseState) ? snapshot.leaseState : null;
   if (leaseState == null) throw new Error(`${label} has an unsupported leaseState.`);
   const leaseIntent = validateLeaseBindingsList(snapshot.leaseIntent, `${label} leaseIntent`);
@@ -981,6 +993,9 @@ function validateLaunchClaimRecord(parsed) {
     throw new Error(`${label} acquired lease must bind exactly its durable pre-acquisition intent.`);
   }
   const assignedMessageIds = assertAssignedMessageIds(snapshot.assignedMessageIds, `${label} assignedMessageIds`);
+  const turnOptions = hasTurnOptions
+    ? canonicalTurnOptions(snapshot.turnOptions, `${label} turnOptions`)
+    : null;
   const inputDigest = assertInputDigest(snapshot.inputDigest);
   const acceptance = LAUNCH_ACCEPTANCE_VALUES.includes(snapshot.acceptance) ? snapshot.acceptance : null;
   if (acceptance == null) {
@@ -1019,6 +1034,7 @@ function validateLaunchClaimRecord(parsed) {
     leaseIntent,
     leaseBindings,
     assignedMessageIds,
+    ...(hasTurnOptions ? { turnOptions } : {}),
     inputDigest,
     acceptance,
     nativeTurnRef,
@@ -1332,14 +1348,14 @@ function prepareLaunchClaimCreate(input) {
   const canonicalLeaseBindings = canonicalizeLeaseBindings(leaseBindings, identity, canonicalRoute, boundRouteDigest);
   const canonicalAssignedMessageIds = assertAssignedMessageIds(assignedMessageIds, "Launch claim assignedMessageIds");
   const canonicalPreparedInput = assertPreparedInputText(preparedInput, "Launch claim preparedInput");
-  const canonicalTurnOptions = canonicalTurnOptionsText(
-    turnOptions ?? null,
-    "Launch claim turnOptions"
-  );
+  const canonicalOptions = canonicalTurnOptions(turnOptions ?? null, "Launch claim turnOptions");
+  const canonicalOptionsText = canonicalOptions === null
+    ? "none"
+    : `stated\0${JSON.stringify(canonicalOptions)}`;
   const canonicalInputDigest = computeInputDigest(
     canonicalAssignedMessageIds,
     canonicalPreparedInput,
-    canonicalTurnOptions
+    canonicalOptionsText
   );
   return {
     identity,
@@ -1347,6 +1363,7 @@ function prepareLaunchClaimCreate(input) {
     canonicalRoute,
     canonicalLeaseBindings,
     canonicalAssignedMessageIds,
+    canonicalTurnOptions: canonicalOptions,
     canonicalInputDigest,
     claimDir: resolveLaunchClaimDirectory(identity),
   };
@@ -1373,6 +1390,7 @@ function createLaunchClaimWhileLocked(prepared) {
       existing.leaseState === leaseState &&
       JSON.stringify(existing.leaseIntent) === JSON.stringify(leaseIntent) &&
       JSON.stringify(existing.leaseBindings) === JSON.stringify(canonicalLeaseBindings) &&
+      JSON.stringify(existing.turnOptions ?? null) === JSON.stringify(prepared.canonicalTurnOptions) &&
       JSON.stringify(existing.assignedMessageIds) === JSON.stringify(canonicalAssignedMessageIds) &&
       existing.inputDigest === canonicalInputDigest
     );
@@ -1397,6 +1415,7 @@ function createLaunchClaimWhileLocked(prepared) {
     leaseIntent,
     leaseBindings: canonicalLeaseBindings,
     assignedMessageIds: canonicalAssignedMessageIds,
+    turnOptions: prepared.canonicalTurnOptions,
     inputDigest: canonicalInputDigest,
     acceptance: "not_submitted",
     nativeTurnRef: null,
@@ -1513,6 +1532,7 @@ export function createLaunchIntent(input) {
     canonicalRoute,
     canonicalLeaseBindings: Object.freeze([]),
     canonicalAssignedMessageIds: assignedMessageIds,
+    canonicalTurnOptions: canonicalTurnOptions(snapshot.turnOptions ?? null, "Launch claim intent turnOptions"),
     canonicalInputDigest: inputDigest,
     leaseState: "intended",
     leaseIntent: [leaseIntent],
@@ -1566,6 +1586,7 @@ function loadClaimForMutation(identity, attemptId, label) {
       `attemptId may record this claim's acceptance.`
     );
   }
+  validateVersionThreeRoute(record.route, `${label} activation route`);
   return { claimDir, filePath: path.join(claimDir, claimFileName(canonicalAttemptId)), record };
 }
 

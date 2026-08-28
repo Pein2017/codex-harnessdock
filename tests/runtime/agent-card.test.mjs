@@ -127,7 +127,7 @@ describe("Version-three Agent Card", () => {
       harness: null,
       route_maturity: "experimental",
       model: "fake-service-large",
-      // Reasoning effort stays turn-scoped in every generation.
+      // Version-three effort comes only from immutable route lineage.
       reasoning_effort: "high",
       authority: "behavioral_write",
       delegation_mode: "native_orchestrator",
@@ -143,6 +143,14 @@ describe("Version-three Agent Card", () => {
     assert.equal(card.authority, "behavioral_write");
     assert.equal(card.model, "fake-service-large");
     assert.equal(card.delegation_mode, "native_orchestrator");
-    assert.equal(card.reasoning_effort, null);
+    assert.equal(card.reasoning_effort, "high");
+  });
+
+  it("projects a bounded Driver-advertised effort without a fixed enum", () => {
+    const card = projectAgentCard({
+      ...futureAgent,
+      route: versionThreeRoute({ effort: "provider-reasoning-v2" }),
+    }, null);
+    assert.equal(card.reasoning_effort, "provider-reasoning-v2");
   });
 });

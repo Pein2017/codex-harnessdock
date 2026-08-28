@@ -15,10 +15,8 @@ import {
   createClaudeCodeDriver,
   createClaudeCodeDriverV2,
 } from "./claude-code-driver.mjs";
-import { MODEL_ALIASES } from "./claude-headless-adapter.mjs";
-import { createOpencodeDriver } from "./opencode-driver.mjs";
-import { OPENCODE_EXPLORER_MODELS, OPENCODE_HARNESS_ID } from "./opencode-explorer-profile.mjs";
-import { createPiDriver, PI_HARNESS_ID, PI_MODELS } from "./pi-driver.mjs";
+import { createOpencodeDriver, OPENCODE_HARNESS_ID } from "./opencode-driver.mjs";
+import { createPiDriver, PI_HARNESS_ID } from "./pi-driver.mjs";
 import {
   ROUTE_AUTHORITY_VALUES,
   ROUTE_REQUEST_FIELDS,
@@ -197,33 +195,6 @@ export const ADMITTED_DRIVER_V2_HARNESS_IDS = Object.freeze(Object.keys(DRIVER_V
  * version-two contract is where all generation Harnesses are admitted.
  */
 export const ADMITTED_GENERATION_HARNESS_IDS = ADMITTED_DRIVER_V2_HARNESS_IDS;
-
-/**
- * The full model identifiers each admitted Harness serves, in one place.
- *
- * The Claude entries are derived from that Driver's own canonical alias table
- * and the OpenCode/Pi entries from their own route constants, so this table
- * cannot drift from any Driver. The typed public schema and runtime route
- * validation both read it: a model no Harness admits is refused by the schema,
- * and a model the wrong Harness admits is refused by that Harness's own route
- * validation. Neither is a default, a preference, or a mapping from Harness to
- * model -- a caller states both.
- */
-export const ADMITTED_ROUTE_MODELS = Object.freeze({
-  [CLAUDE_CODE_HARNESS_ID]: Object.freeze([...new Set(MODEL_ALIASES.values())].sort()),
-  [OPENCODE_HARNESS_ID]: OPENCODE_EXPLORER_MODELS,
-  [PI_HARNESS_ID]: PI_MODELS,
-});
-
-/** Every admitted full model identifier, deduplicated and deterministic. */
-export const ADMITTED_MODEL_IDS = Object.freeze(
-  [...new Set(Object.values(ADMITTED_ROUTE_MODELS).flat())].sort()
-);
-
-/** Whether one Harness admits one full model identifier. */
-export function harnessAdmitsModel(harnessId, model) {
-  return (ADMITTED_ROUTE_MODELS[harnessId] ?? []).includes(model);
-}
 
 /**
  * The execution lifecycle each admitted Harness's turns run under.
@@ -516,7 +487,7 @@ export function acceptDriverRoute(driver, request, inspections) {
       `Harness ${driver.harnessId} route request must state an explicit harnessId for this Driver.`
     );
   }
-  for (const field of ["model", "topology", "authority"]) {
+  for (const field of ["model", "topology", "authority", "effort"]) {
     const value = request[field];
     if (typeof value !== "string" || !value.trim()) {
       throw new Error(

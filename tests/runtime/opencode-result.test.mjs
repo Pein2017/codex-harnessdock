@@ -48,6 +48,7 @@ const PROVIDER_ID = "opencode-go";
 const MODEL_ID = "deepseek-v4-flash";
 const AGENT = "codex-explorer";
 const ATTEMPT_ID = "att_01JATTEMPT";
+const VARIANT = "high";
 
 /** The operator-absolute paths the assistant message carries but we never project. */
 const OPERATOR_CWD = "/opt/operator-owned/workspace";
@@ -64,6 +65,7 @@ function assistantInfo(overrides = {}) {
     providerID: PROVIDER_ID,
     mode: "primary",
     agent: AGENT,
+    variant: VARIANT,
     path: { cwd: OPERATOR_CWD, root: OPERATOR_ROOT },
     cost: 0.0021,
     tokens: { total: 1234, input: 1000, output: 200, reasoning: 34, cache: { read: 900, write: 100 } },
@@ -105,6 +107,7 @@ function expectedLineage(overrides = {}) {
     modelId: MODEL_ID,
     agent: AGENT,
     attemptId: ATTEMPT_ID,
+    variant: VARIANT,
     ...overrides,
   };
 }
@@ -248,6 +251,7 @@ describe("opencode result: selecting the one outer-assistant final text", () => 
       parentMessageId: PARENT_ID,
       providerId: PROVIDER_ID,
       modelId: MODEL_ID,
+      variant: VARIANT,
       agent: AGENT,
       attemptId: ATTEMPT_ID,
     });
@@ -359,6 +363,7 @@ describe("opencode result: lineage must match exactly", () => {
       [{ info: { providerID: "deepseek" } }, "providerID"],
       [{ info: { modelID: "kimi-k2.6" } }, "modelID"],
       [{ info: { agent: "build" } }, "agent"],
+      [{ info: { variant: "medium" } }, "variant"],
     ];
     for (const [override, field] of cases) {
       const result = select([textPart("answer")], override);
@@ -391,7 +396,7 @@ describe("opencode result: lineage must match exactly", () => {
   });
 
   it("refuses an incomplete expected-lineage record as caller misuse", () => {
-    for (const field of ["sessionId", "parentMessageId", "providerId", "modelId"]) {
+    for (const field of ["sessionId", "parentMessageId", "providerId", "modelId", "variant"]) {
       const expected = expectedLineage();
       delete expected[field];
       assert.throws(
@@ -529,7 +534,7 @@ describe("opencode result: provider errors and malformed payloads", () => {
 
   it("projects no operator path, token count, cost, or structured payload", () => {
     const result = select([textPart("answer")], {
-      info: { structured: { leaked: "STRUCTURED-SENTINEL" }, variant: "thinking" },
+      info: { structured: { leaked: "STRUCTURED-SENTINEL" } },
     });
     assert.equal(result.ok, true);
     const serialized = JSON.stringify(result);

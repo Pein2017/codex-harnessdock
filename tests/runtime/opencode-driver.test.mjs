@@ -121,6 +121,7 @@ function readyProvider() {
               providerID: route.providerId,
               name: route.model,
               family: null,
+              variants: { high: {} },
             }])
         ),
       })),
@@ -151,11 +152,17 @@ function routeRequest(model = OPENCODE_EXPLORER_MODEL) {
     model,
     topology: OPENCODE_EXPLORER_TOPOLOGY,
     authority: OPENCODE_EXPLORER_AUTHORITY,
+    effort: "high",
   };
 }
 
 /** Route + prepared turn + scope, each through its real contract validator. */
-async function acceptedTurn(driver, url, { taskInput = TASK_INPUT, model = OPENCODE_EXPLORER_MODEL, scopeOverrides = {} } = {}) {
+async function acceptedTurn(driver, url, {
+  taskInput = TASK_INPUT,
+  model = OPENCODE_EXPLORER_MODEL,
+  authority = OPENCODE_EXPLORER_AUTHORITY,
+  scopeOverrides = {},
+} = {}) {
   // Setup, not the scenario: every caller of this helper is asserting something
   // downstream of a ready instance, so one transport-class reading of its own
   // just-started fake Server is re-observed rather than failing the scenario.
@@ -164,8 +171,9 @@ async function acceptedTurn(driver, url, { taskInput = TASK_INPUT, model = OPENC
     createDriverScope({ driver, purpose: "inspect", env: { OPENCODE_SERVER_URL: url }, workspaceRoot: WORKSPACE_ROOT })
   );
   const request = routeRequest(model);
+  request.authority = authority;
   const route = validateCanonicalRoute(driver.validateRoute(request, inspection), { driver, inspection, request });
-  const preparedTurn = validatePreparedTurn(driver.prepareTurn({ route, taskInput }), {
+  const preparedTurn = validatePreparedTurn(driver.prepareTurn({ route, taskInput, turnOptions: { effort: route.effort } }), {
     driver,
     route,
     taskInput,
@@ -281,12 +289,14 @@ describe("opencode driver: readiness and route admission", () => {
     const { server, url } = await startFake();
     const driver = driverFor(url);
     const [inspection] = await driver.inspectInstances(
-      createDriverScope({ driver, purpose: "inspect", env: { OPENCODE_SERVER_URL: url } })
+      createDriverScope({ driver, purpose: "inspect", env: { OPENCODE_SERVER_URL: url }, workspaceRoot: WORKSPACE_ROOT })
     );
     assert.equal(inspection.readiness, "ready");
     assert.equal(inspection.instanceKey, opencodeExplorerInstanceKey(url));
     assert.deepEqual(postRequests(server), []);
     assert.equal(server.requests.every((request) => request.method === "GET"), true);
+    assert.deepEqual(server.requests.map((request) => request.path), ["/provider"]);
+    assert.equal(server.requests.find((request) => request.path === "/provider")?.query.directory, WORKSPACE_ROOT);
   });
 
   it("blocks a scope that names another configured Server without any request", async () => {
@@ -309,7 +319,7 @@ describe("opencode driver: readiness and route admission", () => {
     assert.equal(route.capabilities.values.continuation, "fresh_only");
     for (const bad of [
       { ...request, model: "opencode-go/deepseek" },
-      { ...request, authority: "behavioral_write" },
+      { ...request, effort: "medium" },
       { ...request, topology: "native_orchestrator" },
       { ...request, reasoning_effort: "high" },
       { ...request, tools: { read: true } },
@@ -329,20 +339,21 @@ describe("opencode driver: readiness and route admission", () => {
     assert.equal(route.model, model);
     const posts = postRequests(server);
     assert.deepEqual(posts.map((request) => request.body?.model), [
-      { providerID: "openai", id: "gpt-5.6-sol" },
+      { providerID: "openai", id: "gpt-5.6-sol", variant: "high" },
       { providerID: "openai", modelID: "gpt-5.6-sol" },
     ]);
+    assert.equal(posts[1].body.variant, "high");
     assert.equal(live.nativeTurnRef.locator.providerId, "openai");
     assert.equal(live.nativeTurnRef.locator.modelId, "gpt-5.6-sol");
   });
 
   it("refuses a route for an instance that is not ready", async () => {
-    const { url } = await startFake({ agents: { status: 200, body: [] } });
+    const { url } = await startFake({ provider: { status: 200, body: { all: [], connected: [], default: {} } } });
     const driver = driverFor(url);
     const [inspection] = await driver.inspectInstances(
       createDriverScope({ driver, purpose: "inspect", env: { OPENCODE_SERVER_URL: url } })
     );
-    assert.equal(inspection.readiness, "blocked");
+    assert.equal(inspection.readiness, "unavailable");
     assert.throws(
       () => driver.validateRoute(routeRequest(), inspection),
       (error) => error.code === "instance_not_ready"
@@ -360,7 +371,7 @@ describe("opencode driver: prepared turn and pre-session gate", () => {
     const driver = driverFor(url);
     const { route } = await acceptedTurn(driver, url);
     const before = server.requests.length;
-    const prepared = validatePreparedTurn(driver.prepareTurn({ route, taskInput: TASK_INPUT }), {
+    const prepared = validatePreparedTurn(driver.prepareTurn({ route, taskInput: TASK_INPUT, turnOptions: { effort: route.effort } }), {
       driver,
       route,
       taskInput: TASK_INPUT,
@@ -368,23 +379,23 @@ describe("opencode driver: prepared turn and pre-session gate", () => {
     assert.equal(server.requests.length, before, "prepareTurn must make no request");
     assert.equal(prepared.promptEnvelope.taskInput, TASK_INPUT);
     assert.match(prepared.inputDigest, /^sha256:[0-9a-f]{64}$/);
-    assert.equal(prepared.turnOptions, null);
+    assert.deepEqual(prepared.turnOptions, { effort: route.effort });
   });
 
-  it("refuses turn options, a foreign route, and an unusable task", async () => {
+  it("requires its accepted turn option, a native route, and usable task", async () => {
     const { url } = await startFake();
     const driver = driverFor(url);
     const { route } = await acceptedTurn(driver, url);
     assert.throws(
-      () => driver.prepareTurn({ route, taskInput: TASK_INPUT, turnOptions: { effort: "high" } }),
+      () => driver.prepareTurn({ route, taskInput: TASK_INPUT, turnOptions: null }),
       (error) => error.code === "turn_options_not_admitted"
     );
     assert.throws(
-      () => driver.prepareTurn({ route: { ...route, harnessId: "claude-code" }, taskInput: TASK_INPUT }),
+      () => driver.prepareTurn({ route: { ...route, harnessId: "claude-code" }, taskInput: TASK_INPUT, turnOptions: { effort: route.effort } }),
       (error) => error.code === "foreign_route"
     );
     assert.throws(
-      () => driver.prepareTurn({ route, taskInput: "   " }),
+      () => driver.prepareTurn({ route, taskInput: "   ", turnOptions: { effort: route.effort } }),
       (error) => error.code === "task_input_required"
     );
   });
@@ -399,7 +410,7 @@ describe("opencode driver: prepared turn and pre-session gate", () => {
     assert.deepEqual(postRequests(server), []);
   });
 
-  it("fails the gate closed on profile drift, before any session exists", async () => {
+  it("does not read agent policy during the pre-session gate", async () => {
     const { server, url } = await startFake();
     const driver = driverFor(url);
     const { preparedTurn, scope } = await acceptedTurn(driver, url);
@@ -407,10 +418,7 @@ describe("opencode driver: prepared turn and pre-session gate", () => {
     server.state.agents = readyAgents({
       permission: [...compliantRuleset(), { permission: "edit", pattern: "*", action: "allow" }],
     });
-    await assert.rejects(
-      () => driver.revalidatePreparedTurn(preparedTurn, scope),
-      (error) => error.code === "instance_not_ready"
-    );
+    await driver.revalidatePreparedTurn(preparedTurn, scope);
     assert.deepEqual(postRequests(server), []);
   });
 
@@ -441,6 +449,28 @@ describe("opencode driver: prepared turn and pre-session gate", () => {
 // ---------------------------------------------------------------------------
 
 describe("opencode driver: session and turn lineage", () => {
+  it("keeps both behavioral authorities on the identical native configuration", async () => {
+    const { server, url } = await startFake();
+    const driver = driverFor(url);
+    await (await launch(driver, url, { authority: "behavioral_read_only" })).live.result;
+    await (await launch(driver, url, { authority: "behavioral_write" })).live.result;
+    const posts = postRequests(server);
+    const sessions = posts.filter((request) => request.path === "/session");
+    const prompts = posts.filter((request) => /\/session\/[^/]+\/message$/.test(request.path));
+    assert.equal(sessions.length, 2);
+    assert.equal(prompts.length, 2);
+    assert.deepEqual(sessions.map((request) => request.body.model), [
+      { id: OPENCODE_EXPLORER_MODEL_ID, providerID: OPENCODE_EXPLORER_PROVIDER_ID, variant: "high" },
+      { id: OPENCODE_EXPLORER_MODEL_ID, providerID: OPENCODE_EXPLORER_PROVIDER_ID, variant: "high" },
+    ]);
+    assert.deepEqual(prompts.map((request) => request.body.model), [
+      { providerID: OPENCODE_EXPLORER_PROVIDER_ID, modelID: OPENCODE_EXPLORER_MODEL_ID },
+      { providerID: OPENCODE_EXPLORER_PROVIDER_ID, modelID: OPENCODE_EXPLORER_MODEL_ID },
+    ]);
+    assert.deepEqual(prompts.map((request) => request.body.variant), ["high", "high"]);
+    for (const request of posts) assert.equal(Object.hasOwn(request.body, "agent"), false);
+  });
+
   it("creates one session, proves both references, and settles one completed turn", async () => {
     const { server, url } = await startFake();
     const driver = driverFor(url);
@@ -452,27 +482,29 @@ describe("opencode driver: session and turn lineage", () => {
     const posts = postRequests(server);
     assert.equal(posts.length, 2);
     assert.equal(posts[0].path, "/session");
-    assert.deepEqual(Object.keys(posts[0].body).sort(), ["agent", "model"]);
+    assert.deepEqual(Object.keys(posts[0].body).sort(), ["model"]);
     assert.deepEqual(posts[0].body.model, {
       id: OPENCODE_EXPLORER_MODEL_ID,
       providerID: OPENCODE_EXPLORER_PROVIDER_ID,
+      variant: "high",
     });
-    assert.equal(posts[0].body.agent, OPENCODE_EXPLORER_PROFILE_NAME);
+    assert.equal(Object.hasOwn(posts[0].body, "agent"), false);
     assert.equal(Object.hasOwn(posts[0].body, "permission"), false, "never sends a per-session permission ruleset");
     assert.equal(Object.hasOwn(posts[0].body, "title"), false, "never sends prompt-derived session metadata");
     assert.equal(posts[0].query.directory, WORKSPACE_ROOT);
 
     assert.match(posts[1].path, /^\/session\/[^/]+\/message$/);
-    assert.deepEqual(Object.keys(posts[1].body).sort(), ["agent", "messageID", "model", "parts"]);
+    assert.deepEqual(Object.keys(posts[1].body).sort(), ["messageID", "model", "parts", "variant"]);
     assert.deepEqual(posts[1].body.model, {
       providerID: OPENCODE_EXPLORER_PROVIDER_ID,
       modelID: OPENCODE_EXPLORER_MODEL_ID,
     });
+    assert.equal(posts[1].body.variant, "high");
     assert.equal(posts[1].body.parts.length, 1);
     assert.equal(posts[1].body.parts[0].type, "text");
     assert.ok(posts[1].body.parts[0].text.includes(TASK_INPUT));
     assert.ok(posts[1].body.parts[0].text.includes(`envelope v${OPENCODE_PROMPT_PREFIX_VERSION}`));
-    for (const forbidden of ["tools", "system", "variant", "format", "noReply"]) {
+    for (const forbidden of ["tools", "system", "format", "noReply"]) {
       assert.equal(Object.hasOwn(posts[1].body, forbidden), false, `never sends ${forbidden}`);
     }
 
@@ -486,6 +518,7 @@ describe("opencode driver: session and turn lineage", () => {
     assert.equal(live.nativeTurnRef.locator.attemptId, "att_1");
     assert.equal(live.nativeTurnRef.locator.providerId, OPENCODE_EXPLORER_PROVIDER_ID);
     assert.equal(live.nativeTurnRef.locator.modelId, OPENCODE_EXPLORER_MODEL_ID);
+    assert.equal(live.nativeTurnRef.locator.variant, "high");
     assert.deepEqual(durableTurnEvidence(live), {
       nativeTurnRef: live.nativeTurnRef,
       nativeSessionRef: live.nativeSessionRef,
@@ -866,7 +899,7 @@ describe("opencode driver: terminal settlement", () => {
     await live.dispose();
   });
 
-  it("classifies a crossed session, parent, provider, or model as session drift", async () => {
+  it("classifies a crossed session, parent, provider, model, missing variant, or changed variant as session drift", async () => {
     const lineageCases = [
       ["sessionID", (sessionId) => ({ info: fakeAssistantMessage({ sessionID: "ses_other" }), parts: [fakeTextPart("x", { sessionID: sessionId })] })],
       ["parentID", (sessionId) => ({
@@ -881,8 +914,12 @@ describe("opencode driver: terminal settlement", () => {
         info: fakeAssistantMessage({ sessionID: sessionId, modelID: "kimi-k2.6" }),
         parts: [fakeTextPart("x", { sessionID: sessionId })],
       })],
-      ["agent", (sessionId) => ({
-        info: fakeAssistantMessage({ sessionID: sessionId, agent: "build" }),
+      ["variant_missing", (sessionId) => ({
+        info: fakeAssistantMessage({ sessionID: sessionId, variant: undefined }),
+        parts: [fakeTextPart("x", { sessionID: sessionId })],
+      })],
+      ["variant_mismatch", (sessionId) => ({
+        info: fakeAssistantMessage({ sessionID: sessionId, variant: "medium" }),
         parts: [fakeTextPart("x", { sessionID: sessionId })],
       })],
     ];

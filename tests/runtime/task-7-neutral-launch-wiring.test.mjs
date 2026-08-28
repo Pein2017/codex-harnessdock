@@ -144,6 +144,7 @@ async function setup(options = {}) {
   const { route } = acceptDriverRoute(driver, {
     harnessId: CLAUDE_CODE_HARNESS_ID,
     model: options.model ?? "claude-sonnet-5",
+    effort: options.routeEffort ?? "high",
     topology: "leaf",
     authority: "behavioral_read_only",
   }, inspections);
@@ -292,7 +293,7 @@ describe("Task 7 — turn options reach the native turn through the neutral laun
     assert.equal(context.claim().submissionState, "not_started");
   });
 
-  it("never reads Claude effort vocabulary in the generic core", () => {
+  it("never reads Claude-specific option vocabulary in the generic core", () => {
     const runtimeDirectory = path.resolve(new URL("../../runtime/", import.meta.url).pathname);
     for (const name of [
       "harness-registry.mjs",
@@ -307,7 +308,7 @@ describe("Task 7 — turn options reach the native turn through the neutral laun
       const code = fs.readFileSync(path.join(runtimeDirectory, name), "utf8")
         .replace(/\/\*[\s\S]*?\*\//g, "")
         .replace(/(^|[^:])\/\/.*$/gm, "$1");
-      assert.doesNotMatch(code, /\beffort\b/i, `${name} must not read a Driver-owned turn option`);
+      assert.doesNotMatch(code, /\bclaude(?:Options|Effort)\b/i, `${name} must not read Claude-specific options`);
       // The static registry names its admitted Drivers by design, and
       // `harness-contract.mjs` owns `V1_HARNESS_ID` so a durable version-one
       // record can be read without loading any Driver. No lifecycle owner
@@ -500,11 +501,10 @@ describe("Task 7 correction — turn options are durably bound to the launch cla
     claimContext("digest");
     const stated = createLaunchClaim(claimInput({ turnOptions: { effort: "low" } }));
     assert.equal(stated.acceptance, "not_submitted");
-    // The bag itself is never durable: only the module-owned digest is.
+    // The stated bag is durably bound so a replay cannot change the turn.
     const persisted = JSON.stringify(stated);
-    assert.doesNotMatch(persisted, /effort/);
     assert.doesNotMatch(persisted, /identical prompt/);
-    assert.equal(Object.hasOwn(stated, "turnOptions"), false);
+    assert.deepEqual(stated.turnOptions, { effort: "low" });
 
     // Same attempt, same prompt, same mailbox identity, different options.
     assert.throws(

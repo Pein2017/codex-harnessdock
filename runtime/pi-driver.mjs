@@ -1,11 +1,10 @@
 /** SPDX-License-Identifier: Apache-2.0 */
 
-import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { DRIVER_CONTRACT_VERSION_V2, assertNativeReferenceEnvelope, boundedDriverReceipt, driverPreTransportRejection } from "./harness-contract.mjs";
+import { DRIVER_CONTRACT_VERSION_V2, assertNativeReferenceEnvelope, boundedDriverReceipt, driverPreTransportRejection, isBoundedRouteAtom, isBoundedRouteText, splitFullModelRoute } from "./harness-contract.mjs";
 import { ROUTE_CAPABILITY_SCHEMA_VERSION } from "./harness-capabilities.mjs";
 import { NATIVE_REFERENCE_ENVELOPE_VERSION } from "./native-reference.mjs";
 import { resolvePluginRuntimeRoot } from "./paths.mjs";
@@ -15,16 +14,12 @@ import { terminalMetricsFromEvidence } from "./terminal-metrics.mjs";
 
 export const PI_HARNESS_ID = "pi";
 export const PI_DRIVER_VERSION = "pi@2";
-export const PI_PROVIDER = "openai-codex";
-export const PI_MODELS = Object.freeze(["openai-codex/gpt-5.6-luna", "openai-codex/gpt-5.6-terra", "openai-codex/gpt-5.6-sol"]);
-export const PI_MODEL_IDS = Object.freeze(PI_MODELS.map((model) => model.slice(`${PI_PROVIDER}/`.length)));
-export const PI_EFFORTS = Object.freeze(["low", "medium", "high", "xhigh", "max"]);
 const INSTANCE_KEY = "pi-local";
 const LOCATOR_VERSION = 1;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const READ_TOOLS = Object.freeze(["read", "grep", "find", "ls"]);
-const WRITE_TOOLS = Object.freeze(["read", "bash", "edit", "write", "grep", "find", "ls"]);
 const MAX_AGENT_MESSAGE_LIMIT = 20;
+const MAX_DISCOVERED_MODELS = 32;
+const MAX_DISCOVERED_EFFORTS = 16;
 
 function preTransport(cause) { return Object.assign(driverPreTransportRejection(), { cause }); }
 function requiredText(value, label) {
@@ -36,14 +31,21 @@ function uuid(value, label) {
   if (!UUID_PATTERN.test(text)) throw new Error(`${label} must be one canonical UUID, not a path or partial ID.`);
   return text.toLowerCase();
 }
-function modelId(model) {
-  if (!PI_MODELS.includes(model)) throw new Error(`Pi requires exactly one model: ${PI_MODELS.join(", ")}.`);
-  return model.slice(`${PI_PROVIDER}/`.length);
+function exactRouteText(value, label) {
+  if (!isBoundedRouteText(value)) throw new Error(`${label} requires bounded exact text.`);
+  return value;
 }
-function turnOptions(value) {
+function modelParts(model) {
+  const parts = splitFullModelRoute(model);
+  if (!parts) throw new Error("Pi model must be one exact provider/model identifier.");
+  return parts;
+}
+function turnOptions(value, route = null) {
   const data = value == null ? null : plainDataTree(value, "Pi turn options", 1);
-  if (!data || Object.keys(data).length !== 1 || !Object.hasOwn(data, "effort") || !PI_EFFORTS.includes(data.effort)) {
-    throw new Error(`Pi turn options require exactly one explicit effort: ${PI_EFFORTS.join(", ")}.`);
+  const effort = route?.effort;
+  if (data == null && typeof effort === "string") return Object.freeze({ effort });
+  if (!data || Object.keys(data).length !== 1 || !Object.hasOwn(data, "effort") || !isBoundedRouteAtom(data.effort) || data.effort !== effort) {
+    throw new Error("Pi turn options must retain the accepted effective effort.");
   }
   return Object.freeze({ effort: data.effort });
 }
@@ -132,20 +134,19 @@ function resultFor({ nativeTurnRef, nativeSessionRef, baseline, after, outcome, 
     driverReceipt: boundedDriverReceipt(PI_HARNESS_ID, PI_DRIVER_VERSION, { outcome: completed ? "message_end" : "no_final_message", usage: delta }),
   };
 }
-function routeCapabilities(authority) {
-  const read = authority === "behavioral_read_only";
+function routeCapabilities() {
   return Object.freeze({ capabilitySchemaVersion: ROUTE_CAPABILITY_SCHEMA_VERSION, driverMaturity: "experimental",
-    values: Object.freeze({ interaction: "noninteractive_fixed_policy", activeInput: "acknowledged_active_stream", continuation: "exact_resume", history: "assistant_messages", interruptRequest: "supported", turnObservation: "terminal_observable", automaticRecovery: "none", authorityEnforcement: read ? "harness_policy" : "prompt_only", leafEnforcement: read ? "effective_tool_denial" : "prompt_only", nativeOrchestration: "disabled" }),
+    values: Object.freeze({ interaction: "noninteractive_fixed_policy", activeInput: "acknowledged_active_stream", continuation: "exact_resume", history: "assistant_messages", interruptRequest: "supported", turnObservation: "terminal_observable", automaticRecovery: "none", authorityEnforcement: "prompt_only", leafEnforcement: "prompt_only", nativeOrchestration: "opaque_bounded" }),
     maturity: Object.freeze(Object.fromEntries(["interaction", "activeInput", "continuation", "history", "interruptRequest", "turnObservation", "automaticRecovery", "authorityEnforcement", "leafEnforcement", "nativeOrchestration"].map((key) => [key, "experimental"]))),
   });
 }
 
-function inspectionRouteFacts() {
+function inspectionRouteFacts(models, effortsByModel) {
   return Object.freeze({
-    models: Object.freeze([...PI_MODELS]),
-    provider: PI_PROVIDER,
+    models: Object.freeze([...models]),
     topologies: Object.freeze(["leaf"]),
-    reasoningEfforts: Object.freeze([...PI_EFFORTS]),
+    reasoningEfforts: Object.freeze([...new Set(Object.values(effortsByModel).flat())]),
+    effortsByModel: Object.freeze(Object.fromEntries(Object.entries(effortsByModel).map(([model, efforts]) => [model, Object.freeze([...efforts])]))),
     interaction: "noninteractive_fixed_policy",
     activeInput: "acknowledged_active_stream",
     continuation: "exact_resume",
@@ -153,19 +154,8 @@ function inspectionRouteFacts() {
     interruptRequest: "supported",
     turnObservation: "terminal_observable",
     automaticRecovery: "none",
-    nativeOrchestration: "disabled",
-    authorities: Object.freeze({
-      behavioral_read_only: Object.freeze({
-        tools: Object.freeze([...READ_TOOLS]),
-        authorityEnforcement: "harness_policy",
-        leafEnforcement: "effective_tool_denial",
-      }),
-      behavioral_write: Object.freeze({
-        tools: Object.freeze([...WRITE_TOOLS]),
-        authorityEnforcement: "prompt_only",
-        leafEnforcement: "prompt_only",
-      }),
-    }),
+    nativeOrchestration: "opaque_bounded",
+    authorities: Object.freeze({ behavioral_read_only: Object.freeze({ authorityEnforcement: "prompt_only", leafEnforcement: "prompt_only" }), behavioral_write: Object.freeze({ authorityEnforcement: "prompt_only", leafEnforcement: "prompt_only" }) }),
   });
 }
 
@@ -189,64 +179,107 @@ export function createPiDriver(options = {}) {
   const fixedEnv = options.env ?? process.env;
   const test = options._test ?? null;
   const sessionRoot = test?.sessionRoot ?? path.join(resolvePluginRuntimeRoot(), "pi-sessions");
-  const probe = test?.probe ?? ((args) => spawnSync("pi", args, { cwd: process.cwd(), env: fixedEnv, encoding: "utf8", timeout: 5_000, maxBuffer: 64 * 1024, shell: false }));
-  function hostEvidence() {
-    let version; let auth; let models;
-    try { version = probe(["--version"]); } catch { return { readiness: "unknown", detailCode: "unknown" }; }
-    if (version?.error?.code === "ENOENT") return { readiness: "unavailable", detailCode: "executable_missing" };
-    if (version?.error || version?.status !== 0) return { readiness: "unknown", detailCode: "unknown" };
-    try { auth = probe(["auth", "check", "--provider", PI_PROVIDER, "--json", "--no-refresh"]); } catch { return { readiness: "unknown", detailCode: "unknown" }; }
-    if (auth?.error || auth?.status !== 0) return { readiness: "blocked", detailCode: "not_authenticated" };
+  function modelList(value) {
+    const rows = Array.isArray(value?.models) ? value.models : (Array.isArray(value) ? value : []);
+    if (rows.length === 0 || rows.length > MAX_DISCOVERED_MODELS) throw new Error("Pi RPC returned no bounded available models.");
+    const models = rows.map((row) => typeof row === "string" ? row : `${row?.provider ?? ""}/${row?.id ?? ""}`).map((model) => exactRouteText(model, "Pi discovered model"));
+    if (new Set(models).size !== models.length) throw new Error("Pi RPC returned duplicate available models.");
+    return models;
+  }
+  function thinkingLevels(value) {
+    const levels = Array.isArray(value?.thinkingLevels) ? value.thinkingLevels : (Array.isArray(value?.levels) ? value.levels : value);
+    if (!Array.isArray(levels) || levels.length === 0 || levels.length > MAX_DISCOVERED_EFFORTS) throw new Error("Pi RPC returned no bounded thinking levels.");
+    const output = levels.map((level) => typeof level === "string" ? level : level?.id);
+    if (!output.every(isBoundedRouteAtom)) throw new Error("Pi discovered thinking level requires bounded exact text.");
+    if (new Set(output).size !== output.length) throw new Error("Pi RPC returned duplicate thinking levels.");
+    return output;
+  }
+  async function discover(scope) {
+    const configRoot = scope?.env?.PI_CODING_AGENT_DIR ?? fixedEnv.PI_CODING_AGENT_DIR;
+    if (typeof configRoot !== "string" || !configRoot) throw new Error("Pi requires PI_CODING_AGENT_DIR through the bounded runtime environment.");
+    const rpc = createPiRpcProcess({ argv: piRpcArgv({ provider: null, model: null, effort: null, sessionDir: sessionRoot, sessionId: null, resumeSessionId: null, control: true }), cwd: scope?.workspaceRoot ?? process.cwd(), env: { ...fixedEnv, PI_CODING_AGENT_DIR: configRoot }, ...(test ? { _test: test } : {}) });
     try {
-      const parsed = JSON.parse(String(auth.stdout ?? ""));
-      if (parsed?.status !== "ready" || parsed?.provider !== PI_PROVIDER) {
-        return { readiness: "blocked", detailCode: "not_authenticated" };
+      const models = modelList((await rpc.getAvailableModels()).data);
+      const effortsByModel = {};
+      for (const model of models) {
+        const selected = modelParts(model);
+        await rpc.setModel(selected.provider, selected.model);
+        const efforts = thinkingLevels((await rpc.getAvailableThinkingLevels()).data);
+        const state = (await rpc.getState()).data;
+        if (state?.model && `${state.model.provider ?? ""}/${state.model.id ?? ""}` !== model) throw new Error("Pi RPC selected a different model during discovery.");
+        // `get_state` proves the exact `set_model` control operation took
+        // effect. Its local default thinking level is deliberately not read
+        // into route state: every HarnessDock turn states its own effort.
+        effortsByModel[model] = efforts;
       }
-    }
-    catch { return { readiness: "unknown", detailCode: "unknown" }; }
-    try { models = probe(["--offline", "--list-models", PI_PROVIDER]); } catch { return { readiness: "unknown", detailCode: "unknown" }; }
-    if (models?.error || models?.status !== 0) return { readiness: "unknown", detailCode: "unknown" };
-    const text = String(models.stdout ?? "");
-    return PI_MODEL_IDS.every((id) => text.includes(`${PI_PROVIDER}  ${id}`) || text.includes(`${PI_PROVIDER}/${id}`)) ? { readiness: "ready", detailCode: "ready" } : { readiness: "blocked", detailCode: "incompatible_version" };
+      const commands = (await rpc.getCommands()).data;
+      const parity = commands?.commands ?? commands;
+      if (!Array.isArray(parity) || parity.length > 256) throw new Error("Pi RPC command parity witness is unavailable.");
+      const group = { extension: 0, prompt: 1, skill: 2 };
+      let prior = -1;
+      for (const item of parity) {
+        const kind = item?.source ?? item?.kind;
+        if (!Object.hasOwn(group, kind) || group[kind] < prior) throw new Error("Pi RPC command parity order is not native extensions, templates, then skills.");
+        prior = group[kind];
+      }
+      return Object.freeze({ models: Object.freeze(models), effortsByModel: Object.freeze(effortsByModel) });
+    } finally { await rpc.dispose(); }
   }
   function assertRoute(route, label) {
     if (route?.harnessId !== PI_HARNESS_ID || route?.driverVersion !== PI_DRIVER_VERSION || route?.instanceKey !== INSTANCE_KEY) throw new Error(`${label} belongs to a foreign Pi route.`);
-    modelId(route.model);
+    modelParts(route.model);
     if (route.topology !== "leaf" || !["behavioral_read_only", "behavioral_write"].includes(route.authority)) throw new Error(`${label} is not an admitted Pi route.`);
     return route;
   }
-  function makeProcess({ route, effort = null, sessionId, resumeOnly = false, resume = false, cwd }) {
+  function makeProcess({ route, effort = null, sessionId, resumeOnly = false, resume = false, cwd, env = fixedEnv }) {
     fs.mkdirSync(sessionRoot, { recursive: true, mode: 0o700 });
-    return createPiRpcProcess({ argv: piRpcArgv({ provider: PI_PROVIDER, model: modelId(route.model), effort, sessionDir: sessionRoot, sessionId, resumeSessionId: resume || resumeOnly ? sessionId : null, resumeOnly, tools: route.authority === "behavioral_write" ? WRITE_TOOLS : READ_TOOLS }), cwd, env: fixedEnv, ...(test ? { _test: test } : {}) });
+    const target = modelParts(route.model);
+    return createPiRpcProcess({ argv: piRpcArgv({ provider: target.provider, model: target.model, effort, sessionDir: sessionRoot, sessionId, resumeSessionId: resume || resumeOnly ? sessionId : null, resumeOnly }), cwd, env, ...(test ? { _test: test } : {}) });
   }
   function sessionRefFor(route, sessionId) { return assertNativeReferenceEnvelope(reference({ sessionId }), { driver, route, kind: "session" }); }
   function turnRefFor(route, sessionId, turnId, baseline) { return assertNativeReferenceEnvelope(reference({ sessionId, turnId, baselineLeafId: baseline.leafId, baselineStats: baseline.stats }), { driver, route, kind: "turn" }); }
+  async function proveCurrentRoute(route, scope) {
+    const fresh = await driver.inspectInstances(scope);
+    const accepted = driver.validateRoute({ harnessId: PI_HARNESS_ID, model: route.model, topology: route.topology, authority: route.authority, effort: route.effort }, fresh[0]);
+    if (["harnessId", "instanceKey", "model", "topology", "authority", "effort", "driverVersion"].some((key) => accepted[key] !== route[key])) throw new Error("Pi route drifted before native operation.");
+    return accepted;
+  }
   async function openReadOnly(route, sessionId, scope) {
     const rpc = makeProcess({ route, sessionId, resumeOnly: true, cwd: scope?.workspaceRoot ?? process.cwd() });
     try { return { rpc, entries: await rpc.getEntries(null) }; } catch (error) { await rpc.dispose(); throw error; }
   }
   const driver = {
     harnessId: PI_HARNESS_ID, driverVersion: PI_DRIVER_VERSION, contractVersion: DRIVER_CONTRACT_VERSION_V2,
-    describe() { return { harnessId: PI_HARNESS_ID, driverVersion: PI_DRIVER_VERSION, contractVersion: DRIVER_CONTRACT_VERSION_V2, capabilitySchemaVersion: ROUTE_CAPABILITY_SCHEMA_VERSION, maturity: "experimental", title: "Pi RPC (fixed policy)", environmentKeys: [] }; },
-    async inspectInstances() {
-      const host = hostEvidence();
-      return [{ harnessId: PI_HARNESS_ID, instanceKey: INSTANCE_KEY, readiness: host.readiness, liveValidated: true, maturity: "experimental", detailCode: host.detailCode, routes: host.readiness === "ready" ? inspectionRouteFacts() : null }];
+    describe() { return { harnessId: PI_HARNESS_ID, driverVersion: PI_DRIVER_VERSION, contractVersion: DRIVER_CONTRACT_VERSION_V2, capabilitySchemaVersion: ROUTE_CAPABILITY_SCHEMA_VERSION, maturity: "experimental", title: "Pi RPC", environmentKeys: ["PI_CODING_AGENT_DIR"] }; },
+    async inspectInstances(scope) {
+      try {
+        const facts = await discover(scope);
+        const routes = inspectionRouteFacts(facts.models, facts.effortsByModel);
+        return [{ harnessId: PI_HARNESS_ID, instanceKey: INSTANCE_KEY, readiness: "ready", liveValidated: true, maturity: "experimental", detailCode: "ready", routes: Object.freeze(routes) }];
+      } catch {
+        return [{ harnessId: PI_HARNESS_ID, instanceKey: INSTANCE_KEY, readiness: "unknown", liveValidated: true, maturity: "experimental", detailCode: "unknown", routes: null }];
+      }
     },
     validateRoute(request, inspection) {
       if (inspection?.instanceKey !== INSTANCE_KEY || inspection?.readiness !== "ready") throw new Error("Pi instance is not ready.");
-      modelId(request?.model);
+      const model = exactRouteText(request?.model, "Pi requested model");
       if (request?.topology !== "leaf") throw new Error("Pi admits leaf topology only.");
       if (!["behavioral_read_only", "behavioral_write"].includes(request?.authority)) throw new Error("Pi requires explicit read or write authority.");
-      return { harnessId: PI_HARNESS_ID, instanceKey: INSTANCE_KEY, model: request.model, topology: "leaf", authority: request.authority, driverVersion: PI_DRIVER_VERSION, capabilities: routeCapabilities(request.authority) };
+      const efforts = inspection.routes?.effortsByModel?.[model];
+      if (!Array.isArray(efforts) || efforts.length === 0) throw new Error("Pi requested model is not freshly admitted.");
+      const effort = request?.effort;
+      if (!isBoundedRouteAtom(effort)) throw new Error("Pi requested effort requires bounded exact text.");
+      if (!efforts.includes(effort)) throw new Error("Pi requested effort is not freshly admitted for this exact model.");
+      return { harnessId: PI_HARNESS_ID, instanceKey: INSTANCE_KEY, model, topology: "leaf", authority: request.authority, effort, driverVersion: PI_DRIVER_VERSION, capabilities: routeCapabilities() };
     },
     prepareTurn(input) {
-      const route = assertRoute(input?.route, "Prepared Pi turn"); const taskInput = requiredText(input?.taskInput, "Pi task input"); const options = turnOptions(input?.turnOptions);
+      const route = assertRoute(input?.route, "Prepared Pi turn"); const taskInput = requiredText(input?.taskInput, "Pi task input"); const options = turnOptions(input?.turnOptions, route);
       return { harnessId: PI_HARNESS_ID, driverVersion: PI_DRIVER_VERSION, route, turnOptions: options, promptEnvelope: { taskInput, authority: route.authority, topology: route.topology, returnContract: "Return one final assistant message." }, inputDigest: `sha256:${createHash("sha256").update(JSON.stringify([route.model, options.effort, taskInput])).digest("hex")}` };
     },
     async revalidatePreparedTurn(prepared, scope) {
       assertRoute(prepared?.route, "Prepared Pi turn"); assertRoute(scope?.route, "Pi turn scope");
-      if (hostEvidence().readiness !== "ready") throw new Error("Pi host evidence no longer admits this route.");
-      if (prepared.promptEnvelope?.taskInput !== scope?.taskInput || JSON.stringify(turnOptions(scope?.turnOptions)) !== JSON.stringify(prepared.turnOptions)) throw new Error("Pi prepared turn differs from its scope.");
+      await proveCurrentRoute(scope.route, scope);
+      if (prepared.promptEnvelope?.taskInput !== scope?.taskInput || JSON.stringify(turnOptions(scope?.turnOptions, scope.route)) !== JSON.stringify(prepared.turnOptions)) throw new Error("Pi prepared turn differs from its scope.");
       return Object.freeze({ workspaceRoot: scope?.workspaceRoot ?? process.cwd() });
     },
     validateNativeSessionRef(value) {
@@ -265,6 +298,7 @@ export function createPiDriver(options = {}) {
       const limit = page.limit == null ? 1 : Number(page.limit);
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > MAX_AGENT_MESSAGE_LIMIT) throw new Error(`read_agent_messages limit must be between 1 and ${MAX_AGENT_MESSAGE_LIMIT}.`);
       const before = page.before == null ? null : requiredText(String(page.before), "read_agent_messages before cursor");
+      await proveCurrentRoute(route, page);
       const { rpc, entries } = await openReadOnly(route, sessionId, page);
       try {
         const newest = (entries.data?.entries ?? []).map(messageOutcome).filter(Boolean).reverse();
@@ -278,6 +312,7 @@ export function createPiDriver(options = {}) {
       let route; let ref;
       try { route = assertRoute(scope?.route, "Pi observation route"); ref = assertNativeReferenceEnvelope(nativeTurnRef, { driver, route, kind: "turn" }); } catch { return { nativeTurn: "unknown", terminalResult: null }; }
       if (scope?.signal?.aborted) return { nativeTurn: "unknown", terminalResult: null };
+      await proveCurrentRoute(route, scope);
       let rpc;
       try {
         rpc = makeProcess({ route, sessionId: ref.locator.sessionId, resumeOnly: true, cwd: scope?.workspaceRoot ?? process.cwd() });
@@ -292,7 +327,7 @@ export function createPiDriver(options = {}) {
     async startTurn(input) {
       const scope = input?.scope; let route; let effort; let sessionId; let resumed = false;
       try {
-        route = assertRoute(scope?.route, "Pi turn scope"); assertRoute(input?.preparedTurn?.route, "Prepared Pi turn"); effort = turnOptions(scope?.turnOptions).effort;
+        route = assertRoute(scope?.route, "Pi turn scope"); assertRoute(input?.preparedTurn?.route, "Prepared Pi turn"); effort = turnOptions(scope?.turnOptions, route).effort;
         if (JSON.stringify(input.preparedTurn.turnOptions) !== JSON.stringify({ effort })) throw new Error("Pi prepared effort differs from scope.");
         requiredText(scope?.turnId, "Pi turn identity"); resumed = input?.nativeSessionRef != null; sessionId = resumed ? assertNativeReferenceEnvelope(input.nativeSessionRef, { driver, route, kind: "session" }).locator.sessionId : randomUUID();
       } catch (error) { throw preTransport(error); }
@@ -301,7 +336,8 @@ export function createPiDriver(options = {}) {
       const nativeSessionRef = sessionRefFor(route, sessionId); let baseline;
       try {
         const state = (await rpc.getState()).data;
-        if (state?.sessionId !== sessionId || state?.model?.provider !== PI_PROVIDER || state?.model?.id !== modelId(route.model) || state?.thinkingLevel !== effort || state?.isStreaming !== false || state?.isCompacting !== false) throw new Error("Pi RPC state does not match the accepted route and idle session.");
+        const target = modelParts(route.model);
+        if (state?.sessionId !== sessionId || state?.model?.provider !== target.provider || state?.model?.id !== target.model || state?.thinkingLevel !== effort || state?.isStreaming !== false || state?.isCompacting !== false) throw new Error("Pi RPC state does not match the accepted route and idle session.");
         const entries = await rpc.getEntries(null); baseline = { leafId: entries.data?.leafId ?? null, stats: nativeStats((await rpc.getSessionStats()).data, "Pi baseline stats") };
         await rpc.setAutoRetry(false); await rpc.setAutoCompaction(true); await rpc.setSteeringMode("one-at-a-time"); await rpc.setFollowUpMode("one-at-a-time");
       } catch (error) { await rpc.dispose(); throw preTransport(error); }

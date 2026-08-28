@@ -20,20 +20,15 @@ export class PiRpcProcessError extends Error {
   }
 }
 
-export function piRpcArgv({ provider, model, effort, sessionDir, sessionId, resumeSessionId, tools, resumeOnly = false }) {
+export function piRpcArgv({ provider, model, effort, sessionDir, sessionId, resumeSessionId, resumeOnly = false, control = false }) {
   const session = resumeSessionId == null
     ? ["--session-id", sessionId]
     : ["--session", resumeSessionId];
   return [
     "--mode", "rpc",
     "--session-dir", sessionDir,
-    ...(resumeOnly ? [] : ["--provider", provider, "--model", model, "--thinking", effort, "--tools", tools.join(",")]),
-    "--no-extensions",
-    "--no-skills",
-    "--no-prompt-templates",
-    "--no-approve",
-    "--offline",
-    ...session,
+    ...(resumeOnly || model == null ? [] : ["--provider", provider, "--model", model, "--thinking", effort]),
+    ...(control ? ["--offline", "--no-session"] : session),
   ];
 }
 
@@ -197,6 +192,10 @@ export function createPiRpcProcess(options) {
     getEntries: (since) => request("get_entries", since == null ? {} : { since }),
     getSessionStats: () => request("get_session_stats"),
     getState: () => request("get_state"),
+    getAvailableModels: () => request("get_available_models"),
+    setModel: (provider, modelId) => request("set_model", { provider, modelId }),
+    getAvailableThinkingLevels: () => request("get_available_thinking_levels"),
+    getCommands: () => request("get_commands"),
     setAutoRetry: (enabled) => request("set_auto_retry", { enabled }),
     setAutoCompaction: (enabled) => request("set_auto_compaction", { enabled }),
     setSteeringMode: (mode) => request("set_steering_mode", { mode }),

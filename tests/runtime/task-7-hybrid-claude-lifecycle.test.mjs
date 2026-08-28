@@ -126,6 +126,7 @@ async function spawnClaude(runtime, overrides = {}) {
     message: "the first Claude turn",
     harness: "claude-code",
     model: "claude-sonnet-5",
+    reasoning_effort: "high",
     topology: "leaf",
     write: false,
     ...overrides,

@@ -37,6 +37,7 @@ import {
   discoverOpencodeHealth,
   discoverOpencodeProfile,
   discoverOpencodeProviderCatalog,
+  discoverOpencodeProviderRoutes,
   getOpencodeDiscoveryAudit,
   isLoopbackOpencodeUrl,
   createOpencodeTurnClient,
@@ -462,6 +463,53 @@ describe("opencode-client: provider-catalog response ceiling", () => {
       ok: false,
       code: "response_too_large",
       retryable: false,
+    });
+  });
+
+  it("projects only spawnable bounded route atoms from a hostile catalog", async () => {
+    const hugeVariants = Object.fromEntries(
+      Array.from({ length: 16 }, (_, index) => [`effort-${index}-${"x".repeat(240)}`, {}]),
+    );
+    const body = {
+      all: [
+        {
+          id: "safe-provider",
+          models: {
+            "safe-model": { id: "safe-model", providerID: "safe-provider", variants: { high: {} } },
+          },
+        },
+        {
+          id: "bad/provider",
+          models: { model: { id: "model", providerID: "bad/provider", variants: { high: {} } } },
+        },
+        {
+          id: "control-provider\u0007",
+          models: { model: { id: "model", providerID: "control-provider\u0007", variants: { high: {} } } },
+        },
+        {
+          id: "bad-model-provider",
+          models: { "bad/model": { id: "bad/model", providerID: "bad-model-provider", variants: { high: {} } } },
+        },
+        {
+          id: "bad-variant-provider",
+          models: { model: { id: "model", providerID: "bad-variant-provider", variants: { "high/hidden": {} } } },
+        },
+        {
+          id: "aggregate-provider",
+          models: { model: { id: "model", providerID: "aggregate-provider", variants: hugeVariants } },
+        },
+      ],
+      connected: [
+        "safe-provider", "bad/provider", "control-provider\u0007", "bad-model-provider",
+        "bad-variant-provider", "aggregate-provider",
+      ],
+      default: {},
+    };
+    const { url } = await startServer({ provider: { status: 200, body } });
+    const handle = createOpencodeDiscoveryClient({ env: { OPENCODE_SERVER_URL: url } });
+    assert.deepEqual(await discoverOpencodeProviderRoutes(handle), {
+      ok: true,
+      routes: [{ model: "safe-provider/safe-model", efforts: ["high"] }],
     });
   });
 });

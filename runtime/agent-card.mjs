@@ -8,10 +8,10 @@ const SAFE_PHASES = Object.freeze({
   retrying: "retrying",
   reconnecting: "reconnecting",
 });
-const SAFE_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
+import { isBoundedRouteAtom } from "./harness-contract.mjs";
 
 function nullableEffort(value) {
-  return typeof value === "string" && SAFE_EFFORTS.has(value) ? value : null;
+  return isBoundedRouteAtom(value) ? value : null;
 }
 
 function nullableTimestamp(value) {
@@ -44,7 +44,7 @@ export function projectAgentCard(agent, job, options = {}) {
     : null;
   const startedAt = nullableTimestamp(job?.startedAt);
   // A version-three Agent froze its model, topology, and behavioral authority
-  // at creation. Only reasoning effort stays turn-scoped, so nothing about the
+  // at creation, including effective reasoning effort. Nothing about an
   // observed turn may restate that identity.
   const frozenRoute = agent?.version === 3 && agent?.route ? agent.route : null;
   const terminalJob = terminal.has(job?.status);
@@ -58,7 +58,7 @@ export function projectAgentCard(agent, job, options = {}) {
     harness: agent.harnessId ?? null,
     route_maturity: frozenRoute?.capabilities?.driverMaturity ?? null,
     model: frozenRoute ? frozenRoute.model : agent.selectedModel,
-    reasoning_effort: nullableEffort(job?.request?.effort),
+    reasoning_effort: nullableEffort(frozenRoute?.effort ?? job?.request?.effort),
     // Historical per-turn write intent is legacy Claude evidence; it can never
     // widen, narrow, or answer for a frozen route authority.
     authority: frozenRoute

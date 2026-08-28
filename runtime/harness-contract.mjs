@@ -550,7 +550,7 @@ export function validatePreparedTurn(prepared, { driver, route, taskInput }) {
   if (prepared.harnessId !== driver.harnessId || prepared.driverVersion !== driver.driverVersion) {
     throw new Error(`${label} belongs to a foreign Driver contract.`);
   }
-  for (const field of ["harnessId", "instanceKey", "model", "topology", "authority", "driverVersion"]) {
+  for (const field of ["harnessId", "instanceKey", "model", "topology", "authority", "effort", "driverVersion"]) {
     if (prepared.route?.[field] !== route[field]) {
       throw new Error(`${label} declares a ${field} that is not the accepted route's.`);
     }
@@ -631,9 +631,34 @@ export const INSTANCE_DETAIL_CODES = Object.freeze([
 export const ROUTE_TOPOLOGY_VALUES = Object.freeze(["leaf", "native_orchestrator"]);
 export const ROUTE_AUTHORITY_VALUES = Object.freeze(["behavioral_read_only", "behavioral_write"]);
 
+// One grammar for caller, discovery, durable lineage, and public projection.
+// eslint-disable-next-line no-control-regex -- rejecting these characters is the contract
+const UNSTABLE_ROUTE_TEXT = /[\u0000-\u001F\u007F-\u009F\u00AD\u200B-\u200F\u2028\u2029\u202A-\u202E\u2060-\u2064\u2066-\u2069\uFEFF]/;
+
+export function isBoundedRouteText(value) {
+  return typeof value === "string" && Boolean(value.trim()) && value === value.trim() &&
+    !UNSTABLE_ROUTE_TEXT.test(value) && Buffer.byteLength(value, "utf8") <= 256;
+}
+
+export function isBoundedRouteAtom(value) {
+  return isBoundedRouteText(value) && !value.includes("/");
+}
+
+export function splitFullModelRoute(value) {
+  if (!isBoundedRouteText(value)) return null;
+  const slash = value.indexOf("/");
+  if (slash < 1 || slash !== value.lastIndexOf("/")) return null;
+  const provider = value.slice(0, slash);
+  const model = value.slice(slash + 1);
+  return isBoundedRouteAtom(provider) && isBoundedRouteAtom(model)
+    ? Object.freeze({ provider, model })
+    : null;
+}
+
 /** Everything a caller may state when asking for one canonical route. */
 export const ROUTE_REQUEST_FIELDS = Object.freeze([
   "authority",
+  "effort",
   "harnessId",
   "model",
   "topology",
@@ -643,6 +668,7 @@ export const CANONICAL_ROUTE_FIELDS = Object.freeze([
   "authority",
   "capabilities",
   "driverVersion",
+  "effort",
   "harnessId",
   "instanceKey",
   "model",
@@ -752,6 +778,12 @@ export function validateCanonicalRoute(route, { driver, inspection, request }) {
       );
     }
   }
+  if (Object.hasOwn(request, "effort") && route.effort !== request.effort) {
+    throw new Error(`${label} effective effort ${JSON.stringify(route.effort ?? null)} does not match the requested ${JSON.stringify(request.effort)}.`);
+  }
+  if (route.effort != null && (typeof route.effort !== "string" || !route.effort.trim() || route.effort !== route.effort.trim())) {
+    throw new Error(`${label} must record one effective native effort.`);
+  }
   const capabilities = assertDriverRouteCoherence(driver, route.capabilities);
   assertAdmittedInteraction(capabilities, label);
   return Object.freeze({
@@ -761,6 +793,7 @@ export function validateCanonicalRoute(route, { driver, inspection, request }) {
     topology: route.topology,
     authority: route.authority,
     driverVersion: route.driverVersion,
+    ...(route.effort == null ? {} : { effort: route.effort }),
     capabilities,
   });
 }

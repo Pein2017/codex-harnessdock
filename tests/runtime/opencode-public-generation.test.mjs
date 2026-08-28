@@ -92,7 +92,7 @@ async function startReadyFake() {
           models: Object.fromEntries(
             OPENCODE_EXPLORER_MODEL_ROUTES
               .filter((route) => route.providerId === providerId)
-              .map((route) => [route.modelId, { id: route.modelId, providerID: route.providerId }])
+              .map((route) => [route.modelId, { id: route.modelId, providerID: route.providerId, variants: { high: {} } }])
           ),
         })),
         connected: providers,
@@ -237,14 +237,14 @@ describe("public generation: list_harnesses observes without selecting", () => {
     assert.equal(instance.detail, "ready");
     assert.equal(instance.live_validated, true);
     assert.equal(instance.capacity, null, "the OpenCode route has no HarnessDock capacity ceiling");
-    assert.deepEqual([...instance.routes.models], OPENCODE_EXPLORER_MODELS);
+    assert.deepEqual([...instance.routes.models].sort(), [...OPENCODE_EXPLORER_MODELS].sort());
     assert.deepEqual([...instance.routes.topologies], ["leaf"]);
-    assert.equal(instance.routes.authority, "behavioral_read_only");
+    assert.equal(instance.routes.authorityEnforcement, "prompt_only");
     assert.equal(instance.routes.continuation, "fresh_only");
     assert.equal(instance.routes.interaction, "noninteractive_fixed_policy");
     assert.equal(instance.routes.interruptRequest, "unsupported");
     assert.equal(instance.routes.history, "unavailable");
-    assert.equal(instance.routes.profile, OPENCODE_EXPLORER_PROFILE_NAME);
+    assert.equal(Object.hasOwn(instance.routes, "profile"), false);
 
     const claude = harnessOf(listing, "claude-code");
     assert.equal(claude.maturity, "experimental");

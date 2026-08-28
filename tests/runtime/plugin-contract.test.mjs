@@ -275,9 +275,17 @@ describe("native plugin contract", () => {
     assert.match(text, /exact\s+resume only[\s\S]*active input is acknowledged[\s\S]*automatic recovery is absent[\s\S]*native orchestration is disabled/i);
     assert.match(text, /Pi `write: false` allows only `read`, `grep`, `find`, and[\s\S]*Pi `write: true` also allows `bash`, `edit`, and `write`/i);
     assert.match(text, /`opencode`[\s\S]*leaf[\s\S]*`write: false`/i);
-    assert.match(text, /no reasoning effort/i);
+    // OpenCode now takes both authorities as prompt/receipt only and requires
+    // an explicit effort mapped to one advertised Server variant, never inferred.
+    assert.match(text, /`opencode`[\s\S]*`write: false` or `write: true` \(prompt\/receipt\s+only\)/i);
+    assert.match(text, /`opencode`[\s\S]*every turn requires an explicit `low`.`max` effort mapped to one\s+advertised Server variant, never inferred/i);
+    assert.doesNotMatch(text, /no reasoning effort/i);
     assert.doesNotMatch(text, /deepseek|opencode-go/i);
     assert.match(text, /No `-fast` variants/i);
+    // Route facts are read from fresh native discovery; native configuration is
+    // inherited, never enumerated by HarnessDock.
+    assert.match(text, /reports what is ready from fresh native\s+discovery/i);
+    assert.match(text, /Pi and OpenCode are\s+prompt\/receipt only, inheriting native tools, plugins, MCP, and config unchanged\s+and never enumerated/i);
     assert.match(text, /experimental Native Agent Team lead/i);
     assert.match(text, /named member[\s\S]*launch(?:es|ed)? asynchronously[\s\S]*correlated `SendMessage`[\s\S]*succeed(?:s)?/i);
     assert.match(text, /definition-owned[\s\S]*requested models[\s\S]*effective teammate model[\s\S]*unknown/i);
@@ -415,6 +423,37 @@ describe("native plugin contract", () => {
     // An unavailable Harness is still admitted; absence is not removal.
     assert.match(text, /unavailable[\s\S]*still admitted|admitted[\s\S]*not[\s\S]*removed/i);
     assert.doesNotMatch(text, /endpoint|credential|password|username/i);
+  });
+
+  it("states dynamic native discovery without promising native config/plugin/MCP/tool enumeration or filesystem containment", () => {
+    const pluginRoot = path.join(root, "plugins", "codex-harnessdock");
+    const skillTexts = canonicalSkills.flatMap((name) => [
+      fs.readFileSync(path.join(pluginRoot, "skills", name, "SKILL.md"), "utf8"),
+      fs.readFileSync(path.join(pluginRoot, "skills", name, "agents", "openai.yaml"), "utf8"),
+    ]);
+    const manifest = JSON.parse(fs.readFileSync(path.join(pluginRoot, ".codex-plugin/plugin.json"), "utf8"));
+    const serverText = fs.readFileSync(path.join(root, "runtime", "mcp-server.mjs"), "utf8");
+    // Discovery is stated as fresh/native on both public surfaces.
+    assert.match(fs.readFileSync(path.join(pluginRoot, "skills", "list-harnesses", "SKILL.md"), "utf8"), /fresh native discovery/i);
+    assert.match(serverText, /freshly discovered from native Pi\/OpenCode configuration/i);
+    assert.match(serverText, /freshly validated against native discovery/i);
+    // Spawn requires an explicit effort; follow-up inherits the frozen route.
+    assert.match(fs.readFileSync(path.join(pluginRoot, "skills", "spawn-agent", "SKILL.md"), "utf8"), /`reasoning_effort` \(required for every route/i);
+    assert.match(fs.readFileSync(path.join(pluginRoot, "skills", "followup-task", "SKILL.md"), "utf8"), /frozen route effort is inherited/i);
+    // No surface promises an enumerable native inventory or OS-level containment.
+    const forbidden = [
+      /enumerate[sd]? (?:the )?native (?:plugins?|MCP|tools?|prompt templates?)/i,
+      /list[s]? (?:every |all )?native (?:plugins?|MCP servers?|tools?)/i,
+      /filesystem containment/i,
+      /os-level (?:read-only|sandbox|containment)/i,
+    ];
+    for (const text of [...skillTexts, serverText, JSON.stringify(manifest.interface)]) {
+      for (const pattern of forbidden) {
+        assert.doesNotMatch(text, pattern);
+      }
+    }
+    // The explicit "not enumerated / prompt-only" framing is present.
+    assert.match(fs.readFileSync(path.join(pluginRoot, "skills", "spawn-agent", "SKILL.md"), "utf8"), /inheriting native tools, plugins, MCP, and config unchanged\s+and never enumerated/i);
   });
 
   it("states each Harness's unsupported capabilities where a caller would hit them", () => {

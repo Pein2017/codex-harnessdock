@@ -420,6 +420,83 @@ function failedCheck(id, error, recovery = null) {
   return makeCheck(id, "fail", bounded(error instanceof Error ? error.message : error, 800), null, recovery);
 }
 
+const NATIVE_ROUTE_LEAK_PATTERNS = [
+  /https?:\/\//i,
+  /\b(?:localhost|127\.0\.0\.1)\b/i,
+  /(?:^|[\s"'`=,:([{])\/[^\s"'`<>\])};,]{2,}/,
+  /\b(?:api[_-]?key|secret|token|password|credential|bearer)\b/i,
+  /\bPI_CODING_AGENT_DIR\b|\bOPENCODE_SERVER_URL\b/i,
+  /\bmcpServers?\b|\.mcp\.json\b/i,
+];
+
+/**
+ * Bounded, redacted read-only diagnosis of the fresh native Pi/OpenCode route
+ * discovery that the isolated MCP probe already performed. It reports route
+ * availability, discovery freshness, and the exact model-specific effort/variant
+ * choices, and it distinguishes unavailable, ambiguous, and route-drift
+ * conditions from successful native-model execution. It launches no model,
+ * starts or reconfigures no Harness, and exposes no endpoint, credential,
+ * configuration path or content, plugin, MCP server, tool, or prompt template.
+ */
+export function diagnoseNativeRouteDiscovery(mcp) {
+  const routes = Array.isArray(mcp?.nativeRoutes) ? mcp.nativeRoutes : null;
+  if (routes == null) {
+    return makeCheck(
+      "native-routes",
+      "warn",
+      "Fresh Pi/OpenCode native-route discovery was not observed this run; no model, provider, or Server call was made.",
+      null,
+      "Rerun doctor once the isolated MCP probe succeeds.",
+    );
+  }
+  const serialized = JSON.stringify(routes);
+  for (const pattern of NATIVE_ROUTE_LEAK_PATTERNS) {
+    if (pattern.test(serialized)) {
+      return failedCheck(
+        "native-routes",
+        new Error("Native-route discovery projection carried disallowed configuration text and was withheld."),
+        "Inspect the list_harnesses projection for endpoint, path, or credential leakage.",
+      );
+    }
+  }
+  const byStatus = { available: [], unavailable: [], ambiguous: [], drift: [] };
+  const summary = routes.map((route) => {
+    const key = ["available", "unavailable", "ambiguous", "drift"].includes(route?.status) ? route.status : "unavailable";
+    (byStatus[key] ?? byStatus.unavailable).push(bounded(route?.harness, 48) || "unknown");
+    const instance = Array.isArray(route?.instances) ? route.instances[0] : null;
+    return {
+      harness: bounded(route?.harness, 48) || "unknown",
+      status: key,
+      detail: route?.detail == null ? null : bounded(route.detail, 48),
+      maturity: route?.maturity == null ? null : bounded(route.maturity, 32),
+      modelCount: Array.isArray(instance?.models) ? instance.models.length : 0,
+      efforts: Array.isArray(instance?.efforts) ? instance.efforts.map((atom) => bounded(atom, 32)).filter(Boolean) : [],
+      effortsByModel: instance && instance.effortsByModel && typeof instance.effortsByModel === "object"
+        ? Object.fromEntries(
+          Object.entries(instance.effortsByModel).slice(0, 24).map(([model, efforts]) => [
+            bounded(model, 96),
+            (Array.isArray(efforts) ? efforts : []).map((atom) => bounded(atom, 32)).filter(Boolean),
+          ]),
+        )
+        : {},
+    };
+  });
+  const degraded = byStatus.unavailable.length + byStatus.ambiguous.length + byStatus.drift.length;
+  const status = degraded > 0 ? "warn" : "pass";
+  const summaryText = degraded === 0
+    ? `Fresh native-route discovery completed with no model, provider, or Server call; ${byStatus.available.join(", ") || "no"} route(s) available with exact model-specific effort/variant choices.`
+    : `Fresh native-route discovery completed with no model, provider, or Server call; ` +
+      `unavailable: ${byStatus.unavailable.join(", ") || "none"}; ambiguous: ${byStatus.ambiguous.join(", ") || "none"}; ` +
+      `drift: ${byStatus.drift.join(", ") || "none"}.`;
+  return makeCheck(
+    "native-routes",
+    status,
+    summaryText,
+    { routes: summary },
+    degraded > 0 ? "Inspect the unavailable, ambiguous, or drifted native Harness; doctor does not repair, reload, or reconfigure it." : null,
+  );
+}
+
 /**
  * Read-only projection of bounded native-team receipts.  These labels are
  * deliberately scoped: an observed clean deny set does not establish broader
@@ -746,9 +823,10 @@ export async function runDoctor(options = {}) {
   }
 
   if (installation?.parity && dependencies?.missing?.length === 0) {
+    let mcp = null;
     try {
       const probe = options.probeMcp ?? (await import("./release-smoke.mjs")).probeInstalledMcp;
-      const mcp = await probe({
+      mcp = await probe({
         snapshotRoot: installation.installed.snapshotRoot,
         workspace: cwd,
         env: environment?.env ?? options.env ?? process.env,
@@ -764,11 +842,19 @@ export async function runDoctor(options = {}) {
     } catch (error) {
       checks.push(failedCheck("mcp-tools", error, "Run npm run refresh:local and inspect the MCP bootstrap."));
     }
+    checks.push(diagnoseNativeRouteDiscovery(mcp));
   } else {
     checks.push(makeCheck(
       "mcp-tools",
       "fail",
       "MCP discovery skipped because installation parity or checkout dependencies failed.",
+      null,
+      "Repair earlier failures, then rerun doctor.",
+    ));
+    checks.push(makeCheck(
+      "native-routes",
+      "warn",
+      "Native Pi/OpenCode route discovery skipped because installation parity or checkout dependencies failed.",
       null,
       "Repair earlier failures, then rerun doctor.",
     ));

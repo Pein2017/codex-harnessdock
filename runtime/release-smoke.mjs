@@ -475,6 +475,105 @@ export async function runPaidSmoke(client, meta, options = {}) {
   throw new Error("Haiku release smoke exceeded the one-hour observation bound.");
 }
 
+const MAX_DISCOVERY_MODELS = 24;
+const MAX_DISCOVERY_EFFORTS = 12;
+
+function boundedAtom(value, max = 64) {
+  return String(value ?? "").replaceAll("\0", "").trim().slice(0, max);
+}
+
+function boundedEffortList(value) {
+  return (Array.isArray(value) ? value : [])
+    .slice(0, MAX_DISCOVERY_EFFORTS)
+    .map((atom) => boundedAtom(atom))
+    .filter(Boolean);
+}
+
+/**
+ * Bounded, redacted projection of one `list_harnesses` receipt for zero-model
+ * diagnostics. It keeps only the discoverable route facts the public contract
+ * already exposes -- readiness, maturity, capacity, exact models, and the
+ * model-specific effort/variant choices -- and classifies each admitted Harness
+ * as available, unavailable, ambiguous, or drifted. It never carries an
+ * endpoint, credential, filesystem path, or native plugin/MCP/tool inventory,
+ * and it makes no model, provider, or Server call.
+ */
+const FORBIDDEN_DISCOVERY_PATTERNS = [
+  /https?:\/\//i,
+  /\b(?:localhost|127\.0\.0\.1)\b/i,
+  /(?:^|[\s"'`=,:([{])\/[^\s"'`<>\])};,]{2,}/,
+  /\b(?:api[_-]?key|secret|token|password|credential|bearer)\b/i,
+  /\bPI_CODING_AGENT_DIR\b|\bOPENCODE_SERVER_URL\b/i,
+  /\bmcpServers?\b|\.mcp\.json\b/i,
+];
+
+/**
+ * Fail closed if a bounded discovery projection carries an endpoint, credential,
+ * filesystem path, or native plugin/MCP identity that the read-only surface must
+ * never expose.
+ */
+export function assertNoLeakedConfiguration(value, context) {
+  const serialized = JSON.stringify(value ?? null);
+  for (const pattern of FORBIDDEN_DISCOVERY_PATTERNS) {
+    if (pattern.test(serialized)) {
+      throw new Error(`${context} exposed disallowed configuration text (${pattern}).`);
+    }
+  }
+}
+
+export function projectNativeRouteDiscovery(records) {
+  return (Array.isArray(records) ? records : []).map((record) => {
+    const harness = boundedAtom(record?.harness, 48) || "unknown";
+    const instances = Array.isArray(record?.instances) ? record.instances : [];
+    const projectedInstances = instances.slice(0, 8).map((instance) => {
+      const routes = instance?.routes ?? null;
+      const effortsByModel = routes && typeof routes.effortsByModel === "object" && routes.effortsByModel
+        ? Object.fromEntries(
+          Object.entries(routes.effortsByModel)
+            .slice(0, MAX_DISCOVERY_MODELS)
+            .map(([model, efforts]) => [boundedAtom(model, 96), boundedEffortList(efforts)]),
+        )
+        : {};
+      return {
+        readiness: boundedAtom(instance?.readiness, 32) || "unknown",
+        liveValidated: instance?.live_validated === true,
+        maturity: boundedAtom(instance?.maturity, 32) || null,
+        capacity: Number.isSafeInteger(instance?.capacity) ? instance.capacity : null,
+        models: routes && Array.isArray(routes.models)
+          ? routes.models.slice(0, MAX_DISCOVERY_MODELS).map((model) => boundedAtom(model, 96)).filter(Boolean)
+          : [],
+        efforts: routes ? boundedEffortList(routes.reasoningEfforts) : [],
+        effortsByModel,
+      };
+    });
+    let status;
+    let detail = null;
+    if (record?.unavailable != null) {
+      status = "unavailable";
+      detail = boundedAtom(record.unavailable, 48);
+    } else if (projectedInstances.length === 0) {
+      status = "unavailable";
+      detail = "no_instances";
+    } else if (projectedInstances.length > 1) {
+      status = "ambiguous";
+    } else if (projectedInstances[0].readiness !== "ready") {
+      // A listed instance that cannot be freshly proven ready is a discovery
+      // drift condition, not a repair request and not model liveness.
+      status = "drift";
+      detail = `discovery_${projectedInstances[0].readiness}`;
+    } else {
+      status = "available";
+    }
+    return {
+      harness,
+      status,
+      detail,
+      maturity: boundedAtom(record?.maturity, 32) || null,
+      instances: projectedInstances,
+    };
+  });
+}
+
 export async function probeInstalledMcp(options = {}) {
   const snapshotRoot = fs.realpathSync.native(options.snapshotRoot);
   const workspace = fs.realpathSync.native(options.workspace ?? SOURCE_ROOT);
@@ -511,6 +610,7 @@ export async function probeInstalledMcp(options = {}) {
     let agentCount = null;
     let harnessCount = null;
     let schemaRejected = null;
+    let nativeRoutes = null;
     if (options.callListAgents !== false) {
       const result = await client.callTool({ name: "list_agents", arguments: {}, _meta: meta }, undefined, callOptions(60_000));
       if (result?.isError) throw toolError(result, "list_agents");
@@ -532,6 +632,9 @@ export async function probeInstalledMcp(options = {}) {
       const records = /** @type {any} */ (harnesses?.structuredContent)?.harnesses;
       if (!Array.isArray(records)) throw new Error("list_harnesses returned no structured Harness array.");
       harnessCount = records.length;
+      // Bounded, redacted, zero-model projection of the fresh native-route
+      // discovery this same call performed. No extra Server or model traffic.
+      nativeRoutes = projectNativeRouteDiscovery(records);
       if (options.expectedHarnessCount != null && harnessCount !== options.expectedHarnessCount) {
         throw new Error(
           `Installed Plugin reported ${harnessCount} admitted Harnesses; this release admits ` +
@@ -570,6 +673,7 @@ export async function probeInstalledMcp(options = {}) {
       agentCount,
       harnessCount,
       schemaRejected,
+      nativeRoutes,
       paid,
     };
   } finally {
@@ -646,6 +750,13 @@ export async function runReleaseSmoke(options = {}) {
       `this release requires ${ADMITTED_GENERATION_HARNESS_IDS.length}.`
     );
   }
+  // The smoke performs one fresh native-route discovery through the same
+  // zero-model `list_harnesses` call. A native Harness reported unavailable,
+  // ambiguous, or drifted is an operator diagnostic, never a smoke failure and
+  // never a repair request; the discovery projection must still be bounded and
+  // free of configuration, endpoint, or credential text.
+  const nativeRouteDiscovery = Array.isArray(mcp.nativeRoutes) ? mcp.nativeRoutes : [];
+  assertNoLeakedConfiguration(nativeRouteDiscovery, "release smoke native-route discovery");
   return {
     version: 1,
     status: "pass",
@@ -655,6 +766,7 @@ export async function runReleaseSmoke(options = {}) {
     skills,
     tools: mcp.tools,
     listAgents: { isolated: true, agentCount: mcp.agentCount },
+    nativeRouteDiscovery,
     compatibilityShells,
     paid: mcp.paid,
   };

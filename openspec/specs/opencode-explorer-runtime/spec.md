@@ -1,6 +1,6 @@
 ## Purpose
 
-Define one exact experimental OpenCode Server and DeepSeek V4 Flash Explorer route, including operator ownership, read-only fixed policy, launch/session/turn evidence, result/usage normalization, and staged acceptance.
+Define attach-only experimental OpenCode routes discovered from the operator-owned Server's current `/provider` catalog, with caller-stated exact model and variant effort, native agent/configuration ownership, launch/session/turn evidence, result/usage normalization, and staged acceptance.
 
 ## Requirements
 ### Requirement: OpenCode attaches only to an operator-owned loopback Server

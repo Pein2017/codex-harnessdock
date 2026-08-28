@@ -11,18 +11,9 @@
  * a shape reason.
  */
 import assert from "node:assert/strict";
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
 import { PROMPT_ENVELOPE_FIELDS } from "../../runtime/harness-contract.mjs";
-import {
-  OPENCODE_ADMITTED_PERMISSIONS,
-  OPENCODE_EXPLORER_AUTHORITY,
-  OPENCODE_EXPLORER_TOPOLOGY,
-  OPENCODE_FORBIDDEN_PERMISSIONS,
-} from "../../runtime/opencode-explorer-profile.mjs";
 import {
   OPENCODE_MAX_PROMPT_CHARS,
   OPENCODE_MAX_TASK_INPUT_CHARS,
@@ -32,15 +23,21 @@ import {
   OPENCODE_TASK_BLOCK_OPEN,
   OpencodePromptError,
   assertOpencodePromptWithinBound,
-  buildOpencodeExplorerPromptEnvelope,
-  renderOpencodeExplorerPrompt,
+  buildOpencodeExplorerPromptEnvelope as buildPromptEnvelope,
+  renderOpencodeExplorerPrompt as renderPrompt,
 } from "../../runtime/opencode-prompt.mjs";
 import { OPENCODE_MAX_FINAL_TEXT_CHARS } from "../../runtime/opencode-result.mjs";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const modulePath = path.join(root, "runtime", "opencode-prompt.mjs");
-const moduleSource = fs.readFileSync(modulePath, "utf8");
-const templateSource = fs.readFileSync(path.join(root, "config", "opencode", "codex-explorer.md"), "utf8");
+const OPENCODE_EXPLORER_AUTHORITY = "behavioral_read_only";
+const OPENCODE_EXPLORER_TOPOLOGY = "leaf";
+
+function buildOpencodeExplorerPromptEnvelope(request, authority = OPENCODE_EXPLORER_AUTHORITY) {
+  return buildPromptEnvelope(request, authority);
+}
+
+function renderOpencodeExplorerPrompt(request, authority = OPENCODE_EXPLORER_AUTHORITY) {
+  return renderPrompt(request, authority);
+}
 
 /** The contract's own per-fact bound, restated here so a drift is visible. */
 const MAX_PROMPT_ENVELOPE_FACT = 4096;
@@ -81,20 +78,9 @@ describe("opencode prompt: one versioned stable envelope", () => {
     assert.ok(envelope.topology.startsWith(OPENCODE_EXPLORER_TOPOLOGY));
   });
 
-  it("derives the admitted-tool boundary from the profile's own allowlist", () => {
-    const envelope = buildOpencodeExplorerPromptEnvelope("task");
-    for (const permission of OPENCODE_ADMITTED_PERMISSIONS) {
-      assert.ok(envelope.authority.includes(permission), `authority must name the admitted ${permission}`);
-    }
-    for (const permission of ["edit", "bash", "task", "webfetch", "websearch", "skill"]) {
-      assert.equal(OPENCODE_FORBIDDEN_PERMISSIONS.includes(permission), true);
-    }
-  });
-
-  it("never re-declares the route's model or profile identifiers", () => {
-    assert.equal(moduleSource.includes("opencode-go/deepseek-v4-flash"), false);
-    assert.equal(moduleSource.includes("deepseek"), false);
-    assert.equal(moduleSource.includes("codex-explorer"), false);
+  it("renders either accepted authority without selecting native tools or permissions", () => {
+    assert.match(renderOpencodeExplorerPrompt("task", "behavioral_read_only"), /inspect and report only/i);
+    assert.match(renderOpencodeExplorerPrompt("task", "behavioral_write"), /requested edits/i);
   });
 
   it("claims Harness policy, never OS containment", () => {
@@ -105,16 +91,10 @@ describe("opencode prompt: one versioned stable envelope", () => {
     }
   });
 
-  it("states the same read-only, leaf, no-approval boundary as the installed template", () => {
+  it("states the route boundary without adding a managed working method", () => {
     const rendered = renderOpencodeExplorerPrompt("task");
-    for (const source of [rendered, templateSource]) {
-      assert.match(source, /read-only/i);
-      assert.match(source, /leaf/i);
-      assert.match(source, /approval|permission/i);
-      assert.match(source, /never (state|imply)/i);
-    }
-    // The envelope restates authority and the return contract only: the working
-    // method stays in the operator-reviewed profile prompt.
+    assert.match(rendered, /inspect and report only/i);
+    assert.match(rendered, /leaf/i);
     assert.equal(/thoroughness|step by step|decompose|methodology/i.test(rendered), false);
   });
 
@@ -219,7 +199,10 @@ describe("opencode prompt: frozen bounds and closed input", () => {
     assert.equal(Number.isInteger(OPENCODE_PROMPT_ENVELOPE_OVERHEAD_CHARS), true);
     assert.equal(
       OPENCODE_PROMPT_ENVELOPE_OVERHEAD_CHARS,
-      renderOpencodeExplorerPrompt("x").length - 1
+      Math.max(
+        renderOpencodeExplorerPrompt("x", "behavioral_read_only").length,
+        renderOpencodeExplorerPrompt("x", "behavioral_write").length,
+      ) - 1
     );
     assert.ok(
       OPENCODE_PROMPT_ENVELOPE_OVERHEAD_CHARS + OPENCODE_MAX_TASK_INPUT_CHARS <= OPENCODE_MAX_PROMPT_CHARS,

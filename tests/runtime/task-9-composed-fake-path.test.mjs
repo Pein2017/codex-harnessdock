@@ -101,7 +101,11 @@ async function startReadyFake(scenario = {}) {
           models: Object.fromEntries(
             OPENCODE_EXPLORER_MODEL_ROUTES
               .filter((route) => route.providerId === providerId)
-              .map((route) => [route.modelId, { id: route.modelId, providerID: route.providerId }])
+              .map((route) => [route.modelId, {
+                id: route.modelId,
+                providerID: route.providerId,
+                variants: { high: {} },
+              }])
           ),
         })),
         connected: providers,
@@ -201,6 +205,7 @@ describe("Task 9.1 — one complete OpenCode turn through MCP, runtime, and the 
       message: "Name the module that owns the static Driver table.",
       harness: OPENCODE_HARNESS_ID,
       model: OPENCODE_EXPLORER_MODEL,
+      reasoning_effort: "high",
       topology: "leaf",
       write: false,
     });
@@ -352,6 +357,7 @@ describe("Task 9.1 — one complete OpenCode turn through MCP, runtime, and the 
       message: "Name the module that owns the static Driver table.",
       harness: OPENCODE_HARNESS_ID,
       model: OPENCODE_EXPLORER_MODEL,
+      reasoning_effort: "high",
       topology: "leaf",
       write: false,
     });

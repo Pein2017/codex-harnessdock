@@ -1309,6 +1309,7 @@ function routeRequest(overrides = {}) {
     model: "standard-tier",
     topology: "leaf",
     authority: "behavioral_read_only",
+    effort: "high",
     ...overrides,
   };
 }
@@ -1521,6 +1522,13 @@ describe("Driver Contract v2 registry and scope", () => {
     await assert.rejects(
       () => acceptFakeServiceRoute(substituting.driver),
       /canonical route model "premium-tier" does not match the requested "standard-tier"/,
+    );
+    const effortSubstituting = createFakeServiceDriver({
+      routeOverride: (route) => ({ ...route, effort: "low" }),
+    });
+    await assert.rejects(
+      () => acceptFakeServiceRoute(effortSubstituting.driver, { effort: "high" }),
+      /effective effort "low" does not match the requested "high"/,
     );
     assert.deepEqual(capabilities.values.interaction, "noninteractive_fixed_policy");
   });
@@ -1857,7 +1865,7 @@ describe("Driver Contract v2 boundary corrections", () => {
     );
   });
 
-  it("accepts only the four explicit route-request fields", async () => {
+  it("accepts only the explicit route-request fields", async () => {
     const { driver: service } = createFakeServiceDriver();
     const inspections = await inspectDriverInstances(
       service,
@@ -1869,7 +1877,6 @@ describe("Driver Contract v2 boundary corrections", () => {
       ["policy", "prefer_cheapest"],
       ["max_concurrency", 4],
       ["route_ranking", ["fake-service"]],
-      ["effort", "high"],
     ]) {
       assert.throws(
         () => acceptDriverRoute(service, { ...routeRequest(), [key]: value }, inspections),

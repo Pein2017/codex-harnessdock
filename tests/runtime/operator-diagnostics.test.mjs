@@ -5,6 +5,7 @@ import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import {
+  diagnoseNativeRouteDiscovery,
   diagnoseNativeTeamCompatibility,
   inspectBlockedLeases,
   inspectOperatorStorage,
@@ -307,14 +308,48 @@ describe("operator doctor", () => {
       probeMcp: async () => ({
         healthy: true,
         tools: [
-          "spawn_agent", "send_message", "followup_task", "wait_agent",
+          "list_harnesses", "spawn_agent", "send_message", "followup_task", "wait_agent",
           "interrupt_agent", "list_agents", "read_agent_messages",
         ],
         agentCount: 0,
+        nativeRoutes: [
+          {
+            harness: "claude-code",
+            status: "available",
+            detail: null,
+            maturity: "stable",
+            instances: [{ readiness: "ready", liveValidated: true, maturity: "stable", capacity: null, models: ["claude-sonnet-5"], efforts: ["low", "high"], effortsByModel: { "claude-sonnet-5": ["low", "high"] } }],
+          },
+          {
+            harness: "pi",
+            status: "available",
+            detail: null,
+            maturity: "experimental",
+            instances: [{ readiness: "ready", liveValidated: true, maturity: "experimental", capacity: null, models: ["openai-codex/gpt-5.6-luna"], efforts: ["low", "medium", "high"], effortsByModel: { "openai-codex/gpt-5.6-luna": ["low", "medium", "high"] } }],
+          },
+          {
+            harness: "opencode",
+            status: "available",
+            detail: null,
+            maturity: "experimental",
+            instances: [{ readiness: "ready", liveValidated: true, maturity: "experimental", capacity: 1, models: ["openai/gpt-5.6-luna"], efforts: ["low", "high"], effortsByModel: { "openai/gpt-5.6-luna": ["low", "high"] } }],
+          },
+        ],
       }),
     });
 
     assert.equal(report.status, "pass");
+    const nativeRoutes = report.checks.find((check) => check.id === "native-routes");
+    assert.equal(nativeRoutes.status, "pass");
+    assert.match(nativeRoutes.summary, /no model, provider, or Server call/i);
+    assert.deepEqual(
+      nativeRoutes.details.routes.map((route) => route.harness).sort(),
+      ["claude-code", "opencode", "pi"],
+    );
+    assert.deepEqual(
+      nativeRoutes.details.routes.find((route) => route.harness === "pi").effortsByModel,
+      { "openai-codex/gpt-5.6-luna": ["low", "medium", "high"] },
+    );
     assert.equal(report.checks.find((check) => check.id === "checkout").details.packageVersion, PACKAGE_VERSION);
     assert.equal(report.checks.find((check) => check.id === "claude-auth").details.subscriptionType, "max");
     assert.equal(report.checks.find((check) => check.id === "claude-auth").details.liveValidated, false);
@@ -522,5 +557,70 @@ describe("blocked instance/session/writer lease diagnostics (OpenSpec 4.4)", () 
     // Lease evidence is never folded into deletable cleanup candidates.
     assert.equal(report.cleanup.candidateCount, 0);
     assert.ok(!JSON.stringify(report.cleanup).includes("leases"));
+  });
+});
+
+describe("doctor native-route discovery", () => {
+  it("reports bounded redacted route/effort facts with no model call", () => {
+    const check = diagnoseNativeRouteDiscovery({
+      nativeRoutes: [
+        {
+          harness: "pi",
+          status: "available",
+          detail: null,
+          maturity: "experimental",
+          instances: [{
+            readiness: "ready",
+            liveValidated: true,
+            maturity: "experimental",
+            capacity: null,
+            models: ["openai-codex/gpt-5.6-luna", "openai-codex/gpt-5.6-terra"],
+            efforts: ["low", "medium", "high"],
+            effortsByModel: {
+              "openai-codex/gpt-5.6-luna": ["low", "medium", "high"],
+              "openai-codex/gpt-5.6-terra": ["low", "high"],
+            },
+          }],
+        },
+      ],
+    });
+    assert.equal(check.id, "native-routes");
+    assert.equal(check.status, "pass");
+    assert.match(check.summary, /no model, provider, or Server call/i);
+    assert.match(check.summary, /exact model-specific effort\/variant choices/i);
+    const pi = check.details.routes[0];
+    assert.deepEqual(pi.effortsByModel["openai-codex/gpt-5.6-terra"], ["low", "high"]);
+    assert.equal(pi.modelCount, 2);
+  });
+
+  it("distinguishes unavailable, ambiguous, and route-drift conditions and warns without repair", () => {
+    const check = diagnoseNativeRouteDiscovery({
+      nativeRoutes: [
+        { harness: "claude-code", status: "available", detail: null, maturity: "stable", instances: [{ readiness: "ready", models: ["claude-sonnet-5"], efforts: ["low"], effortsByModel: {} }] },
+        { harness: "pi", status: "unavailable", detail: "inspection_failed", maturity: "experimental", instances: [] },
+        { harness: "opencode", status: "drift", detail: "discovery_unknown", maturity: "experimental", instances: [{ readiness: "unknown", models: [], efforts: [], effortsByModel: {} }] },
+      ],
+    });
+    assert.equal(check.status, "warn");
+    assert.match(check.summary, /unavailable: pi/i);
+    assert.match(check.summary, /drift: opencode/i);
+    assert.match(check.recovery, /does not repair, reload, or reconfigure/i);
+  });
+
+  it("warns when discovery was not observed this run", () => {
+    const check = diagnoseNativeRouteDiscovery({ healthy: false, tools: [] });
+    assert.equal(check.status, "warn");
+    assert.match(check.summary, /not observed this run/i);
+  });
+
+  it("fails closed and withholds a projection that leaked configuration text", () => {
+    const check = diagnoseNativeRouteDiscovery({
+      nativeRoutes: [
+        { harness: "opencode", status: "available", detail: "http://127.0.0.1:4096", maturity: "experimental", instances: [] },
+      ],
+    });
+    assert.equal(check.status, "fail");
+    assert.match(check.summary, /disallowed configuration text/i);
+    assert.doesNotMatch(JSON.stringify(check), /127\.0\.0\.1/);
   });
 });

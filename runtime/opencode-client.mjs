@@ -25,6 +25,7 @@
 import { createOpencodeClient as createOpencodeSdkClient } from "@opencode-ai/sdk/v2/client";
 
 import { readOpencodeSecrets, resolveRuntimeEnvironment } from "./environment.mjs";
+import { isBoundedRouteAtom } from "./harness-contract.mjs";
 
 export const DEFAULT_OPENCODE_SERVER_URL = "http://127.0.0.1:4096";
 
@@ -278,7 +279,7 @@ function requireHandleEntry(handle) {
  * live audit records are ever exposed on it. Performs no I/O beyond
  * validation.
  *
- * @param {{env?: NodeJS.ProcessEnv, cwd?: string, envFile?: string, connectTimeoutMs?: number,
+ * @param {{env?: NodeJS.ProcessEnv, cwd?: string, directory?: string, envFile?: string, connectTimeoutMs?: number,
  *   discoveryTimeoutMs?: number, maxResponseBytes?: number}} [options]
  */
 export function createOpencodeDiscoveryClient(options = {}) {
@@ -298,6 +299,7 @@ export function createOpencodeDiscoveryClient(options = {}) {
   const requestAudit = { records: [] };
   const sdkClient = createOpencodeSdkClient({
     baseUrl: serverUrl,
+    directory: boundedDirectory(options.directory),
     fetch: createFixedOriginFetch({ baseOrigin, maxResponseBytes, auditRecords: requestAudit.records }),
     headers: authorizationHeader ? { authorization: authorizationHeader } : undefined,
     redirect: "error",
@@ -453,6 +455,51 @@ export async function discoverOpencodeProviderCatalog(handle, options = {}) {
       providerConnected: connected.includes(providerId),
       model,
     };
+  } catch (error) {
+    return { ok: false, ...classifyDiscoveryFailure(error, undefined) };
+  }
+}
+
+/**
+ * Project the connected Server's catalog into the only native route facts the
+ * Driver needs. It reads `/provider` once and deliberately carries neither
+ * agent/configuration fields nor a chosen default. A model without advertised
+ * variants is not a route in this generation.
+ */
+export async function discoverOpencodeProviderRoutes(handle, options = {}) {
+  const entry = requireHandleEntry(handle);
+  const timeoutMs = boundPositiveInteger(options.timeoutMs, entry.discoveryCeilingMs);
+  try {
+    const result = await entry.sdkClient.provider.list({}, {
+      signal: composeDeadlineSignal(timeoutMs, options.signal),
+    });
+    if (result.error !== undefined) return { ok: false, ...classifyDiscoveryFailure(result.error, result.response) };
+    const payload = result.data;
+    if (!payload || !Array.isArray(payload.all) || !Array.isArray(payload.connected) ||
+        payload.all.length > OPENCODE_MAX_PROVIDER_CATALOG_ENTRIES ||
+        payload.connected.length > OPENCODE_MAX_PROVIDER_CATALOG_ENTRIES) {
+      return { ok: false, code: "malformed_response", retryable: false };
+    }
+    const connected = new Set(payload.connected.filter(isBoundedRouteAtom));
+    const routes = [];
+    for (const provider of payload.all) {
+      if (!provider || !isBoundedRouteAtom(provider.id) || !connected.has(provider.id) ||
+          !provider.models || typeof provider.models !== "object" || Array.isArray(provider.models)) continue;
+      for (const [key, raw] of Object.entries(provider.models)) {
+        const modelId = typeof raw?.id === "string" ? raw.id : key;
+        if (!isBoundedRouteAtom(modelId) || raw?.providerID !== provider.id ||
+            !raw?.variants || typeof raw.variants !== "object" || Array.isArray(raw.variants)) continue;
+        const efforts = Object.keys(raw.variants).filter(isBoundedRouteAtom);
+        if (efforts.length === 0 || efforts.length > 16 || new Set(efforts).size !== efforts.length) continue;
+        const candidate = { model: `${provider.id}/${modelId}`, efforts: efforts.sort() };
+        // ponytail: bounded O(n^2) serialization is simpler; revisit only if the 32-route ceiling grows.
+        if (Buffer.byteLength(JSON.stringify([...routes, candidate]), "utf8") <= 4 * 1024) routes.push(candidate);
+      }
+    }
+    if (routes.length === 0 || routes.length > 32 || new Set(routes.map((route) => route.model)).size !== routes.length) {
+      return { ok: false, code: "malformed_response", retryable: false };
+    }
+    return { ok: true, routes: routes.sort((left, right) => left.model.localeCompare(right.model)) };
   } catch (error) {
     return { ok: false, ...classifyDiscoveryFailure(error, undefined) };
   }
@@ -795,16 +842,17 @@ function boundedDirectory(directory) {
  * (prompt text does not belong in session metadata), or a parent session.
  *
  * @param {OpencodeTurnHandleType} handle
- * @param {{agent: string, providerId: string, modelId: string, directory?: string,
+ * @param {{agent?: string, providerId: string, modelId: string, variant?: string, directory?: string,
  *   signal?: AbortSignal, timeoutMs?: number}} options
  */
 export async function createOpencodeSession(handle, options) {
   const entry = requireTurnEntry(handle);
-  const agent = nonEmptyString(options?.agent);
+  const agent = options?.agent == null ? null : nonEmptyString(options.agent);
   const providerId = nonEmptyString(options?.providerId);
   const modelId = nonEmptyString(options?.modelId);
-  if (!agent || !providerId || !modelId) {
-    throw new OpencodeClientError("session_target_required", "an agent, provider, and model are required");
+  const variant = options?.variant == null ? null : nonEmptyString(options.variant);
+  if (!providerId || !modelId || (options?.agent != null && !agent) || (options?.variant != null && !variant)) {
+    throw new OpencodeClientError("session_target_required", "a provider and model are required");
   }
   const directory = boundedDirectory(options?.directory);
   const timeoutMs = boundPositiveInteger(options?.timeoutMs, entry.acceptanceCeilingMs);
@@ -813,8 +861,8 @@ export async function createOpencodeSession(handle, options) {
   try {
     const result = await entry.sdkClient.session.create(
       {
-        agent,
-        model: { id: modelId, providerID: providerId },
+        ...(agent == null ? {} : { agent }),
+        model: { id: modelId, providerID: providerId, ...(variant == null ? {} : { variant }) },
         ...(directory === undefined ? {} : { directory }),
       },
       { signal: deadlineSignal }
@@ -847,23 +895,24 @@ export async function createOpencodeSession(handle, options) {
  * turn and must not await it before proving lineage.
  *
  * The body states the exact model, the reviewed profile, the caller-generated
- * user-message id, and one text part. It never carries `tools`, `system`,
- * `variant`, `format`, or `noReply`: a per-call tool map or system override is
+ * user-message id, the exact top-level native variant, and one text part. It
+ * never carries `tools`, `system`, `format`, or `noReply`: a per-call tool map or system override is
  * exactly the dynamic selector this route refuses, and the prompt text is the
  * only content the Driver sends.
  *
  * @param {OpencodeTurnHandleType} handle
- * @param {{sessionId: string, messageId: string, agent: string, providerId: string,
- *   modelId: string, text: string, directory?: string, signal?: AbortSignal,
+ * @param {{sessionId: string, messageId: string, agent?: string, providerId: string,
+ *   modelId: string, variant?: string, text: string, directory?: string, signal?: AbortSignal,
  *   timeoutMs?: number}} options
  */
 export function submitOpencodePrompt(handle, options) {
   const entry = requireTurnEntry(handle);
   const sessionId = nonEmptyString(options?.sessionId);
   const messageId = nonEmptyString(options?.messageId);
-  const agent = nonEmptyString(options?.agent);
+  const agent = options?.agent == null ? null : nonEmptyString(options.agent);
   const providerId = nonEmptyString(options?.providerId);
   const modelId = nonEmptyString(options?.modelId);
+  const variant = options?.variant == null ? null : nonEmptyString(options.variant);
   const text = typeof options?.text === "string" ? options.text : "";
   if (!sessionId || !OPENCODE_SESSION_ID_PATTERN.test(sessionId)) {
     throw new OpencodeClientError("invalid_session_id", "a bounded session identifier is required");
@@ -871,8 +920,8 @@ export function submitOpencodePrompt(handle, options) {
   if (!messageId || !OPENCODE_MESSAGE_ID_PATTERN.test(messageId)) {
     throw new OpencodeClientError("invalid_message_id", "a bounded msg_ identifier is required");
   }
-  if (!agent || !providerId || !modelId || !text) {
-    throw new OpencodeClientError("prompt_target_required", "an agent, provider, model, and prompt text are required");
+  if (!providerId || !modelId || !text || (options?.agent != null && !agent) || (options?.variant != null && !variant)) {
+    throw new OpencodeClientError("prompt_target_required", "a provider, model, and prompt text are required");
   }
   const directory = boundedDirectory(options?.directory);
   const timeoutMs = boundPositiveInteger(options?.timeoutMs, entry.turnCeilingMs);
@@ -885,8 +934,9 @@ export function submitOpencodePrompt(handle, options) {
       {
         sessionID: sessionId,
         messageID: messageId,
-        agent,
+        ...(agent == null ? {} : { agent }),
         model: { providerID: providerId, modelID: modelId },
+        ...(variant == null ? {} : { variant }),
         parts: [{ type: "text", text }],
         ...(directory === undefined ? {} : { directory }),
       },

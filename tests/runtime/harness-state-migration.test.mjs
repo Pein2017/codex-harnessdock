@@ -47,6 +47,7 @@ import {
   V3_DRIVER_VERSION,
   V3_HARNESS_ID,
   V3_INSTANCE_KEY,
+  legacyVersionThreeAgentRecord,
   versionThreeAgentRecord,
   versionThreeCapabilities,
   versionThreeJobRecord,
@@ -656,6 +657,7 @@ describe("Version-three route identity", () => {
       "capabilities",
       "capabilitySchemaVersion",
       "driverVersion",
+      "effort",
       "harnessId",
       "instanceKey",
       "model",
@@ -685,7 +687,7 @@ describe("Version-three route identity", () => {
     });
   });
 
-  it("requires every route field explicitly and never defaults or infers one", () => {
+  it("requires every identity field explicitly", () => {
     for (const field of V3_ROUTE_FIELDS) {
       const route = versionThreeRoute();
       delete route[field];
@@ -704,10 +706,10 @@ describe("Version-three route identity", () => {
   });
 
   it("refuses extra, unstable, or inspection-shaped route facts", () => {
-    // Reasoning effort stays turn-scoped and is not route identity.
+    // Effective effort is admitted only as one bounded immutable route fact.
     assert.throws(
-      () => validateVersionThreeRoute(versionThreeRoute({ effort: "xhigh" })),
-      /unknown field: effort/,
+      () => validateVersionThreeRoute(versionThreeRoute({ effort: "  xhigh" })),
+      /effort/,
     );
     // The Driver's shallow-frozen `inspection.routes` facts must never be
     // carried forward into a durable route snapshot.
@@ -992,6 +994,7 @@ describe("Version-three Agent write gate", () => {
     const store = futureStore(context);
     assert.throws(() => store.createAgent({ task_name: "no_route" }), /route/);
     for (const field of V3_ROUTE_FIELDS) {
+      if (field === "effort") continue;
       const route = versionThreeRoute();
       delete route[field];
       assert.throws(
@@ -1029,6 +1032,28 @@ describe("Version-three Agent write gate", () => {
     for (const legacy of ["harnessId", "driverVersion", "capabilities", "selectedModel", "delegationMode", "claudeSessionId", "claudeConfigDir"]) {
       assert.equal(Object.hasOwn(stored, legacy), false, `${legacy} must not exist on a version-three record`);
     }
+  });
+
+  it("keeps a pre-effort version-three Agent inspectable but refuses activation", () => {
+    const context = setup();
+    const store = futureStore(context);
+    const created = store.createAgent({ task_name: "legacy_v3_effort", route: versionThreeRoute() });
+    rewriteAgent(context.root, created.agentId, () => legacyVersionThreeAgentRecord({
+      agentId: created.agentId,
+      rootThreadId: created.rootThreadId,
+      workspaceRoot: created.workspaceRoot,
+      name: created.name,
+      normalizedName: created.name,
+      path: created.path,
+    }));
+
+    const inspected = store.readAgent(created.agentId);
+    assert.equal(Object.hasOwn(inspected.route, "effort"), false);
+    assert.equal(projectAgentCard(inspected, null).reasoning_effort, null);
+    assert.throws(
+      () => store.reserveActivation(created.agentId, "job-legacy-v3-effort", { initial: true }),
+      /explicit.*effort|effort.*unknown/i,
+    );
   });
 
   it("freezes the version-three route against every later write", () => {

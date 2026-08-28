@@ -1,5 +1,5 @@
 {
-  "generation": 6,
+  "generation": 7,
   "tools": [
     {
       "name": "list_harnesses",
@@ -44,19 +44,9 @@
           },
           "model": {
             "type": "string",
-            "enum": [
-              "claude-fable-5",
-              "claude-haiku-4-5",
-              "claude-opus-5",
-              "claude-sonnet-5",
-              "openai-codex/gpt-5.6-luna",
-              "openai-codex/gpt-5.6-sol",
-              "openai-codex/gpt-5.6-terra",
-              "openai/gpt-5.6-luna",
-              "openai/gpt-5.6-sol",
-              "openai/gpt-5.6-terra"
-            ],
-            "description": "Required full model identifier admitted by the stated Harness."
+            "minLength": 1,
+            "maxLength": 256,
+            "description": "Required full model identifier; the selected Harness freshly validates it."
           },
           "topology": {
             "type": "string",
@@ -72,13 +62,8 @@
           },
           "reasoning_effort": {
             "type": "string",
-            "enum": [
-              "low",
-              "medium",
-              "high",
-              "xhigh",
-              "max"
-            ]
+            "minLength": 1,
+            "maxLength": 256
           }
         },
         "required": [
@@ -87,7 +72,8 @@
           "harness",
           "model",
           "topology",
-          "write"
+          "write",
+          "reasoning_effort"
         ],
         "$schema": "http://json-schema.org/draft-07/schema#",
         "additionalProperties": false
@@ -141,16 +127,6 @@
           "message": {
             "type": "string",
             "minLength": 1
-          },
-          "reasoning_effort": {
-            "type": "string",
-            "enum": [
-              "low",
-              "medium",
-              "high",
-              "xhigh",
-              "max"
-            ]
           }
         },
         "required": [

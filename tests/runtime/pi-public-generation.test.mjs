@@ -13,16 +13,17 @@ import { FUTURE_WRITE_GENERATION } from "../../runtime/durable-state-v3.mjs";
 import {
   ADMITTED_DRIVER_V2_HARNESS_IDS,
   ADMITTED_GENERATION_HARNESS_IDS,
-  ADMITTED_ROUTE_MODELS,
   harnessExecutionLifecycle,
   resolveDriverV2,
 } from "../../runtime/harness-registry.mjs";
-import { PI_DRIVER_VERSION, PI_HARNESS_ID, PI_MODELS } from "../../runtime/pi-driver.mjs";
-import { acquireNativeSessionLease } from "../../runtime/instance-admission-lease.mjs";
+import { PI_DRIVER_VERSION, PI_HARNESS_ID } from "../../runtime/pi-driver.mjs";
+import { acquireInstanceLease, acquireNativeSessionLease } from "../../runtime/instance-admission-lease.mjs";
+import { createLaunchClaim } from "../../runtime/launch-claim.mjs";
 import { recordVersionThreeTurnRunning } from "../../runtime/v3-job-store.mjs";
 import { listControlCommands } from "../../runtime/turn-control.mjs";
 
 const roots = [];
+const PI_MODEL = "openai-codex/gpt-5.6-luna";
 const sharedRuntimeHome = fs.mkdtempSync(path.join(os.tmpdir(), "pi-public-generation-home-"));
 after(() => fs.rmSync(sharedRuntimeHome, { recursive: true, force: true }));
 afterEach(() => {
@@ -41,6 +42,7 @@ function setup() {
     CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID: ownerRootId,
     CODEX_HARNESSDOCK_RUNTIME_HOME: sharedRuntimeHome,
   };
+  delete env.PI_CODING_AGENT_DIR;
   const runtime = createAgentRuntime({ cwd: workspace, env });
   const driver = resolveDriverV2(PI_HARNESS_ID, { env });
   runtime.jobs.inspectRouteInstance = async () => ({
@@ -52,7 +54,7 @@ function setup() {
       liveValidated: true,
       maturity: "experimental",
       detailCode: "ready",
-      routes: { models: [...PI_MODELS], topologies: ["leaf"], interaction: "noninteractive_fixed_policy" },
+      routes: { models: [PI_MODEL], topologies: ["leaf"], interaction: "noninteractive_fixed_policy", effortsByModel: { [PI_MODEL]: ["medium", "high"] }, defaultsByModel: { [PI_MODEL]: "high" } },
     }],
   });
   const launches = [];
@@ -70,7 +72,7 @@ function spawnInput(overrides = {}) {
     task_name: "pi_agent",
     message: "Inspect the repository.",
     harness: PI_HARNESS_ID,
-    model: PI_MODELS[0],
+    model: PI_MODEL,
     topology: "leaf",
     write: false,
     reasoning_effort: "high",
@@ -118,17 +120,30 @@ describe("Pi public generation admission", () => {
   it("admits exactly Pi and exposes its closed route schema", async () => {
     assert.deepEqual([...ADMITTED_DRIVER_V2_HARNESS_IDS], ["claude-code", "opencode", "pi"]);
     assert.deepEqual([...ADMITTED_GENERATION_HARNESS_IDS], ["claude-code", "opencode", "pi"]);
-    assert.deepEqual([...ADMITTED_ROUTE_MODELS[PI_HARNESS_ID]], [...PI_MODELS]);
     assert.equal(PI_DRIVER_VERSION, resolveDriverV2(PI_HARNESS_ID).driverVersion);
     assert.equal(harnessExecutionLifecycle(PI_HARNESS_ID), "version_three_worker");
     const spawn = await publicSchema();
     assert.deepEqual(spawn.inputSchema.properties.harness.enum, ["claude-code", "opencode", "pi"]);
-    assert.equal(PI_MODELS.every((model) => spawn.inputSchema.properties.model.enum.includes(model)), true);
-    assert.deepEqual(spawn.inputSchema.properties.reasoning_effort.enum, ["low", "medium", "high", "xhigh", "max"]);
+    assert.equal(spawn.inputSchema.properties.model.type, "string");
+    assert.equal(spawn.inputSchema.properties.reasoning_effort.type, "string");
   });
 });
 
 describe("Pi public generation v3 dispatch", () => {
+  it("fails Agent admission closed when Pi reports multiple ready instances", async () => {
+    const context = setup();
+    const driver = resolveDriverV2(PI_HARNESS_ID, { env: {} });
+    const routeFacts = { models: [PI_MODEL], topologies: ["leaf"], interaction: "noninteractive_fixed_policy", effortsByModel: { [PI_MODEL]: ["high"] }, defaultsByModel: { [PI_MODEL]: "high" } };
+    context.runtime.jobs.inspectRouteInstance = async () => ({
+      driver,
+      inspections: ["pi-local-a", "pi-local-b"].map((instanceKey) => ({
+        harnessId: PI_HARNESS_ID, instanceKey, readiness: "ready", liveValidated: true, maturity: "experimental", detailCode: "ready", routes: routeFacts,
+      })),
+    });
+    await assert.rejects(context.runtime.spawnAgent(spawnInput({ task_name: "ambiguous_pi" })), /2 ready logical instances/);
+    assert.equal(context.runtime.versionThreeStore().listAgents().length, 0);
+  });
+
   it("keeps follow-up and interrupt on the v3 worker path", async () => {
     const context = setup();
     const receipt = await context.runtime.spawnAgent(spawnInput());
@@ -161,21 +176,56 @@ describe("Pi public generation v3 dispatch", () => {
     assert.equal(context.launches.length, 1);
   });
 
-  it("requires explicit effort for each new Pi turn", async () => {
+  it("rejects omitted effort and inherits the explicit route effort for each Pi turn", async () => {
     const context = setup();
-    await assert.rejects(context.runtime.spawnAgent(spawnInput({ reasoning_effort: undefined })), /explicit effort/);
-    assert.equal(context.launches.length, 0);
+    await assert.rejects(context.runtime.spawnAgent(spawnInput({ task_name: "pi_default", reasoning_effort: undefined })), /reasoning_effort/);
     const receipt = await context.runtime.spawnAgent(spawnInput({ task_name: "pi_effort" }));
     const store = context.runtime.versionThreeStore();
     const agent = store.resolveTarget(receipt.agent_name);
     store.updateAgent(agent.agentId, (current) => ({ ...current, activeJobId: null, status: "completed" }));
     const messageCount = store.listMessages(agent.agentId).length;
+    await context.runtime.followupTask({ target: receipt.agent_name, message: "missing effort" });
+    assert.equal(store.listMessages(agent.agentId).length, messageCount + 1);
+    assert.equal(context.launches.length, 2);
+  });
+
+  it("carries the canonical effective effort through the real detached worker entry", async () => {
+    const context = setup();
+    const receipt = await context.runtime.spawnAgent(spawnInput({ task_name: "pi_worker_effort" }));
+    const store = context.runtime.versionThreeStore();
+    const agent = store.resolveTarget(receipt.agent_name);
+    const launch = context.launches[0];
+    const assignedMessageIds = store.listMessages(agent.agentId)
+      .filter((message) => message.assignedJobId === agent.activeJobId)
+      .map((message) => message.messageId);
+    const lease = acquireInstanceLease({
+      ownerRootId: context.ownerRootId,
+      agentId: agent.agentId,
+      jobId: agent.activeJobId,
+      route: agent.route,
+      harnessId: agent.route.harnessId,
+      instanceKey: agent.route.instanceKey,
+      capacityClass: "pi-v3-dispatch-test",
+      capacityLimit: 1,
+    });
+    createLaunchClaim({
+      ownerRootId: context.ownerRootId,
+      agentId: agent.agentId,
+      jobId: agent.activeJobId,
+      attemptId: launch.attemptId,
+      route: agent.route,
+      leaseBindings: [lease],
+      assignedMessageIds,
+      preparedInput: "Inspect the repository.",
+      turnOptions: { effort: "high" },
+    });
+    // This reaches the production runWorker -> runDetachedVersionThreeTurn
+    // seam without stubbing it. The deliberately missing local Pi config makes
+    // the later fresh inspection fail before any native process is opened.
     await assert.rejects(
-      context.runtime.followupTask({ target: receipt.agent_name, message: "missing effort" }),
-      /explicit effort/,
+      context.runtime.jobs.runWorker(agent.activeJobId, { agentId: agent.agentId, attemptId: launch.attemptId }),
+      /Pi instance is not ready/
     );
-    assert.equal(store.listMessages(agent.agentId).length, messageCount);
-    assert.equal(context.launches.length, 1);
   });
 
   it("serializes the same exact Pi session while admitting a distinct session", async () => {
@@ -216,7 +266,7 @@ describe("Pi public generation v3 dispatch", () => {
       nativeSessionRef: ref,
       continuation: { mode: "exact_session", evidence: { reason: "driver_proven_exact_resume", nativeSessionRef: ref } },
     }));
-    const followup = await context.runtime.followupTask({ target: receipt.agent_name, message: "resume exactly", reasoning_effort: "medium" });
+    const followup = await context.runtime.followupTask({ target: receipt.agent_name, message: "resume exactly" });
     assert.equal(followup.agent_name, receipt.agent_name);
     assert.equal(context.launches.length, 2);
     assert.deepEqual(context.launches[1].sessionAtLaunch, ref);

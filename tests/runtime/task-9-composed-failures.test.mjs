@@ -87,7 +87,11 @@ function providerBody(overrides = {}) {
       models: Object.fromEntries(
         OPENCODE_EXPLORER_MODEL_ROUTES
           .filter((route) => route.providerId === providerId)
-          .map((route) => [route.modelId, { id: route.modelId, providerID: route.providerId }])
+          .map((route) => [route.modelId, {
+            id: route.modelId,
+            providerID: route.providerId,
+            variants: { high: {} },
+          }])
       ),
     })),
     connected: providers,
@@ -171,6 +175,7 @@ function spawnArgs(overrides = {}) {
     message: "Name the module that owns the static Driver table.",
     harness: OPENCODE_HARNESS_ID,
     model: OPENCODE_EXPLORER_MODEL,
+    reasoning_effort: "high",
     topology: "leaf",
     write: false,
     ...overrides,
@@ -202,21 +207,6 @@ describe("Task 9.2 — route-time failures refuse through MCP without durable re
       name: "authentication",
       scenario: { auth: { username: SECRET_USERNAME, password: "a-different-password" } },
       expect: /not ready|no ready logical instance/i,
-    },
-    {
-      name: "an absent Explorer profile",
-      scenario: { agents: { status: 200, body: [] } },
-      expect: /no ready logical instance/i,
-    },
-    {
-      name: "a drifted profile permission policy",
-      scenario: {
-        agents: {
-          status: 200,
-          body: explorerAgentBody({ permission: [{ permission: "*", pattern: "*", action: "allow" }] }),
-        },
-      },
-      expect: /no ready logical instance/i,
     },
     {
       name: "a provider that does not serve the pinned model",
