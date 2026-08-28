@@ -42,6 +42,10 @@ Exactly one turn per Harness, with no retry:
 
 - Candidate commit `7f80766cd4a16dc14ba5319172d8d404ad2d6d5c` was fast-forwarded from
   `developer` to the canonical `main` checkout.
+- Identity-adoption commit `ed52a1b1708b954309efffdb319aa43052793728`
+  was also fast-forwarded to canonical `main` after the operator confirmed the
+  current HarnessDock data root is authoritative and no legacy recovery is
+  required.
 - Canonical `npm ci` passed and `npm run refresh:local` installed
   `0.22.0+codex.20260828070239` while retaining the two bounded predecessor
   discovery shells.
@@ -49,13 +53,20 @@ Exactly one turn per Harness, with no retry:
   configured OpenCode `openai/gpt-5.6-{luna,sol,terra}` variants and Pi
   `openai-codex/gpt-5.6-{luna,sol,terra}` thinking levels without a model call.
 - The promotion-only bootstrap integration gate then ran 20/20 with no skip.
-- `npm run doctor` passed checkout, installed parity, dependencies, MCP tools,
-  and fresh native-route discovery, but its overall result remained `FAIL`
-  because the existing HarnessDock data namespace has no accepted identity
-  cutover receipt.
+- The separate one-time adoption operation wrote
+  `/data/CoordExp/.codex/plugins/data/codex-harnessdock/operator/identity-adoption.json`
+  with mode `0600`. It records the current root as authoritative, the legacy
+  `cc` root and cutover backup boundary as absent, validated durable state, and
+  `legacy_data_recovery_required: false`; no data was moved or deleted.
+- Canonical `npm run refresh:local` restored the two bounded predecessor
+  discovery shells from their valid archive without changing the installed
+  `0.22.0+codex.20260828070239` version.
+- Final `npm run doctor`: pass, including identity adoption, installed parity,
+  compatibility coverage, MCP tools, and fresh native routes.
+- Final zero-model `npm run smoke:release`: pass with `zeroModelCost: true`.
+- Final `openspec validate discover-native-harness-routes --strict`: pass.
 
-Bounded inspection found no legacy `cc` root, no backup directory, no pending
-receipt, and no accepted receipt. No migration, rollback, receipt synthesis, or
-second live model smoke was attempted. OpenSpec tasks 5.3 and 5.5 remain
-unchecked until the unrelated identity-provenance gate is resolved or accepted
-as an explicit diagnostic exception.
+The Pi and OpenCode live receipts above remain the only paid smokes: exactly
+one turn per Harness, no retry, and no second model call after identity
+adoption. OpenSpec tasks 5.3 and 5.5 are therefore accepted without broadening
+the model-quality scope.
