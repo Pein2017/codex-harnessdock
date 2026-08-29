@@ -4,7 +4,6 @@
 
 Define redacted, read-only operator health and storage diagnostics without expanding the model-facing Agent API.
 ## Requirements
-
 ### Requirement: One operator doctor reports actionable health
 The checkout SHALL provide one Linux operator command that evaluates checkout identity, installed Plugin parity, required Node dependencies, Claude CLI availability and static compatibility, Claude authentication, the fixed config/proxy envelope, exactly seven MCP tools, and storage health. Each check SHALL return a stable identifier, bounded status, redacted summary, and actionable recovery when failed. The command SHALL NOT be exposed through Plugin Skills or MCP tools.
 
@@ -113,3 +112,18 @@ delete Plugin state.
 #### Scenario: Archive contains non-whitelisted content
 - **WHEN** a durable discovery archive contains a path outside the compatibility whitelist or a bootstrap that does not route exclusively to the canonical checkout
 - **THEN** doctor reports the archive invalid without opening or executing that content
+
+### Requirement: Doctor reports bounded fresh native-route discovery
+The read-only operator doctor SHALL report bounded, redacted current Pi and OpenCode discovery status, including route availability, discovery freshness, exact model-specific effort choices, OpenCode service readiness and managed/reused status, and closed Pi configuration or RPC failure reasons. Doctor SHALL NOT launch a model, start, stop, repair, or reconfigure a native Harness, acquire the OpenCode service ownership fence, expose endpoints, executable/configuration paths, credentials, plugins, MCP servers, tools, prompt templates, or arbitrary provider fields.
+
+#### Scenario: Managed or reused OpenCode is available
+- **WHEN** doctor can inspect a compatible fixed-origin Server without mutation
+- **THEN** it reports bounded service and route availability without claiming model liveness or changing ownership state
+
+#### Scenario: Pi configuration is missing
+- **WHEN** the canonical environment does not provide a valid `PI_CODING_AGENT_DIR`
+- **THEN** doctor reports the closed redacted missing-configuration reason instead of the catch-all `unknown`
+
+#### Scenario: Native route discovery fails
+- **WHEN** Pi RPC discovery or the current OpenCode service cannot prove a bounded route
+- **THEN** doctor returns an actionable redacted unavailable, ambiguous, drift, executable, or protocol result without repairing or changing configuration

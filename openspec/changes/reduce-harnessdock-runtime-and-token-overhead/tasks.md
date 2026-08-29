@@ -2,8 +2,8 @@
 
 - [x] 1.1 Record the current Linux process topology/PSS, actual eight-tool description characters, eight Skill bytes, Plugin default-prompt characters, and OpenCode v1 envelope overhead in an owner-only acceptance fixture/report; keep RSS and PSS distinct.
 - [x] 1.2 Capture and sanitize bounded real `opencode models --verbose` and credential-list diagnostic specimens under the operator's ordinary configuration, then freeze success, malformed, truncated, duplicate, timeout, and unavailable fixtures without a model request.
-- [ ] 1.3 Add consumer-facing falsification tests that fail on current eager MCP OpenCode startup, two-process bootstrap residency, missing active/unknown turn protection, 13,028-character tool guidance, and 789-character prompt overhead; demonstrate sensitivity at each stable seam before implementation.
-- [ ] 1.4 Run one disposable read-only Codex-host MCP restart probe. Record whether the same task transparently recovers trusted context and a later operation; stop without implementing MCP idle self-exit unless every contract fact is proven.
+- [x] 1.3 Add consumer-facing falsification tests that fail on current eager MCP OpenCode startup, two-process bootstrap residency, missing active/unknown turn protection, 13,028-character tool guidance, and 789-character prompt overhead; demonstrate sensitivity at each stable seam before implementation.
+- [x] 1.4 Run one disposable read-only Codex-host MCP restart probe. Record whether the same task transparently recovers trusted context and a later operation; stop without implementing MCP idle self-exit unless every contract fact is proven.
 
 ## 2. Collapse the MCP bootstrap process
 
@@ -38,7 +38,7 @@
 ## 6. Acceptance, release, and lifecycle ordering
 
 - [x] 6.1 Run all focused suites and `npm run check`; verify zero surviving test-owned service/supervisor processes and report process counts plus Linux PSS without treating aggregate RSS as unique memory.
-- [ ] 6.2 Bump the minor version and changelog, refresh/install the canonical Plugin, and run zero-model release smoke proving one-process MCP startup, dormant/live discovery, exact eight-tool/Skill contracts, context budgets, and no Harness model request.
-- [ ] 6.3 After zero-model gates pass, run at most one explicitly authorized `openai/gpt-5.6-luna` low-effort OpenCode turn with no automatic retry; report provider input, cache-read, cache-write, output, reasoning, and cost fields separately and verify the requested result.
+- [x] 6.2 Bump the minor version and changelog, refresh/install the canonical Plugin, and run zero-model release smoke proving one-process MCP startup, dormant/live discovery, exact eight-tool/Skill contracts, context budgets, and no Harness model request.
+- [x] 6.3 After zero-model gates pass, run at most one explicitly authorized `openai/gpt-5.6-luna` low-effort OpenCode turn with no automatic retry; report provider input, cache-read, cache-write, output, reasoning, and cost fields separately and verify the requested result.
 - [ ] 6.4 Start a fresh Codex task and verify the loaded installed Plugin can list dormant routes, cold-start OpenCode on demand, preserve Pi/Claude behavior, and expose the compact guidance; do not require old already-running tasks to shed their existing bootstrap child.
-- [ ] 6.5 Before archiving this change, obtain authorization to sync or archive completed predecessor `manage-local-opencode-service`, validate this delta against that resulting base, and stop without archive or push unless separately authorized.
+- [x] 6.5 Before archiving this change, obtain authorization to sync or archive completed predecessor `manage-local-opencode-service`, validate this delta against that resulting base, and stop without archive or push unless separately authorized.

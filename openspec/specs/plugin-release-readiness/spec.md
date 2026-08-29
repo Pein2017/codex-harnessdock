@@ -4,17 +4,20 @@
 
 Define zero-model-cost installed Plugin acceptance and the explicitly paid Haiku release extension.
 ## Requirements
-
 ### Requirement: Default release smoke costs no Claude model usage
-The checkout SHALL provide a release smoke that verifies the enabled current HarnessDock for Codex record, matching installed snapshot, exactly eight `$codex-harnessdock:*` Skills, an absolute canonical-checkout descriptor bootstrap, exactly eight `codex_harnessdock` MCP tools, and successful isolated `list_agents` and `list_harnesses` calls through the production isolated runtime path. Harness listing MAY report external instances unavailable and SHALL not contact a model. The smoke SHALL verify retained compatibility shells and known predecessor coverage as before and SHALL reject concurrent legacy `cc_for_pein` discovery. The default smoke SHALL NOT start a Codex, Claude, OpenCode, or provider model turn.
+The checkout SHALL provide a release smoke that verifies the enabled current HarnessDock record, matching installed snapshot, current Plugin minor version, exactly eight `$codex-harnessdock:*` Skills, an absolute canonical-checkout descriptor bootstrap, exactly eight `codex_harnessdock` MCP tools, and successful isolated `list_agents` and fresh `list_harnesses` calls through the production isolated runtime path. MCP bootstrap MAY ensure or reuse the fixed local OpenCode Server, but the smoke SHALL NOT start a Codex, Claude, Pi, OpenCode, or provider model turn. The smoke SHALL verify the current MCP generation, retained compatibility shells and known predecessor coverage, and SHALL reject concurrent legacy `cc_for_pein` discovery.
 
 #### Scenario: Matching installation is ready
 - **WHEN** the operator runs default release smoke after local refresh or versioned release
-- **THEN** it exercises the installed snapshot and MCP protocol successfully without model usage
+- **THEN** it exercises the installed snapshot, current generation, shared OpenCode service ensure/reuse, and MCP protocol successfully without model usage
 
 #### Scenario: OpenCode is not running
 - **WHEN** zero-cost smoke lists Harnesses
 - **THEN** it accepts a bounded unavailable OpenCode instance while still verifying the eight-tool contract and no model execution
+
+#### Scenario: OpenCode executable or service is unavailable
+- **WHEN** zero-model smoke cannot reuse or ensure a compatible fixed-origin Server
+- **THEN** it accepts the bounded unavailable OpenCode instance while still verifying the eight-tool contract and no model execution
 
 #### Scenario: Installed current snapshot is stale
 - **WHEN** installed current version or discovery content differs from the checkout

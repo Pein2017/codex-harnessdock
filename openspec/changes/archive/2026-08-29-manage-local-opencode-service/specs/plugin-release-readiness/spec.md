@@ -7,6 +7,10 @@ The checkout SHALL provide a release smoke that verifies the enabled current Har
 - **WHEN** the operator runs default release smoke after local refresh or versioned release
 - **THEN** it exercises the installed snapshot, current generation, shared OpenCode service ensure/reuse, and MCP protocol successfully without model usage
 
+#### Scenario: OpenCode is not running
+- **WHEN** zero-cost smoke lists Harnesses
+- **THEN** it accepts a bounded unavailable OpenCode instance while still verifying the eight-tool contract and no model execution
+
 #### Scenario: OpenCode executable or service is unavailable
 - **WHEN** zero-model smoke cannot reuse or ensure a compatible fixed-origin Server
 - **THEN** it accepts the bounded unavailable OpenCode instance while still verifying the eight-tool contract and no model execution

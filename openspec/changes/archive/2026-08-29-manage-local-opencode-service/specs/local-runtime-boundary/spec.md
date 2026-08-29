@@ -3,6 +3,10 @@
 ### Requirement: Each Driver owns a bounded environment view
 The shared runtime SHALL parse the one canonical environment file as data and provide each static Driver only its allowlisted keys. The Pi Driver SHALL receive `PI_CODING_AGENT_DIR`; the OpenCode integration SHALL receive `OPENCODE_EXECUTABLE` and `OPENCODE_SERVER_URL`. The runtime SHALL NOT source `.bashrc`, evaluate shell code, select a second dotenv file, expose these values through model-facing input, or persist arbitrary environment values as readiness evidence.
 
+#### Scenario: Two Drivers require different host settings
+- **WHEN** their static environment schemas differ
+- **THEN** each receives its admitted fixed values without changing the canonical environment-file owner or leaking the other Driver's private settings
+
 #### Scenario: Shell profile differs from fixed configuration
 - **WHEN** `/root/.bashrc` omits or conflicts with a Pi or OpenCode value present in the canonical environment file
 - **THEN** HarnessDock uses the canonical environment value without reading or sourcing the shell profile
@@ -14,6 +18,14 @@ The shared runtime SHALL parse the one canonical environment file as data and pr
 ### Requirement: OpenCode connection configuration is fixed and secret-safe
 The canonical runtime environment SHALL provide one checkout-owned loopback Server URL and one absolute OpenCode executable path. Optional official Basic-auth username/password variables SHALL be inherited only from the operator environment, admitted through an exact secret allowlist, and omitted from the tracked environment file and all receipts. The Driver SHALL use the executable only to ensure `opencode serve` on the fixed loopback origin and SHALL construct bounded authenticated SDK requests with explicit deadlines and no loopback proxy routing.
 
+#### Scenario: Model-facing endpoint is supplied
+- **WHEN** spawn, follow-up, or any other tool includes an endpoint, username, password, token, directory override, timeout bypass, or SDK option
+- **THEN** strict validation rejects it before connection or state mutation
+
+#### Scenario: Request exceeds its deadline
+- **WHEN** health, discovery, session, message, or prompt-admission observation exceeds the Driver-owned bound
+- **THEN** the request aborts with a sanitized retryability classification and never becomes a silent infinite wait
+
 #### Scenario: Configured executable is invalid
 - **WHEN** the fixed executable path is missing, non-absolute, or not executable
 - **THEN** OpenCode readiness fails with a bounded redacted reason before process launch
@@ -24,6 +36,10 @@ The canonical runtime environment SHALL provide one checkout-owned loopback Serv
 
 ### Requirement: OpenCode CLI remains diagnostic only
 Production Agent lifecycle MAY invoke exactly the configured `opencode serve` command to ensure the shared fixed-origin service. It SHALL NOT invoke or parse `opencode models`, `opencode run`, TUI output, model-event stdout, or any other CLI command as a production route, turn, result, or readiness source. Provider discovery, session creation, messages, and results SHALL remain on the pinned SDK boundary.
+
+#### Scenario: CLI is absent but Server is reachable
+- **WHEN** the pinned SDK can validate the configured Server and route
+- **THEN** Driver readiness may succeed without a local `opencode` executable in the Plugin process environment
 
 #### Scenario: Managed service is started
 - **WHEN** the fixed Server is absent and the configured executable is valid
@@ -45,4 +61,3 @@ HarnessDock SHALL serialize service ensure across processes with owner-only Plug
 #### Scenario: Started process fails readiness
 - **WHEN** the exact child started by the current contender exits or cannot become healthy within the bounded startup deadline
 - **THEN** the contender reports a bounded failure and may terminate only that exact proven child
-

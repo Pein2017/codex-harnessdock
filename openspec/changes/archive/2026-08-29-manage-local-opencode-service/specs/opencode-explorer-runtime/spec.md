@@ -3,6 +3,14 @@
 ### Requirement: OpenCode attaches only to an operator-owned loopback Server
 The OpenCode Driver SHALL use one fixed-origin loopback OpenCode Server shared by concurrent HarnessDock MCP processes. Before MCP readiness and immediately before OpenCode spawn, the Plugin SHALL reuse a healthy compatible Server or ensure one Server from the allowlisted executable under a cross-process ownership fence. It SHALL omit an agent selector so the Server retains its native configuration, and SHALL NOT install OpenCode, perform login, use `--pure`, reconfigure provider state, bind non-loopback, call a model during readiness, or kill a process it cannot prove it owns. `list_harnesses` SHALL only inspect the resulting state and SHALL NOT start or repair the Server.
 
+#### Scenario: Server is ready
+- **WHEN** the fixed loopback Server is healthy and exposes the accepted client contract, Explorer profile, and exact model route for the current workspace
+- **THEN** readiness reports one experimental logical instance with `liveValidated: true` and no model request
+
+#### Scenario: Server is unavailable or non-loopback
+- **WHEN** the endpoint cannot be reached, fails authentication, or resolves outside loopback
+- **THEN** only the OpenCode logical instance is unavailable and no Plugin action starts, repairs, or reconfigures it
+
 #### Scenario: Healthy Server is reused
 - **WHEN** the fixed loopback endpoint already exposes compatible health and provider discovery
 - **THEN** readiness reuses it without starting a duplicate process or requiring ownership
@@ -18,4 +26,3 @@ The OpenCode Driver SHALL use one fixed-origin loopback OpenCode Server shared b
 #### Scenario: Server stops before spawn
 - **WHEN** a previously managed Server is absent immediately before an OpenCode spawn
 - **THEN** the Plugin re-ensures one shared Server before fresh route validation without starting a model turn
-

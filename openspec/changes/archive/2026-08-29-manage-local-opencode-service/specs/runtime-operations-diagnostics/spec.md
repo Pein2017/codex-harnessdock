@@ -1,4 +1,4 @@
-## MODIFIED Requirements
+## ADDED Requirements
 
 ### Requirement: Doctor reports bounded fresh native-route discovery
 The read-only operator doctor SHALL report bounded, redacted current Pi and OpenCode discovery status, including route availability, discovery freshness, exact model-specific effort choices, OpenCode service readiness and managed/reused status, and closed Pi configuration or RPC failure reasons. Doctor SHALL NOT launch a model, start, stop, repair, or reconfigure a native Harness, acquire the OpenCode service ownership fence, expose endpoints, executable/configuration paths, credentials, plugins, MCP servers, tools, prompt templates, or arbitrary provider fields.
@@ -14,4 +14,3 @@ The read-only operator doctor SHALL report bounded, redacted current Pi and Open
 #### Scenario: Native route discovery fails
 - **WHEN** Pi RPC discovery or the current OpenCode service cannot prove a bounded route
 - **THEN** doctor returns an actionable redacted unavailable, ambiguous, drift, executable, or protocol result without repairing or changing configuration
-
