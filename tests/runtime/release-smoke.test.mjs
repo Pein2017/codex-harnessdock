@@ -6,6 +6,7 @@ import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import {
+  assessNativeHarnessDifferentialParity,
   assertNoLeakedConfiguration,
   isClaudeSubscriptionLimit,
   probeInstalledMcp,
@@ -153,6 +154,32 @@ function productionWitnessDriver(runAttempt) {
 }
 
 describe("release smoke", () => {
+  it("reports a supplied differential matrix as non-promotable without changing default smoke behavior", async () => {
+    const fixture = matchingSnapshot();
+    const differentialParityReceipt = JSON.parse(fs.readFileSync(
+      path.join(SOURCE_ROOT, "tests", "runtime", "fixtures", "native-parity", "native-harness-differential-parity.receipt.json"),
+      "utf8",
+    ));
+    const assessment = assessNativeHarnessDifferentialParity(differentialParityReceipt);
+    assert.equal(assessment.status, "fail");
+    assert.equal(assessment.promotionEligible, false);
+    const report = await runReleaseSmoke({
+      installed: fixture.installed,
+      differentialParityReceipt,
+      probeMcp: async () => ({
+        healthy: true,
+        tools: [...HARNESSDOCK_MCP_TOOL_NAMES],
+        agentCount: 0,
+        harnessCount: ADMITTED_GENERATION_HARNESS_IDS.length,
+        paid: { requested: false, status: "skipped" },
+      }),
+    });
+    assert.equal(report.status, "fail");
+    assert.equal(report.promotionEligible, false);
+    assert.deepEqual(report.differentialParity.counts, { pass: 27, fail: 2, hold: 3, not_applicable: 7 });
+    assert.equal(report.differentialParity.blockers.length, 5);
+  });
+
   it("validates matching installed Skills and MCP evidence without paid usage by default", async () => {
     const fixture = matchingSnapshot();
     let probeOptions;

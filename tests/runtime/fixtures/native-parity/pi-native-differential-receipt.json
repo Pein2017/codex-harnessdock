@@ -71,7 +71,7 @@
       "mode": "zero-model deterministic fake native",
       "comparator": "executed independent behavioral comparison",
       "result": "pass",
-      "artifactDigest": "sha256:8a8f8e8c2f5510d83b92a4facf4926cc8ff681fd0cdc0723b8bf18eacbce4396"
+      "artifactDigest": "sha256:4271e1e663bf7484d63c9e7c50390abf0cfa36bd513fdfaad71c43a42a219f2d"
     },
     {
       "dimension": "terminal_classification",
@@ -116,6 +116,8 @@
       "mode": "capability-derived",
       "comparator": "executed capability-derived unavailability check",
       "result": "not_applicable",
+      "capability": "turnObservation",
+      "observed": "unavailable",
       "artifactDigest": "sha256:ec833b19d159ba681e50bda3b3397116bad0053bb383e42149b8ac22a17a580f"
     },
     {
@@ -125,6 +127,8 @@
       "mode": "capability-derived",
       "comparator": "executed capability-derived unavailability check",
       "result": "not_applicable",
+      "capability": "automaticRecovery",
+      "observed": "none",
       "artifactDigest": "sha256:30a0924a3360be687d1df9fcbbfdff62c01bc0fd14036ab9076cf7f451568666"
     }
   ]

@@ -130,7 +130,7 @@ function row(dimension, direct, harnessdock, comparator, sources = {}) {
     artifactDigest: digest({ direct, harnessdock }),
   };
 }
-function unavailable(dimension, value, comparator) {
+function unavailable(dimension, capability, observed, comparator) {
   comparator();
   return {
     dimension,
@@ -139,7 +139,9 @@ function unavailable(dimension, value, comparator) {
     mode: "capability-derived",
     comparator: "executed capability-derived unavailability check",
     result: "not_applicable",
-    artifactDigest: digest(value),
+    capability,
+    observed,
+    artifactDigest: digest(observed),
   };
 }
 function nativeTurnStop(events) { return events.find((event) => event.type === "message_end")?.message?.stopReason ?? null; }
@@ -226,13 +228,13 @@ async function evidence() {
       row("prompt_authority_native_input", readAuthorityCapture, writeAuthorityCapture, () => { parityEqual("read/write argv, environment, config, transport, and controls", readAuthorityCapture, writeAuthorityCapture); assert.notEqual(authorityStatement(promptRecord(readRecord).message), authorityStatement(promptRecord(writeRecord).message)); }, { directSource: "Pi Driver behavioral_read_only native capture", harnessdockSource: "Pi Driver behavioral_write native capture" }),
       row("ordered_events", eventTypes(directRead.events), eventTypes(readRecord), () => parityEqual("native event order", eventTypes(directRead.events), eventTypes(readRecord))),
       row("interrupt_request_behavior", { events: eventTypes(directAbort.events), accepted: directAbort.abort.success }, { events: eventTypes(interruptRecord), receipt: interruptReceipt, status: interruptResult.status }, () => { parityEqual("interrupt events", eventTypes(directAbort.events), eventTypes(interruptRecord)); assert.equal(directAbort.abort.success, true); assert.deepEqual(interruptReceipt, { commandId: "interrupt-1", requestState: "accepted", nativeTurnState: "active", settlement: "pending" }); assert.equal(interruptResult.status, "interrupted"); }),
-      row("exact_session_continuation", { session: directSession, turnIds: nativeHistory(directContinuation.afterEntries.entries) }, { sameSession: second.live.nativeSessionRef.locator.sessionId === first.live.nativeSessionRef.locator.sessionId, distinctDriverTurns: second.live.nativeTurnRef.locator.turnId !== first.live.nativeTurnRef.locator.turnId, turnIds: history.messages.map((message) => message.messageId) }, () => { assert.equal(second.live.nativeSessionRef.locator.sessionId, first.live.nativeSessionRef.locator.sessionId); assert.notEqual(second.live.nativeTurnRef.locator.turnId, first.live.nativeTurnRef.locator.turnId); parityEqual("continuation native turn identities", nativeHistory(directContinuation.afterEntries.entries), history.messages.map((message) => message.messageId)); }),
+      row("exact_session_continuation", { session: directSession, providerNativeHistoryIds: nativeHistory(directContinuation.afterEntries.entries) }, { sameNativeSession: second.live.nativeSessionRef.locator.sessionId === first.live.nativeSessionRef.locator.sessionId, providerNativeHistoryIds: history.messages.map((message) => message.messageId) }, () => { assert.equal(second.live.nativeSessionRef.locator.sessionId, first.live.nativeSessionRef.locator.sessionId); assert.equal(new Set(history.messages.map((message) => message.messageId)).size, 2); parityEqual("continuation native turn identities", nativeHistory(directContinuation.afterEntries.entries), history.messages.map((message) => message.messageId)); }),
       row("terminal_classification", nativeTurnStop(directRead.events), { status: read.result.status, stopReason: read.result.resultMetadata.stopReason, receipt: read.result.driverReceipt.receipt.outcome }, () => { assert.equal(nativeTurnStop(directRead.events), "stop"); assert.deepEqual({ status: read.result.status, stopReason: read.result.resultMetadata.stopReason, receipt: read.result.driverReceipt.receipt.outcome }, { status: "completed", stopReason: "stop", receipt: "message_end" }); }),
       row("route_drift", directCatalog.models, "driver rejected changed exact native catalog before prompt", () => { assert.ok(directCatalog.models.includes(MODEL)); assert.equal(routeDriftRejected, true); }),
       row("native_usage_source_fields", directUsage, driverUsage, () => parityEqual("provider usage fields", directUsage, driverUsage)),
       row("lifecycle_process_cleanup", directLifecycle, harnessLifecycle, () => { assert.ok(directLifecycle.every(Boolean)); assert.ok(harnessLifecycle.every(Boolean)); assertAllClosed(current); }),
-      unavailable("cross_process_turn_observation_or_reconciliation", inventory.routes.turnObservation, () => { assert.equal(inventory.routes.turnObservation, "unavailable"); assert.equal(typeof inventoryHarness.driver.observeTurn, "undefined"); }),
-      unavailable("automatic_recovery_exact_session_transport", inventory.routes.automaticRecovery, () => assert.equal(inventory.routes.automaticRecovery, "none")),
+      unavailable("cross_process_turn_observation_or_reconciliation", "turnObservation", inventory.routes.turnObservation, () => { assert.equal(inventory.routes.turnObservation, "unavailable"); assert.equal(typeof inventoryHarness.driver.observeTurn, "undefined"); }),
+      unavailable("automatic_recovery_exact_session_transport", "automaticRecovery", inventory.routes.automaticRecovery, () => assert.equal(inventory.routes.automaticRecovery, "none")),
     ];
     for (const entry of rows.filter((item) => item.result === "pass")) {
       assert.match(entry.artifactDigest, /^sha256:[0-9a-f]{64}$/);
