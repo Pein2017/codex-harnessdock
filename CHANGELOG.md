@@ -6,7 +6,8 @@
   the Linux `/proc/net/tcp6` `remote_address` header, and check pre-existing
   peers before the reaper's own health request so an owned one-hour-idle Server
   can terminate without weakening lease, socket, or identity guards. Admit the
-  dormant OpenCode discovery detail through the public Harness contract.
+  dormant OpenCode discovery detail through the public Harness contract and
+  carry the operator-owned XDG roots into shell-independent native discovery.
 
 ## 0.24.0 - 2026-08-29
 

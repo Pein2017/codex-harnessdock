@@ -144,6 +144,10 @@ describe("runtime environment", () => {
       "PI_CODING_AGENT_DIR=/selected/pi",
       "OPENCODE_EXECUTABLE=/selected/opencode",
       "OPENCODE_SERVER_URL=http://127.0.0.1:4096",
+      "XDG_CONFIG_HOME=/selected/config",
+      "XDG_DATA_HOME=/selected/data",
+      "XDG_CACHE_HOME=/selected/cache",
+      "XDG_STATE_HOME=/selected/state",
       "",
     ].join("\n"));
     const result = resolveRuntimeEnvironment({
@@ -158,6 +162,10 @@ describe("runtime environment", () => {
     assert.equal(result.env.PI_CODING_AGENT_DIR, "/selected/pi");
     assert.equal(result.env.OPENCODE_EXECUTABLE, "/selected/opencode");
     assert.equal(result.env.OPENCODE_SERVER_URL, "http://127.0.0.1:4096");
+    assert.equal(result.env.XDG_CONFIG_HOME, "/selected/config");
+    assert.equal(result.env.XDG_DATA_HOME, "/selected/data");
+    assert.equal(result.env.XDG_CACHE_HOME, "/selected/cache");
+    assert.equal(result.env.XDG_STATE_HOME, "/selected/state");
     assert.equal(JSON.stringify(result.receipt).includes("/selected/opencode"), false);
   });
 
