@@ -1,0 +1,125 @@
+{
+  "schemaVersion": "pi-native-differential-v1",
+  "harness": "pi",
+  "driverVersion": "pi@2",
+  "capabilitySchemaVersion": 3,
+  "rows": [
+    {
+      "dimension": "exact_model_per_model_effort_inventory",
+      "directSource": "manual Pi JSONL client",
+      "harnessdockSource": "Pi Driver receipt and native invocation capture",
+      "mode": "zero-model deterministic fake native",
+      "comparator": "executed independent behavioral comparison",
+      "result": "pass",
+      "artifactDigest": "sha256:2cfee9ad1f8950e863a4ba48fed33f5818060d4f56416d19ccc437bbc3abc13a"
+    },
+    {
+      "dimension": "argv_environment",
+      "directSource": "manual Pi JSONL client",
+      "harnessdockSource": "Pi Driver receipt and native invocation capture",
+      "mode": "zero-model deterministic fake native",
+      "comparator": "executed independent behavioral comparison",
+      "result": "pass",
+      "artifactDigest": "sha256:c749643e32bf2f28f89459b2f867d090cc512f3a29b5639fd66f8d9d46fadfa4"
+    },
+    {
+      "dimension": "configuration_inheritance_witness",
+      "directSource": "manual Pi JSONL client",
+      "harnessdockSource": "Pi Driver receipt and native invocation capture",
+      "mode": "zero-model deterministic fake native",
+      "comparator": "executed independent behavioral comparison",
+      "result": "pass",
+      "artifactDigest": "sha256:7857037aeca0cfbd9e157ad528cf002c458c170ea14e6e1f466685cecc57edf8"
+    },
+    {
+      "dimension": "prompt_authority_native_input",
+      "directSource": "manual Pi JSONL client",
+      "harnessdockSource": "Pi Driver receipt and native invocation capture",
+      "mode": "zero-model deterministic fake native",
+      "comparator": "executed independent behavioral comparison",
+      "result": "pass",
+      "artifactDigest": "sha256:7b7a7ace6b3bb8430b2a2f5b7240135218824ffdc407fcac8cbe541e0443b4db"
+    },
+    {
+      "dimension": "ordered_events",
+      "directSource": "manual Pi JSONL client",
+      "harnessdockSource": "Pi Driver receipt and native invocation capture",
+      "mode": "zero-model deterministic fake native",
+      "comparator": "executed independent behavioral comparison",
+      "result": "pass",
+      "artifactDigest": "sha256:3bd86eca26bcc81cb0beff57f36db922c6ac96e7f02c3aef2cd1cc7a635a2572"
+    },
+    {
+      "dimension": "interrupt_request_behavior",
+      "directSource": "manual Pi JSONL client",
+      "harnessdockSource": "Pi Driver receipt and native invocation capture",
+      "mode": "zero-model deterministic fake native",
+      "comparator": "executed independent behavioral comparison",
+      "result": "pass",
+      "artifactDigest": "sha256:fdab8c28f83353501f843182182990095af78d649d80762fa9bc36437064937c"
+    },
+    {
+      "dimension": "exact_session_continuation",
+      "directSource": "manual Pi JSONL client",
+      "harnessdockSource": "Pi Driver receipt and native invocation capture",
+      "mode": "zero-model deterministic fake native",
+      "comparator": "executed independent behavioral comparison",
+      "result": "pass",
+      "artifactDigest": "sha256:8a8f8e8c2f5510d83b92a4facf4926cc8ff681fd0cdc0723b8bf18eacbce4396"
+    },
+    {
+      "dimension": "terminal_classification",
+      "directSource": "manual Pi JSONL client",
+      "harnessdockSource": "Pi Driver receipt and native invocation capture",
+      "mode": "zero-model deterministic fake native",
+      "comparator": "executed independent behavioral comparison",
+      "result": "pass",
+      "artifactDigest": "sha256:febea5e496d0ef137047b21a4698e4942abee2dc7a328f431b26b40d2683c514"
+    },
+    {
+      "dimension": "route_drift",
+      "directSource": "manual Pi JSONL client",
+      "harnessdockSource": "Pi Driver receipt and native invocation capture",
+      "mode": "zero-model deterministic fake native",
+      "comparator": "executed independent behavioral comparison",
+      "result": "pass",
+      "artifactDigest": "sha256:5ec5ee9adade96209dce2128df5841b6cc0505c200966e15aff7ee9c0276aff7"
+    },
+    {
+      "dimension": "native_usage_source_fields",
+      "directSource": "manual Pi JSONL client",
+      "harnessdockSource": "Pi Driver receipt and native invocation capture",
+      "mode": "zero-model deterministic fake native",
+      "comparator": "executed independent behavioral comparison",
+      "result": "pass",
+      "artifactDigest": "sha256:189ccd976e55aa17d790ab7a42cd17888e3bd402202f5dc2aedd1272db2dac4a"
+    },
+    {
+      "dimension": "lifecycle_process_cleanup",
+      "directSource": "manual Pi JSONL client",
+      "harnessdockSource": "Pi Driver receipt and native invocation capture",
+      "mode": "zero-model deterministic fake native",
+      "comparator": "executed independent behavioral comparison",
+      "result": "pass",
+      "artifactDigest": "sha256:720ac0fc2c777b02d0fc7646de0713c35867478f595b96d13c0343c1259c7ea9"
+    },
+    {
+      "dimension": "cross_process_turn_observation_or_reconciliation",
+      "directSource": "accepted Pi capability snapshot",
+      "harnessdockSource": "Pi Driver inspection receipt",
+      "mode": "capability-derived",
+      "comparator": "executed capability-derived unavailability check",
+      "result": "not_applicable",
+      "artifactDigest": "sha256:ec833b19d159ba681e50bda3b3397116bad0053bb383e42149b8ac22a17a580f"
+    },
+    {
+      "dimension": "automatic_recovery_exact_session_transport",
+      "directSource": "accepted Pi capability snapshot",
+      "harnessdockSource": "Pi Driver inspection receipt",
+      "mode": "capability-derived",
+      "comparator": "executed capability-derived unavailability check",
+      "result": "not_applicable",
+      "artifactDigest": "sha256:30a0924a3360be687d1df9fcbbfdff62c01bc0fd14036ab9076cf7f451568666"
+    }
+  ]
+}
