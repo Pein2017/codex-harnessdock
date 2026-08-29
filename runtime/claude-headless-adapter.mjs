@@ -127,7 +127,6 @@ export const CLAUDE_NATIVE_ROUTE_PROBE_MAX_EFFORTS = 8;
 export const CLAUDE_NATIVE_ROUTE_PROBE_TIMEOUT_MS = 10_000;
 const CLAUDE_NATIVE_ROUTE_PROBE_MAX_LINE_BYTES = 16 * 1024;
 const CLAUDE_NATIVE_ROUTE_PROBE_CLEANUP_WAIT_MS = 1_000;
-const NATIVE_MODEL_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 // The native-team witness is intentionally process-local, but it still ingests
 // provider-supplied identities. Bound those identities before they can enter
 // the member map or reach the optional callback.
@@ -1563,7 +1562,7 @@ function classifyNativeProbeModelRows(value) {
     let invalidEffort = false;
     for (const effortValue of row.supportedEffortLevels) {
       const effort = exactNativeProbeText(effortValue, 16);
-      if (!effort || !NATIVE_MODEL_EFFORTS.has(effort) || seenEfforts.has(effort)) {
+      if (!effort || seenEfforts.has(effort)) {
         invalidEffort = true;
         break;
       }
@@ -1730,6 +1729,12 @@ export async function runClaudeNativeRouteProbe(cwd, options = {}) {
       return;
     }
     if (event.type === "system") {
+      if (
+        !initObserved
+        && ["hook_started", "hook_progress", "hook_response"].includes(event.subtype)
+      ) {
+        return;
+      }
       if (event.subtype !== "init" || initObserved || nativeProbeVersionClass(event.claude_code_version) == null) {
         rejectProtocol("malformed_initialization");
         return;

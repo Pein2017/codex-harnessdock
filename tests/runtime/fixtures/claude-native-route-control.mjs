@@ -9,7 +9,12 @@ function write(event) {
   process.stdout.write(`${JSON.stringify(event)}\n`);
 }
 
-function response(requestId, models) {
+function response(requestId, models, hooks = false) {
+  if (hooks) {
+    write({ type: "system", subtype: "hook_started" });
+    write({ type: "system", subtype: "hook_progress" });
+    write({ type: "system", subtype: "hook_response" });
+  }
   write({ type: "system", subtype: "init", claude_code_version: "2.1.250" });
   write({
     type: "control_response",
@@ -62,6 +67,10 @@ process.stdin.on("end", () => {
     response("wrong-request", [completeRow()]);
     return;
   }
+  if (mode === "unknown-system") {
+    write({ type: "system", subtype: "hook_unrecognized" });
+    return;
+  }
   if (mode === "user" || mode === "assistant" || mode === "result") {
     write({ type: "system", subtype: "init", claude_code_version: "2.1.250" });
     write({ type: mode });
@@ -92,6 +101,7 @@ process.stdin.on("end", () => {
       completeRow({ value: "context-1m", resolvedModel: "claude-test-1" }),
     ],
     candidate: [completeRow()],
+    "hook-lifecycle": [completeRow({ supportedEffortLevels: ["opaque-effort-v1"] })],
     default: [completeRow({ value: "default", resolvedModel: "claude-test-1" })],
     alias: [completeRow({ value: "sonnet", resolvedModel: "claude-test-1" })],
     mismatch: [completeRow({ resolvedModel: "claude-other-1" })],
@@ -104,5 +114,5 @@ process.stdin.on("end", () => {
     return;
   }
   process.stderr.write(secret);
-  response(requestId, rows);
+  response(requestId, rows, mode === "hook-lifecycle");
 });

@@ -74,6 +74,18 @@ describe("Claude native route zero-prompt probe", () => {
     assert.equal(durable.includes("claude-native-route-control.mjs"), false);
   });
 
+  it("allows only the observed pre-init hook lifecycle and preserves opaque effort atoms", async () => {
+    const receipt = await fixtureProbe("hook-lifecycle").run();
+
+    assert.equal(receipt.result, "candidate");
+    assert.deepEqual(receipt.candidates, [{ value: "claude-test-1", efforts: ["opaque-effort-v1"] }]);
+    assert.equal(receipt.counts.frames, 5);
+    assert.deepEqual(
+      [receipt.noUserPrompt, receipt.noAcceptedTurn, receipt.noGeneration, receipt.noSessionContinuation, receipt.noModelRequest, receipt.processCleaned],
+      [true, true, true, true, true, true],
+    );
+  });
+
   it("does not turn fake parser evidence into Claude route admission", async () => {
     const receipt = await fixtureProbe("candidate").run();
     assert.equal(receipt.result, "candidate");
@@ -107,6 +119,7 @@ describe("Claude native route zero-prompt probe", () => {
     ["result", "forbidden_result_event"],
     ["model-request", "forbidden_model_request"],
     ["continuation", "forbidden_session_continuation"],
+    ["unknown-system", "malformed_initialization"],
   ]) {
     it(`rejects ${mode} native output`, async () => {
       const receipt = await fixtureProbe(mode).run();
