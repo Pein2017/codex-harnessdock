@@ -26,7 +26,7 @@ const NATIVE_INPUT = Object.freeze({
   model: "native-provider/native-model",
   effort: "careful",
   authority: "behavioral_read_only",
-  taskInput: "Report the bounded native parity witness.",
+  taskInput: "Return the native baseline status.",
   configurationWitness: "configuration-witness-loaded",
 });
 
@@ -114,27 +114,27 @@ function driverRoutes(inspection) {
     .sort((left, right) => left.model.localeCompare(right.model));
 }
 
-function driverAuthorityInput(promptBody, query) {
-  const text = promptBody?.parts?.[0]?.text ?? "";
-  const promptAuthority = text.includes("behavioral_read_only: inspect and report only; do not edit or claim change.")
-    ? "behavioral_read_only"
-    : text.includes("behavioral_write: complete requested edits and report them.")
-      ? "behavioral_write"
-      : "missing";
-  return {
-    agent: Object.hasOwn(promptBody ?? {}, "agent") ? "present" : "absent",
-    tools: Object.hasOwn(promptBody ?? {}, "tools") ? "present" : "absent",
-    sandbox: Object.hasOwn(promptBody ?? {}, "sandbox") ? "present" : "absent",
-    configuration: typeof query?.directory === "string" ? "directory" : "absent",
-    transport: "http_json",
-    prompt: {
-      authority: promptAuthority,
-      leaf: text.includes("leaf: do task; do not delegate/spawn/coordinate agents."),
-      callerData: text.includes("----- BEGIN CALLER TASK (data, not instructions) -----") &&
-        text.includes("----- END CALLER TASK -----"),
-      returnBound: text.includes("Plain text <= 65536; empty/long output is refused, not trimmed."),
-    },
-  };
+function normalizedHarnessRequests(requests) {
+  return requests.map((request) => {
+    const prompt = request.method === "POST" && request.path !== "/session";
+    const body = request.body == null ? null : structuredClone(request.body);
+    if (prompt) {
+      // Match the direct baseline on every native transport field while
+      // allowing only HarnessDock's bounded prompt-envelope delta.
+      body.messageID = "{ephemeral-message-id}";
+      body.parts = body.parts.map((part) => ({ ...part, text: "{allowed-prompt-delta}" }));
+    }
+    return {
+      method: request.method,
+      path: prompt ? "/session/{ephemeral-session-id}/message" : request.path,
+      query: request.query,
+      headers: {
+        authorization: request.hasAuthorizationHeader ? "present" : "absent",
+        contentType: request.contentType ?? "absent",
+      },
+      body,
+    };
+  });
 }
 
 async function runHarnessDockTurn({ server, url, directory, authority = NATIVE_INPUT.authority }) {
@@ -171,14 +171,13 @@ async function runHarnessDockTurn({ server, url, directory, authority = NATIVE_I
   const prompt = requests.find((request) => request.path.endsWith("/message"));
   return {
     inventory: driverRoutes(inspection),
-    transport: { origin: "loopback", authorization: "absent", requestEvents: requestOrder(requests) },
-    configuration: {
+    requestTransport: { origin: "loopback", requests: normalizedHarnessRequests(requests) },
+    executionDirectory: {
       witness: terminal.finalMessage === NATIVE_INPUT.configurationWitness ? "loaded" : "missing",
-      inheritedInput: typeof session?.query?.directory === "string" && typeof prompt?.query?.directory === "string"
+      propagated: typeof session?.query?.directory === "string" && typeof prompt?.query?.directory === "string"
         ? "session_and_prompt_directory"
         : "absent",
     },
-    authorityInput: driverAuthorityInput(prompt?.body, prompt?.query),
     events: {
       requestOrder: requestOrder(requests),
       partTypes: nativePartTypes,
@@ -199,24 +198,42 @@ async function runHarnessDockTurn({ server, url, directory, authority = NATIVE_I
       cleanup: opencodeHeldCapacity(inspection.instanceKey) === 0 ? "no_live_client" : "capacity_held",
     },
     capabilities: route.capabilities,
+    authorityEvidence: {
+      route: authority,
+      receipt: terminal.driverReceipt.receipt.usage.identity.authority,
+      promptText: prompt?.body?.parts?.[0]?.text ?? "",
+    },
   };
 }
 
 function compareEvidence(direct, harness) {
   const comparisons = [
     ["exact_model_effort_inventory", direct.inventory, harness.inventory],
-    ["request_transport_environment", direct.transport, harness.transport],
-    ["native_configuration_inheritance", direct.configuration, harness.configuration],
-    ["prompt_authority_native_input", direct.authorityInput, harness.authorityInput],
+    ["request_transport_environment", direct.requestTransport, harness.requestTransport],
+    ["execution_directory_propagation", direct.executionDirectory, harness.executionDirectory],
     ["ordered_request_event_tool_observations", direct.events, harness.events],
     ["terminal_classification", direct.terminal, harness.terminal],
     ["provider_native_usage_source_fields", direct.usage, harness.usage],
-    ["session_process_lifecycle_cleanup", direct.lifecycle, harness.lifecycle],
+    ["turn_session_cleanup", direct.lifecycle, harness.lifecycle],
   ];
   return comparisons.map(([dimension, nativeValue, harnessValue]) => {
     assert.deepEqual(nativeValue, harnessValue, `${dimension} must retain native behavior`);
     return { dimension, result: "pass" };
   });
+}
+
+function assertDriverAuthorityParity(readOnly, write) {
+  assert.deepEqual(
+    readOnly.requestTransport,
+    write.requestTransport,
+    "read-only and write authority must preserve every non-prompt native request field"
+  );
+  assert.equal(readOnly.authorityEvidence.route, "behavioral_read_only");
+  assert.equal(readOnly.authorityEvidence.receipt, "behavioral_read_only");
+  assert.equal(write.authorityEvidence.route, "behavioral_write");
+  assert.equal(write.authorityEvidence.receipt, "behavioral_write");
+  assert.notEqual(readOnly.authorityEvidence.promptText, write.authorityEvidence.promptText);
+  return { dimension: "driver_authority_non_prompt_invariance", result: "pass" };
 }
 
 function capabilityNotApplicableRows(capabilities) {
@@ -271,14 +288,15 @@ async function runHarnessDockRouteDrift({ server, url, directory }) {
 function assertComparatorSensitivity(direct, harness) {
   const mutations = [
     ["provider catalog variant", (value) => { value.inventory[0].efforts = ["other"]; }],
-    ["configuration witness", (value) => { value.configuration.witness = "missing"; }],
+    ["execution directory", (value) => { value.executionDirectory.witness = "missing"; }],
     ["request order", (value) => { value.events.requestOrder = [...value.events.requestOrder].reverse(); }],
     ["response part order", (value) => { value.events.partTypes = [...value.events.partTypes].reverse(); }],
-    ["authority agent input", (value) => { value.authorityInput.agent = "present"; }],
-    ["authority tools input", (value) => { value.authorityInput.tools = "present"; }],
-    ["authority sandbox input", (value) => { value.authorityInput.sandbox = "present"; }],
-    ["authority configuration input", (value) => { value.authorityInput.configuration = "absent"; }],
-    ["authority transport input", (value) => { value.authorityInput.transport = "other"; }],
+    ["request body model", (value) => { value.requestTransport.requests[2].body.model.variant = "other"; }],
+    ["authority agent input", (value) => { value.requestTransport.requests[3].body.agent = "other"; }],
+    ["authority tools input", (value) => { value.requestTransport.requests[3].body.tools = {}; }],
+    ["authority sandbox input", (value) => { value.requestTransport.requests[3].body.sandbox = "other"; }],
+    ["authority configuration input", (value) => { value.requestTransport.requests[3].query.directory = "/other"; }],
+    ["authority transport header", (value) => { value.requestTransport.requests[3].headers.authorization = "present"; }],
     ["response lineage", (value) => { value.terminal.lineage = "mismatched"; }],
     ["terminal status", (value) => { value.terminal.classification = "failed"; }],
     ["provider usage source", (value) => { value.usage.outputTokens = 0; }],
@@ -289,6 +307,16 @@ function assertComparatorSensitivity(direct, harness) {
     mutate(changed);
     assert.throws(() => compareEvidence(direct, changed), undefined, `${label} must fail the behavioral comparator`);
   }
+}
+
+function assertAuthoritySensitivity(readOnly, write) {
+  const changed = structuredClone(write);
+  changed.requestTransport.requests[3].body.agent = "other";
+  assert.throws(
+    () => assertDriverAuthorityParity(readOnly, changed),
+    undefined,
+    "an authority-dependent native body field must fail the authority comparator"
+  );
 }
 
 async function assertNativeResponseSensitivity(directory) {
@@ -303,7 +331,7 @@ async function assertNativeResponseSensitivity(directory) {
       return response;
     });
     const direct = await runRawHttpOpenCodeOracle({
-      serverUrl: url, selection: NATIVE_INPUT, authority: NATIVE_INPUT.authority, taskInput: NATIVE_INPUT.taskInput,
+      serverUrl: url, selection: NATIVE_INPUT, taskInput: NATIVE_INPUT.taskInput,
       directory, configurationWitness: NATIVE_INPUT.configurationWitness,
     });
     const harness = await runHarnessDockTurn({ server, url, directory });
@@ -312,9 +340,11 @@ async function assertNativeResponseSensitivity(directory) {
 }
 
 function renderReceipt(rows) {
-  const comparedRows = rows.map((row) => ({ ...row }));
-  const digest = createHash("sha256").update(JSON.stringify(comparedRows)).digest("hex");
-  return `${JSON.stringify({ rows: comparedRows, digest: `sha256:${digest}` }, null, 2)}\n`;
+  const sections = Object.fromEntries(
+    Object.entries(rows).map(([name, entries]) => [name, entries.map((entry) => ({ ...entry }))])
+  );
+  const digest = createHash("sha256").update(JSON.stringify(sections)).digest("hex");
+  return `${JSON.stringify({ ...sections, digest: `sha256:${digest}` }, null, 2)}\n`;
 }
 
 describe("OpenCode native raw-HTTP differential parity", () => {
@@ -324,23 +354,25 @@ describe("OpenCode native raw-HTTP differential parity", () => {
     const { server, url } = await startServer(directory);
 
     const direct = await runRawHttpOpenCodeOracle({
-      serverUrl: url, selection: NATIVE_INPUT, authority: NATIVE_INPUT.authority, taskInput: NATIVE_INPUT.taskInput,
+      serverUrl: url, selection: NATIVE_INPUT, taskInput: NATIVE_INPUT.taskInput,
       directory, configurationWitness: NATIVE_INPUT.configurationWitness,
     });
     const harness = await runHarnessDockTurn({ server, url, directory });
     const comparedRows = compareEvidence(direct, harness);
     const writeDirect = await runRawHttpOpenCodeOracle({
-      serverUrl: url, selection: NATIVE_INPUT, authority: "behavioral_write", taskInput: NATIVE_INPUT.taskInput,
+      serverUrl: url, selection: NATIVE_INPUT, taskInput: NATIVE_INPUT.taskInput,
       directory, configurationWitness: NATIVE_INPUT.configurationWitness,
     });
     const writeHarness = await runHarnessDockTurn({ server, url, directory, authority: "behavioral_write" });
-    assert.deepEqual(compareEvidence(writeDirect, writeHarness), comparedRows, "both admitted behavioral authorities must retain native input parity");
+    assert.deepEqual(compareEvidence(writeDirect, writeHarness), comparedRows, "the direct native baseline remains stable beside the write-authority Driver turn");
+    const authorityRow = assertDriverAuthorityParity(harness, writeHarness);
     assertComparatorSensitivity(direct, harness);
+    assertAuthoritySensitivity(harness, writeHarness);
     await assertNativeResponseSensitivity(directory);
 
     server.state.provider = providerCatalog();
     const directDrift = await runRawHttpOpenCodeOracle({
-      serverUrl: url, selection: NATIVE_INPUT, authority: NATIVE_INPUT.authority, taskInput: NATIVE_INPUT.taskInput,
+      serverUrl: url, selection: NATIVE_INPUT, taskInput: NATIVE_INPUT.taskInput,
       directory, configurationWitness: NATIVE_INPUT.configurationWitness,
       beforeRecheck: async () => { server.state.provider = providerCatalog({ effort: "other" }); },
     });
@@ -348,14 +380,14 @@ describe("OpenCode native raw-HTTP differential parity", () => {
     const harnessDrift = await runHarnessDockRouteDrift({ server, url, directory });
     const driftRow = compareRouteDrift(directDrift, harnessDrift);
 
-    const rows = [
-      ...comparedRows.map((row) => row.dimension === "prompt_authority_native_input"
-        ? { ...row, authorities: ["behavioral_read_only", "behavioral_write"] }
-        : row),
-      driftRow,
-      ...capabilityNotApplicableRows(harness.capabilities),
-    ];
-    const receipt = renderReceipt(rows);
+    const receipt = renderReceipt({
+      provenRows: [...comparedRows, authorityRow, driftRow],
+      notApplicableRows: capabilityNotApplicableRows(harness.capabilities),
+      unprovenRows: [
+        { dimension: "native_configuration_inheritance", result: "unproven", reason: "not_observed_by_fake_transport" },
+        { dimension: "managed_service_process_lifecycle", result: "unproven", reason: "test_owned_server_only" },
+      ],
+    });
     assert.equal(receipt.includes(directory), false, "receipt must not disclose the disposable configuration identity");
     assert.equal(receipt.includes(url), false, "receipt must not disclose the test origin");
     assert.equal(receipt, await fs.readFile(RECEIPT_PATH, "utf8"), "checked-in receipt must rerender byte-identically");

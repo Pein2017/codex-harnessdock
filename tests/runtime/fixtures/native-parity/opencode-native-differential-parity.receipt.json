@@ -1,5 +1,5 @@
 {
-  "rows": [
+  "provenRows": [
     {
       "dimension": "exact_model_effort_inventory",
       "result": "pass"
@@ -9,16 +9,8 @@
       "result": "pass"
     },
     {
-      "dimension": "native_configuration_inheritance",
+      "dimension": "execution_directory_propagation",
       "result": "pass"
-    },
-    {
-      "dimension": "prompt_authority_native_input",
-      "result": "pass",
-      "authorities": [
-        "behavioral_read_only",
-        "behavioral_write"
-      ]
     },
     {
       "dimension": "ordered_request_event_tool_observations",
@@ -33,13 +25,19 @@
       "result": "pass"
     },
     {
-      "dimension": "session_process_lifecycle_cleanup",
+      "dimension": "turn_session_cleanup",
+      "result": "pass"
+    },
+    {
+      "dimension": "driver_authority_non_prompt_invariance",
       "result": "pass"
     },
     {
       "dimension": "route_drift",
       "result": "pass"
-    },
+    }
+  ],
+  "notApplicableRows": [
     {
       "dimension": "interrupt",
       "result": "not_applicable",
@@ -71,5 +69,17 @@
       "observed": "none"
     }
   ],
-  "digest": "sha256:f795212eeb7d9019671c63c19d28f9091a8b45705efdbeeabb508f88e63f8686"
+  "unprovenRows": [
+    {
+      "dimension": "native_configuration_inheritance",
+      "result": "unproven",
+      "reason": "not_observed_by_fake_transport"
+    },
+    {
+      "dimension": "managed_service_process_lifecycle",
+      "result": "unproven",
+      "reason": "test_owned_server_only"
+    }
+  ],
+  "digest": "sha256:87a31c2368ae95fd71487d219eda5a76886585d6c372aa49253e135b2105883a"
 }

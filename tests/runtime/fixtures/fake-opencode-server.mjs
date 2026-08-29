@@ -162,6 +162,9 @@ export function createFakeOpencodeServer(scenario = {}) {
       method: req.method,
       path: pathname,
       hasAuthorizationHeader: Boolean(req.headers.authorization),
+      contentType: typeof req.headers["content-type"] === "string"
+        ? req.headers["content-type"].split(";", 1)[0]
+        : null,
       query: Object.fromEntries(url.searchParams.entries()),
     };
     requests.push(record);
