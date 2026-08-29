@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -12,9 +13,13 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 import {
   HARNESSDOCK_MCP_TOOL_NAMES,
+  HARNESSDOCK_MCP_EXPOSED_DESCRIPTION_CHAR_LIMIT,
+  HARNESSDOCK_MCP_HOST_PROJECTION_CHAR_RESERVE,
   CODEX_SANDBOX_META_KEY,
   createCcMcpServer,
   invokeIsolatedRuntimeOperation,
+  mcpExposedDescriptionCharacters,
+  mcpProjectedModelVisibleCharacters,
   redactMcpErrorMessage,
 } from "../../runtime/mcp-server.mjs";
 import { HARNESSDOCK_MCP_API_GENERATION } from "../../runtime/mcp-api.mjs";
@@ -88,25 +93,33 @@ describe("typed HarnessDock MCP server", () => {
     assert.equal(wait.inputSchema.required?.includes("wake_on_progress") ?? false, false);
     assert.match(wait.description, /join one current-root Agent turn[\s\S]*all-settled target barrier/i);
     assert.match(wait.description, /one target may opt into one progress update/i);
+    assert.match(wait.description, /fixed one hour[\s\S]*no caller timeout/i);
+    assert.match(wait.description, /full message\/token[\s\S]*acknowledge once later[\s\S]*fail closed/i);
     const listAgentsTool = listed.tools.find((tool) => tool.name === "list_agents");
     assert.match(listAgentsTool.description, /logical Agent Cards[\s\S]*observes state only/i);
     const descriptionWords = listed.tools
       .map((tool) => tool.description.trim().split(/\s+/u).length)
       .reduce((total, words) => total + words, 0);
     assert.ok(descriptionWords <= 180, `tool descriptions use ${descriptionWords} words`);
+    const rawClient = mcpExposedDescriptionCharacters(listed.tools, client.getInstructions());
+    const projected = mcpProjectedModelVisibleCharacters(listed.tools, client.getInstructions());
+    assert.equal(projected, HARNESSDOCK_MCP_HOST_PROJECTION_CHAR_RESERVE + rawClient);
+    assert.ok(projected <= HARNESSDOCK_MCP_EXPOSED_DESCRIPTION_CHAR_LIMIT, `projected model-visible guidance uses ${projected} characters`);
+    assert.ok(
+      mcpProjectedModelVisibleCharacters(listed.tools, `${client.getInstructions()}x`.repeat(20)) > HARNESSDOCK_MCP_EXPOSED_DESCRIPTION_CHAR_LIMIT,
+      "the projected-guidance check must fail when host-repeated instructions grow",
+    );
   });
 
-  it("advertises the anti-polling server instructions", async () => {
+  it("keeps shared server routing short and retains wait semantics in its owner Skill", async () => {
     const { client, server } = await inMemoryClient(() => runtimeMethods(() => ({})));
     closers.push(() => client.close(), () => server.close());
     const instructions = client.getInstructions();
-    assert.match(instructions, /fixed one-hour upper bound/i);
-    assert.match(instructions, /no timeout argument/i);
-    assert.match(instructions, /implementation-defined completion-priority/i);
-    assert.match(instructions, /one to eight exact targets?[\s\S]*all-settled barrier/i);
-    assert.match(instructions, /only one target may opt into one progress update/i);
-    assert.match(instructions, /completion token is acknowledged exactly once on a later wait/i);
-    assert.match(instructions, /after a quiet timeout[\s\S]*call wait_agent again instead of list_agents or read_agent_messages/i);
+    assert.equal(instructions, "Experimental tools; trusted Codex metadata.");
+    const waitSkill = fs.readFileSync(path.join(pluginRoot, "skills", "wait-agent", "SKILL.md"), "utf8");
+    assert.match(waitSkill, /3600000 ms[\s\S]*wake_on_progress: true[\s\S]*exactly one target/i);
+    assert.match(waitSkill, /completion has priority[\s\S]*completion_message[\s\S]*token/i);
+    assert.match(waitSkill, /timeout means no eligible completion was visible[\s\S]*call `wait_agent` again directly/i);
   });
 
   it("keeps the server instructions free of mandatory scheduling/classification language", async () => {
@@ -222,6 +235,21 @@ describe("typed HarnessDock MCP server", () => {
     assert.deepEqual(calls, [
       { operation: "wait_agent", input: { timeout_ms: 3_600_000 } },
     ]);
+  });
+
+  it("runs lifecycle housekeeping after an operation without changing its receipt", async () => {
+    let completed = 0;
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createCcMcpServer({
+      runtimeInvoker: async () => ({ accepted: true }),
+      onOperationComplete: async () => { completed += 1; },
+    });
+    const client = new Client({ name: "hd-mcp-test", version: "1.0.0" });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    closers.push(() => client.close(), () => server.close());
+    const result = await client.callTool({ name: "list_agents", arguments: {}, _meta: meta });
+    assert.deepEqual(result.structuredContent, { accepted: true });
+    assert.equal(completed, 1);
   });
 
   it("redacts private runtime identities and absolute paths while keeping public error categories", () => {
@@ -628,6 +656,32 @@ export function createAgentRuntime() {
     await client.connect(transport);
     const listed = await client.listTools();
     assert.deepEqual(listed.tools.map((tool) => tool.name), HARNESSDOCK_MCP_TOOL_NAMES);
+  });
+
+  it("exits the one-process bootstrap when stdin closes without a runtime child", async () => {
+    const canonicalManifestFile = "/data/CoordExp/codex-harnessdock/plugins/codex-harnessdock/.codex-plugin/plugin.json";
+    if (!fs.existsSync(canonicalManifestFile)) return;
+    const child = spawn(process.execPath, ["--", path.join(pluginRoot, "bootstrap", "harnessdock-mcp.mjs")], {
+      cwd: root,
+      stdio: ["pipe", "ignore", "pipe"],
+    });
+    const stderr = [];
+    child.stderr.on("data", (chunk) => stderr.push(String(chunk)));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(child.exitCode, null, stderr.join(""));
+    if (process.platform === "linux") {
+      const children = fs.readFileSync(`/proc/${child.pid}/task/${child.pid}/children`, "utf8").trim();
+      assert.equal(children, "", "bootstrap has a child before stdin closes");
+    }
+    child.stdin.end();
+    const [code, signal] = await Promise.race([
+      once(child, "exit"),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("bootstrap did not exit after stdin closed")), 5_000)),
+    ]);
+    assert.equal(signal, null);
+    assert.equal(code, 0, stderr.join(""));
+    const descendants = spawnSync("ps", ["-o", "pid=", "--ppid", String(child.pid)], { encoding: "utf8" });
+    assert.equal(descendants.stdout.trim(), "", "bootstrap left a runtime child process");
   });
 });
 

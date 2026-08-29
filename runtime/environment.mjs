@@ -27,6 +27,7 @@ const SUPPORTED_KEYS = new Set([
   "PI_CODING_AGENT_DIR",
   "OPENCODE_EXECUTABLE",
   "OPENCODE_SERVER_URL",
+  "HARNESSDOCK_OPENCODE_IDLE_TTL_SECONDS",
 ]);
 
 // Official OpenCode Basic-auth credentials. These are intentionally excluded
@@ -93,6 +94,21 @@ function nonEmpty(value) {
   return normalized || null;
 }
 
+export const OPENCODE_IDLE_TTL_DEFAULT_SECONDS = 3_600;
+export const OPENCODE_IDLE_TTL_MIN_SECONDS = 60;
+export const OPENCODE_IDLE_TTL_MAX_SECONDS = 604_800;
+
+export function resolveOpencodeIdleTtlSeconds(env) {
+  const raw = nonEmpty(env?.HARNESSDOCK_OPENCODE_IDLE_TTL_SECONDS);
+  if (raw == null) return OPENCODE_IDLE_TTL_DEFAULT_SECONDS;
+  if (!/^[0-9]+$/.test(raw)) throw new Error("HARNESSDOCK_OPENCODE_IDLE_TTL_SECONDS must be an integer from 60 through 604800.");
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < OPENCODE_IDLE_TTL_MIN_SECONDS || value > OPENCODE_IDLE_TTL_MAX_SECONDS) {
+    throw new Error("HARNESSDOCK_OPENCODE_IDLE_TTL_SECONDS must be an integer from 60 through 604800.");
+  }
+  return value;
+}
+
 export function resolveRuntimeEnvironment(options = {}) {
   const inherited = { ...(options.env ?? process.env) };
   const codexHome = inherited.CODEX_HOME
@@ -107,9 +123,10 @@ export function resolveRuntimeEnvironment(options = {}) {
 
   const selectedEnv = explicitEnv ?? projectEnv ?? workspaceEnv ?? defaultEnv;
   const sources = selectedEnv ? [selectedEnv] : [];
+  const selectedValues = selectedEnv ? parseEnvFile(selectedEnv) : {};
   const env = {
     ...inherited,
-    ...(selectedEnv ? parseEnvFile(selectedEnv) : {}),
+    ...selectedValues,
   };
   const effectiveClaudeConfigDir = nonEmpty(env.CLAUDE_NATIVE_CONFIG_DIR)
     ?? nonEmpty(env.CLAUDE_CONFIG_DIR)
@@ -122,6 +139,10 @@ export function resolveRuntimeEnvironment(options = {}) {
   // OpenCode Basic-auth credentials never enter the merged runtime environment,
   // even if inherited from the operator process; see readOpencodeSecrets.
   for (const secretKey of OPENCODE_SECRET_KEYS) delete env[secretKey];
+  if (!Object.hasOwn(selectedValues, "HARNESSDOCK_OPENCODE_IDLE_TTL_SECONDS")) {
+    delete env.HARNESSDOCK_OPENCODE_IDLE_TTL_SECONDS;
+  }
+  resolveOpencodeIdleTtlSeconds(env);
 
   return {
     env,

@@ -291,16 +291,21 @@ describe("release smoke", () => {
       ".codex-plugin",
       "plugin.json",
     );
-    if (!fs.existsSync(canonicalManifest) || JSON.parse(fs.readFileSync(canonicalManifest, "utf8")).name !== "codex-harnessdock") {
-      // Phase 0 deliberately leaves the production checkout/Plugin untouched.
-      // The candidate descriptor must fail closed rather than silently loading
-      // the old production identity.
+    const canonicalBootstrap = path.join(CANONICAL_RUNTIME_CHECKOUT, "plugins", "codex-harnessdock", "bootstrap", "harnessdock-mcp.mjs");
+    if (
+      !fs.existsSync(canonicalManifest) ||
+      JSON.parse(fs.readFileSync(canonicalManifest, "utf8")).name !== "codex-harnessdock" ||
+      !fs.readFileSync(canonicalBootstrap, "utf8").includes("await runCcMcpServer()")
+    ) {
+      // Candidate source is not installed. The descriptor must reject the old
+      // canonical guidance rather than calling it a current release witness.
       await assert.rejects(
         () => probeInstalledMcp({
           snapshotRoot: path.join(SOURCE_ROOT, "plugins", "codex-harnessdock"),
           workspace: SOURCE_ROOT,
           callListAgents: true,
         }),
+        /guidance characters|canonical checkout/i,
       );
       return;
     }

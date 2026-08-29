@@ -43,6 +43,12 @@ const VARIABLE = "CODEX_HARNESSDOCK_RUNTIME_HOME";
 if (!process.env[VARIABLE]?.trim()) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "harnessdock-test-data-"));
   process.env[VARIABLE] = root;
+  // Managed Harness services deliberately keep ownership receipts below the
+  // stable Plugin data root instead of the disposable per-worker runtime home.
+  // Pin CODEX_HOME as well so tests cannot observe or write the operator's
+  // production receipt/lease namespace.
+  process.env.CODEX_HOME = path.join(root, "codex-home");
+  fs.mkdirSync(process.env.CODEX_HOME, { recursive: true });
   // Only the process that created the directory removes it. A spawned test file
   // inherits the variable but not this branch, so it never deletes a root its
   // siblings are still using.

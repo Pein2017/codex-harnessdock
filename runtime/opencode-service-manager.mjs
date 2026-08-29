@@ -11,14 +11,15 @@ import path from "node:path";
 
 import { resolveOpencodeServerUrl, createOpencodeDiscoveryClient, discoverOpencodeHealth } from "./opencode-client.mjs";
 import { recoverStaleDirectoryLock, sameFileIdentity } from "./durable-directory-lock.mjs";
-import { resolveRuntimeEnvironment } from "./environment.mjs";
+import { resolveOpencodeIdleTtlSeconds, resolveRuntimeEnvironment } from "./environment.mjs";
 import { resolveExpectedPluginDataRoot } from "./paths.mjs";
 import { getProcessIdentity, isProcessAlive, terminateProcessTree, validateProcessIdentity } from "./process-control.mjs";
 
-const RECEIPT_VERSION = 1;
+const RECEIPT_VERSION = 2;
 const LOCK_TIMEOUT_MS = 5_000;
 const STARTUP_TIMEOUT_MS = 10_000;
 const RETRY_DELAY_MS = 20;
+const REAP_TIMEOUT_MS = 5_000;
 
 function taggedError(code, message) {
   return Object.assign(new Error(message), { code });
@@ -30,6 +31,18 @@ function delay(ms) {
 
 function serviceDirectory(runtimeRoot) {
   return path.join(runtimeRoot, "opencode-service");
+}
+
+function leasesDirectory(directory) { return path.join(directory, "leases"); }
+
+function timestamp(value) {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function boundedIdentity(value) {
+  const text = typeof value === "string" ? value.trim() : "";
+  return text && text.length <= 512 && !text.includes("\0") ? text : null;
 }
 
 function ensureDirectory(directory) {
@@ -85,15 +98,35 @@ function readReceipt(file) {
   try {
     const value = JSON.parse(fs.readFileSync(file, "utf8"));
     if (
-      value?.version !== RECEIPT_VERSION ||
+      ![1, RECEIPT_VERSION].includes(value?.version) ||
       !Number.isSafeInteger(value?.pid) || value.pid < 1 ||
       typeof value.identity !== "string" || !value.identity ||
       typeof value.commandFingerprint !== "string" || !/^[a-f0-9]{64}$/.test(value.commandFingerprint)
     ) return null;
+    if (value.version === RECEIPT_VERSION && (timestamp(value.startedAt) == null || timestamp(value.lastActivityAt) == null)) return null;
     return value;
   } catch {
     return null;
   }
+}
+
+function readLease(file) {
+  try {
+    const value = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (value?.version !== 1 || value?.state !== "active" || !/^[a-f0-9]{32}$/.test(value.token ?? "") ||
+        !boundedIdentity(value.rootId) || !boundedIdentity(value.agentId) ||
+        !boundedIdentity(value.turnId) || !boundedIdentity(value.attemptId) || !timestamp(value.createdAt)) return null;
+    return value;
+  } catch { return null; }
+}
+
+function activeLeases(directory) {
+  try {
+    const entries = fs.readdirSync(directory, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"));
+    const leases = entries.map((entry) => readLease(path.join(directory, entry.name)));
+    return leases.some((lease) => lease == null) ? null : leases;
+  } catch (error) { return error?.code === "ENOENT" ? [] : null; }
 }
 
 function writeReceipt(file, receipt) {
@@ -129,6 +162,34 @@ function endpointArguments(env) {
     throw taggedError("endpoint_invalid", "The configured OpenCode Server endpoint is not a fixed IPv4 loopback port.");
   }
   return ["serve", "--hostname", "127.0.0.1", "--port", origin.port];
+}
+
+function commandFingerprint(env, executableCheck) {
+  const executable = configuredExecutable(env, executableCheck);
+  return createHash("sha256").update(JSON.stringify([executable, endpointArguments(env)])).digest("hex");
+}
+
+/** Linux-only evidence for an established peer on the fixed loopback port. */
+export function inspectLoopbackPeerActivity(env, options = {}) {
+  if ((options.platform ?? process.platform) !== "linux") return "unknown";
+  let port;
+  try { port = new URL(resolveOpencodeServerUrl(env)).port; } catch { return "unknown"; }
+  const expectedPort = Number(port).toString(16).padStart(4, "0").toUpperCase();
+  const readFile = options.readFile ?? fs.readFileSync;
+  try {
+    for (const file of ["/proc/net/tcp", "/proc/net/tcp6"]) {
+      const lines = String(readFile(file, "utf8")).trim().split(/\r?\n/u);
+      if (lines.length < 1 || !/local_address\s+rem_address\s+st/u.test(lines[0])) return "unknown";
+      for (const line of lines.slice(1)) {
+        const fields = line.trim().split(/\s+/u);
+        if (fields.length < 4) return "unknown";
+        const local = fields[1]?.split(":");
+        if (local?.length !== 2 || !/^[0-9A-F]+$/iu.test(local[0]) || !/^[0-9A-F]{4}$/iu.test(local[1])) return "unknown";
+        if (local[1].toUpperCase() === expectedPort && fields[3] === "01") return "present";
+      }
+    }
+    return "none";
+  } catch { return "unknown"; }
 }
 
 async function defaultProbe(env, cwd, options) {
@@ -189,9 +250,110 @@ export function createOpencodeServiceManager(options = {}) {
     startupTimeoutMs: options.startupTimeoutMs ?? STARTUP_TIMEOUT_MS,
     startupDelayMs: options.startupDelayMs ?? RETRY_DELAY_MS,
     lockTimeoutMs: options.lockTimeoutMs ?? LOCK_TIMEOUT_MS,
+    now: options.now ?? (() => Date.now()),
+    peerActivity: options.peerActivity ?? ((value) => inspectLoopbackPeerActivity(value)),
+    reapTimeoutMs: options.reapTimeoutMs ?? REAP_TIMEOUT_MS,
+    reapDelayMs: options.reapDelayMs ?? RETRY_DELAY_MS,
+    setTimer: options.setTimer ?? setTimeout,
   };
   const directory = serviceDirectory(runtimeRoot);
   const receiptFile = path.join(directory, "receipt.json");
+  const leaseDirectory = leasesDirectory(directory);
+  const ttlSeconds = resolveOpencodeIdleTtlSeconds(env);
+  let scheduled = null;
+
+  function upgradedReceipt(receipt, now) {
+    return receipt.version === RECEIPT_VERSION ? receipt : {
+      ...receipt, version: RECEIPT_VERSION, startedAt: new Date(now).toISOString(), lastActivityAt: new Date(now).toISOString(),
+    };
+  }
+
+  async function withLock(action) {
+    ensureDirectory(directory);
+    const lock = await acquireLock(directory, deps);
+    try { return await action(); } finally { releaseLock(lock); }
+  }
+
+  function managedReceiptMatches(receipt) {
+    return receipt &&
+      deps.isAlive(receipt.pid) && deps.validateIdentity(receipt.pid, receipt.identity) &&
+      receipt.commandFingerprint === commandFingerprint(env, deps.executableCheck);
+  }
+
+  async function acquireTurnLease(identity) {
+    const rootId = boundedIdentity(identity?.rootId);
+    const agentId = boundedIdentity(identity?.agentId);
+    const turnId = boundedIdentity(identity?.turnId);
+    const attemptId = boundedIdentity(identity?.attemptId);
+    if (!rootId || !agentId || !turnId || !attemptId) throw taggedError("lease_identity_invalid", "OpenCode turn lease requires exact durable turn lineage.");
+    return withLock(async () => {
+      const receipt = readReceipt(receiptFile);
+      const now = deps.now();
+      ensureDirectory(leaseDirectory);
+      const token = randomBytes(16).toString("hex");
+      const file = path.join(leaseDirectory, `${token}.json`);
+      writeReceipt(file, { version: 1, state: "active", token, rootId, agentId, turnId, attemptId, createdAt: new Date(now).toISOString() });
+      if (managedReceiptMatches(receipt)) {
+        writeReceipt(receiptFile, { ...upgradedReceipt(receipt, now), lastActivityAt: new Date(now).toISOString() });
+      }
+      return Object.freeze({ file, token, rootId, agentId, turnId, attemptId });
+    });
+  }
+
+  async function releaseTurnLease(lease) {
+    if (!lease?.file || path.dirname(lease.file) !== leaseDirectory || !/^[a-f0-9]{32}$/.test(lease.token ?? "")) return false;
+    return withLock(async () => {
+      const record = readLease(lease.file);
+      if (!record || record.token !== lease.token ||
+          ["rootId", "agentId", "turnId", "attemptId"].some((key) => record[key] !== lease[key])) return false;
+      try { fs.unlinkSync(lease.file); } catch { return false; }
+      const receipt = readReceipt(receiptFile);
+      if (managedReceiptMatches(receipt)) {
+        const now = deps.now();
+        writeReceipt(receiptFile, { ...upgradedReceipt(receipt, now), lastActivityAt: new Date(now).toISOString() });
+      }
+      return true;
+    });
+  }
+
+  async function reapIfIdle() {
+    return withLock(async () => {
+      const receipt = readReceipt(receiptFile);
+      if (!receipt || receipt.version !== RECEIPT_VERSION || !managedReceiptMatches(receipt)) return { reaped: false, reason: "receipt_unproven" };
+      if (await probe() !== "healthy") return { reaped: false, reason: "endpoint_unproven" };
+      if (deps.now() - timestamp(receipt.lastActivityAt) < ttlSeconds * 1_000) return { reaped: false, reason: "not_idle" };
+      const leases = activeLeases(leaseDirectory);
+      if (leases == null) return { reaped: false, reason: "lease_unknown" };
+      if (leases.length) return { reaped: false, reason: "turn_held" };
+      let peerActivity;
+      try { peerActivity = deps.peerActivity(env); } catch { peerActivity = "unknown"; }
+      if (peerActivity !== "none") return { reaped: false, reason: peerActivity === "present" ? "peer_present" : "peer_unknown" };
+      let termination;
+      try { termination = deps.terminate(receipt.pid, receipt.identity); } catch { return { reaped: false, reason: "termination_ambiguous" }; }
+      if (!termination?.attempted || !termination.delivered) return { reaped: false, reason: "termination_ambiguous" };
+      const deadline = deps.now() + deps.reapTimeoutMs;
+      while (deps.now() < deadline && deps.isAlive(receipt.pid)) await delay(deps.reapDelayMs);
+      if (deps.isAlive(receipt.pid)) return { reaped: false, reason: "termination_ambiguous" };
+      const current = readReceipt(receiptFile);
+      if (!current || JSON.stringify(current) !== JSON.stringify(receipt)) return { reaped: false, reason: "receipt_changed" };
+      fs.unlinkSync(receiptFile);
+      writeReceipt(path.join(directory, "tombstone.json"), {
+        version: 1, outcome: "terminated", startedAt: receipt.startedAt, lastActivityAt: receipt.lastActivityAt, reapedAt: new Date(deps.now()).toISOString(),
+      });
+      return { reaped: true, reason: "terminated" };
+    });
+  }
+
+  function scheduleReap() {
+    if (scheduled) return false;
+    scheduled = deps.setTimer(async () => {
+      scheduled = null;
+      try { await reapIfIdle(); } catch {}
+      scheduleReap();
+    }, ttlSeconds * 1_000);
+    scheduled.unref?.();
+    return true;
+  }
 
   async function probe(probeOptions) {
     const result = await deps.probe(env, probeOptions);
@@ -260,6 +422,8 @@ export function createOpencodeServiceManager(options = {}) {
               pid: child.pid,
               identity,
               commandFingerprint: createHash("sha256").update(JSON.stringify([executable, args])).digest("hex"),
+              startedAt: new Date(deps.now()).toISOString(),
+              lastActivityAt: new Date(deps.now()).toISOString(),
             });
           } catch {
             terminateChild();
@@ -277,7 +441,7 @@ export function createOpencodeServiceManager(options = {}) {
     }
   }
 
-  return Object.freeze({ ensure, inspect });
+  return Object.freeze({ ensure, inspect, acquireTurnLease, releaseTurnLease, reapIfIdle, scheduleReap });
 }
 
 export async function ensureConfiguredOpencodeService(options = {}) {

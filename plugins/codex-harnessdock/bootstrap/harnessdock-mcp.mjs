@@ -5,10 +5,10 @@
  * Descriptor-only MCP bootstrap. The installed snapshot validates and starts
  * the one checkout-owned MCP runtime while preserving stdio protocol framing.
  */
-import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { pathToFileURL } from "node:url";
 
 import { assertCheckoutDependencies } from "./dependency-preflight.mjs";
 
@@ -69,7 +69,7 @@ function resolveCheckout() {
   return { checkout, server, envFile };
 }
 
-function main() {
+async function main() {
   const { checkout, server, envFile } = resolveCheckout();
   assertCheckoutDependencies(checkout);
   const configured = parseEnv(envFile);
@@ -85,34 +85,15 @@ function main() {
   delete env.CODEX_THREAD_ID;
   delete env.CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID;
 
-  const child = spawn(process.execPath, ["--", server], {
-    cwd: checkout,
-    env,
-    stdio: "inherit",
-    windowsHide: true,
-  });
-  for (const signal of ["SIGINT", "SIGTERM"]) {
-    process.on(signal, () => {
-      try { child.kill(signal); } catch {}
-    });
-  }
-  child.on("error", (error) => {
-    process.stderr.write(`${error.message}\n`);
-    process.exitCode = 1;
-  });
-  child.on("exit", (code, signal) => {
-    if (signal) {
-      process.stderr.write(`HarnessDock MCP runtime exited from ${signal}.\n`);
-      process.exitCode = 1;
-      return;
-    }
-    process.exitCode = code ?? 1;
-  });
+  process.chdir(checkout);
+  delete process.env.CODEX_THREAD_ID;
+  delete process.env.CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID;
+  Object.assign(process.env, env);
+  const { runCcMcpServer } = await import(pathToFileURL(server).href);
+  await runCcMcpServer();
 }
 
-try {
-  main();
-} catch (error) {
+main().catch((error) => {
   process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
   process.exitCode = 1;
-}
+});

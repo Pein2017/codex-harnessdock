@@ -146,6 +146,7 @@ function setup(serverUrl) {
     cwd: workspace,
     envFile,
     env: {
+      CODEX_HOME: process.env.CODEX_HOME,
       CODEX_THREAD_ID: "spawn-admission-root",
       CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID: "spawn-admission-root",
       CODEX_HARNESSDOCK_RUNTIME_HOME: RUNTIME_HOME,

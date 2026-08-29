@@ -89,6 +89,7 @@ import {
 import { plainRecordSnapshot } from "./plain-record.mjs";
 import { terminalMetricsFromEvidence } from "./terminal-metrics.mjs";
 import { createOpencodeServiceManager } from "./opencode-service-manager.mjs";
+import { discoverDormantOpencodeRoutes } from "./opencode-native-discovery.mjs";
 
 export const OPENCODE_DRIVER_VERSION = "opencode@1";
 export const OPENCODE_DRIVER_TITLE = "OpenCode native routes (experimental)";
@@ -361,7 +362,8 @@ function requiredText(value, code, detail) {
  *
  * @param {{env?: NodeJS.ProcessEnv, cwd?: string, envFile?: string,
  *   acceptanceTimeoutMs?: number, turnTimeoutMs?: number,
- *   serviceManager?: {ensure: () => Promise<object>}}} [options]
+ *   serviceManager?: {ensure: () => Promise<object>, acquireTurnLease?: (identity: object) => Promise<object>, releaseTurnLease?: (lease: object) => Promise<boolean>},
+ *   nativeDiscovery?: (options: object) => Promise<object>}} [options]
  */
 export function createOpencodeDriver(options = {}) {
   const fixedEnv = options.env ?? process.env;
@@ -382,6 +384,7 @@ export function createOpencodeDriver(options = {}) {
     cwd: options.cwd,
     envFile: options.envFile,
   });
+  const nativeDiscovery = options.nativeDiscovery ?? discoverDormantOpencodeRoutes;
 
   function sessionReference(sessionId) {
     return {
@@ -437,7 +440,7 @@ export function createOpencodeDriver(options = {}) {
     return fields;
   }
 
-  async function inspectNative(scope) {
+  async function inspectNative(scope, allowDormant = true) {
     const declared = scope?.env?.OPENCODE_SERVER_URL;
     if (declared && opencodeInstanceKey(declared) !== fixedInstanceKey) {
       return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: "blocked", liveValidated: false, maturity: "experimental", detailCode: "not_configured", routes: null };
@@ -447,6 +450,12 @@ export function createOpencodeDriver(options = {}) {
       const discovered = await discoverOpencodeProviderRoutes(handle, { signal: scope?.signal });
       if (!discovered.ok) {
         const blocked = "code" in discovered && discovered.code === "auth_failed";
+        if (allowDormant && !blocked) {
+          const dormant = await nativeDiscovery({ env: fixedEnv, cwd: options.cwd, signal: scope?.signal });
+          if (dormant?.ok) {
+            return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: "ready", liveValidated: false, maturity: "experimental", detailCode: "dormant_native_config", routes: nativeRouteFacts(dormant.routes) };
+          }
+        }
         return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: blocked ? "blocked" : "unavailable", liveValidated: false, maturity: "experimental", detailCode: blocked ? "not_authenticated" : "service_unreachable", routes: null };
       }
       return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: "ready", liveValidated: true, maturity: "experimental", detailCode: "ready", routes: nativeRouteFacts(discovered.routes) };
@@ -790,7 +799,7 @@ export function createOpencodeDriver(options = {}) {
         );
       }
       await serviceManager.ensure();
-      const inspection = await inspectNative(scope);
+      const inspection = await inspectNative(scope, false);
       if (inspection.readiness !== "ready") {
         throw new OpencodeRouteError(
           "instance_not_ready",
@@ -866,6 +875,7 @@ export function createOpencodeDriver(options = {}) {
       const scope = input?.scope;
       const prepared = input?.preparedTurn;
       let releaseCapacity = null;
+      let turnLease = null;
       let promptText;
       let attemptId;
       let route;
@@ -891,7 +901,13 @@ export function createOpencodeDriver(options = {}) {
         );
         promptText = renderOpencodeExplorerPrompt(prepared?.promptEnvelope?.taskInput, route.authority);
         releaseCapacity = claimCapacity(fixedInstanceKey);
+        if (typeof serviceManager.acquireTurnLease === "function") {
+          turnLease = await serviceManager.acquireTurnLease({
+            rootId: scope?.rootId, agentId: scope?.agentId, turnId: scope?.turnId, attemptId,
+          });
+        }
       } catch (error) {
+        if (turnLease && typeof serviceManager.releaseTurnLease === "function") await serviceManager.releaseTurnLease(turnLease);
         if (releaseCapacity) releaseCapacity();
         throw preTransportRejection(error);
       }
@@ -979,7 +995,7 @@ export function createOpencodeDriver(options = {}) {
         };
         let settled = false;
         const result = dispatched.then(
-          (outcome) => {
+          async (outcome) => {
             const terminal = normalizeOutcome(outcome, {
               nativeTurnRef,
               sessionId,
@@ -995,6 +1011,10 @@ export function createOpencodeDriver(options = {}) {
               serverVersion: input?.launchContext?.serverVersion ?? null,
             });
             settled = true;
+            if (turnLease && typeof serviceManager.releaseTurnLease === "function") {
+              await serviceManager.releaseTurnLease(turnLease);
+              turnLease = null;
+            }
             if (releaseCapacity) {
               releaseCapacity();
               releaseCapacity = null;
@@ -1024,6 +1044,7 @@ export function createOpencodeDriver(options = {}) {
           },
         };
       } catch (error) {
+        if (turnLease && typeof serviceManager.releaseTurnLease === "function") await serviceManager.releaseTurnLease(turnLease);
         if (releaseCapacity) releaseCapacity();
         throw preTransportRejection(error);
       }

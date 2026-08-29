@@ -849,7 +849,6 @@ export async function runDoctor(options = {}) {
         workspace: cwd,
         env: environment?.env ?? options.env ?? process.env,
         callListAgents: true,
-        ensureService: false,
       });
       checks.push(makeCheck(
         "mcp-tools",

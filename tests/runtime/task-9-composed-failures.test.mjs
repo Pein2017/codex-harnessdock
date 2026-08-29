@@ -122,6 +122,9 @@ function setup(serverUrl, { secrets = false } = {}) {
   fs.writeFileSync(envFile, `OPENCODE_SERVER_URL=${serverUrl}\n`);
   cleanups.push(() => fs.rmSync(root, { recursive: true, force: true }));
   const env = {
+    // This suite passes an explicit environment object, so carry the preload's
+    // stable Plugin-data isolation root into the detached worker as well.
+    CODEX_HOME: process.env.CODEX_HOME,
     CODEX_THREAD_ID: ownerRootId,
     CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID: ownerRootId,
     CODEX_HARNESSDOCK_RUNTIME_HOME: RUNTIME_HOME,
@@ -277,7 +280,7 @@ describe("Task 9.2 — an unreadable answer settles as a proven failure", () => 
       arguments: spawnArgs({ task_name: "malformed_turn" }),
       _meta: meta(context.workspace, context.ownerRootId),
     });
-    assert.notEqual(spawned.isError, true, "an accepted route still spawns");
+    assert.notEqual(spawned.isError, true, `an accepted route still spawns: ${JSON.stringify(spawned)}`);
 
     const record = await settledRecord(context.ownerRootId);
     assert.ok(record, "the worker records the turn it submitted");
@@ -324,7 +327,7 @@ describe("Task 9.2 — an unprovable submission publishes nothing and holds its 
       arguments: spawnArgs({ task_name: "uncertain_turn" }),
       _meta: meta(context.workspace, context.ownerRootId),
     });
-    assert.notEqual(spawned.isError, true);
+    assert.notEqual(spawned.isError, true, `an accepted uncertain route still spawns: ${JSON.stringify(spawned)}`);
 
     const record = await settledRecord(context.ownerRootId);
     assert.ok(record, "the worker records the turn it submitted");

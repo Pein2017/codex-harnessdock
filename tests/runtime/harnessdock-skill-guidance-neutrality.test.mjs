@@ -97,7 +97,7 @@ describe("HarnessDock Skill guidance neutrality", () => {
     assert.match(interrupt, /`status`[\s\S]*`interrupted`,\s*`still_working`,[\s\S]*`failed`,[\s\S]*`settlement_unknown`/i);
     assert.match(interrupt, /`still_working`[\s\S]*never\s+a\s+forced\s+termination/i);
     assert.match(interrupt, /Pi request is nonterminal[\s\S]*wait for settlement/i);
-    assert.match(interrupt, /Exact-session\s+continuation needs native evidence of a safe flush/i);
+    assert.match(interrupt, /Exact-session\s+continuation needs safe-flush evidence/i);
     assert.doesNotMatch(interrupt, /force-terminat/i);
     assert.match(interrupt, /one concise sentence from `agent_name` and\s+`status`/i);
 
@@ -121,21 +121,21 @@ describe("HarnessDock Skill guidance neutrality", () => {
     assert.match(history, /latest outer-assistant text, newest first/i);
     assert.match(history, /Thinking, tools, attachments, child transcripts, and Codex history\s+are excluded/i);
     assert.match(history, /Current completion comes from[\s\S]*wait-agent/i);
-    assert.match(history, /`unsupported`[\s\S]*no transcript is looked for/i);
+    assert.match(history, /`unsupported`[\s\S]*no messages/i);
 
     const send = readSkill("send-message");
     assert.match(send, /exact current-root `target` and\s+`message`/i);
     assert.match(send, /Queueing never activates an idle Agent or Codex/i);
-    assert.match(send, /blocked Agent rejects instead of queueing[\s\S]*closed `reason`\/`scope`\/`retry`/i);
+    assert.match(send, /blocked Agent rejects with closed `reason`\/`scope`\/`retry`/i);
     assert.match(send, /`dispatched_active`[\s\S]*`activation_pending`[\s\S]*`queued_no_turn`/i);
-    assert.match(send, /`activation_pending` means an activation already owns it/i);
-    assert.match(send, /never a native teammate, never another Harness/i);
+    assert.match(send, /`activation_pending` is durably accepted[\s\S]*do not duplicate/i);
+    assert.match(send, /never a native teammate or another Harness/i);
 
     const spawn = readSkill("spawn-agent");
-    assert.match(spawn, /with `task_name`, a self-contained\s+`message`, and the whole route/i);
+    assert.match(spawn, /with `task_name`, self-contained\s+`message`, and `harness`, `model`, `topology`, `write`/i);
     assert.match(spawn, /`harness`, `model`, `topology`, `write`/);
     assert.doesNotMatch(spawn, /delegation_mode/);
-    assert.match(spawn, /never pass environment, session, or fork selectors/i);
+    assert.match(spawn, /never pass\s+environment, session, or fork selectors/i);
     for (const model of ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5"]) {
       assert.match(spawn, new RegExp(model));
     }
@@ -148,12 +148,12 @@ describe("HarnessDock Skill guidance neutrality", () => {
       "openai/gpt-5.6-sol",
     ]) assert.match(spawn, new RegExp(model.replace("/", "\\/")));
     assert.match(spawn, /`pi`[\s\S]*provider `openai-codex` only/i);
-    assert.match(spawn, /Every new turn requires `low`, `medium`, `high`, `xhigh`, or `max`/i);
-    assert.match(spawn, /No global capacity ceiling[\s\S]*exact native session is serialized/i);
-    assert.match(spawn, /exact\s+resume only[\s\S]*active input is acknowledged[\s\S]*automatic recovery is absent[\s\S]*native orchestration is disabled/i);
+    assert.match(spawn, /every turn requires `low`, `medium`, `high`, `xhigh`, or `max`/i);
+    assert.match(spawn, /No\s+capacity ceiling[\s\S]*exact serialized session/i);
+    assert.match(spawn, /resume-only[\s\S]*active input\s+acknowledged[\s\S]*no automatic recovery\/orchestration/i);
     assert.match(spawn, /Pi `write: false` allows only `read`, `grep`, `find`, and[\s\S]*Pi `write: true` also allows `bash`, `edit`, and `write`/i);
     assert.doesNotMatch(spawn, /deepseek|opencode-go/i);
-    assert.match(spawn, /HarnessDock capacity ceiling/i);
+    assert.match(spawn, /No\s+capacity ceiling/i);
     assert.match(spawn, /No `-fast` variants/i);
     assert.match(spawn, /`low`, `medium`, `high`, `xhigh`, or `max`/i);
     assert.match(spawn, /`write: false` is behavioral read\/review-only[\s\S]*`write: true`/i);
@@ -162,7 +162,7 @@ describe("HarnessDock Skill guidance neutrality", () => {
     assert.match(spawn, /named member must launch asynchronously and a correlated `SendMessage`/i);
     assert.match(spawn, /Transport never auto-reconnects/i);
     assert.match(spawn, /`Workflow` remains disabled/i);
-    assert.match(spawn, /subscription[\s\S]*quota exhaustion[\s\S]*stop further real Claude tests/i);
+    assert.match(spawn, /(?:subscription|usage)[\s\S]*(?:quota|credit)[\s\S]*exhaustion[\s\S]*stop further\s+real Claude tests/i);
 
     const wait = readSkill("wait-agent");
     const waitMetadata = readMetadata("wait-agent");

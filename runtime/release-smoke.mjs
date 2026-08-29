@@ -9,7 +9,13 @@ import { pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
-import { HARNESSDOCK_MCP_TOOL_NAMES, CODEX_SANDBOX_META_KEY } from "./mcp-server.mjs";
+import {
+  HARNESSDOCK_MCP_EXPOSED_DESCRIPTION_CHAR_LIMIT,
+  HARNESSDOCK_MCP_TOOL_NAMES,
+  CODEX_SANDBOX_META_KEY,
+  mcpExposedDescriptionCharacters,
+  mcpProjectedModelVisibleCharacters,
+} from "./mcp-server.mjs";
 import { ADMITTED_GENERATION_HARNESS_IDS } from "./harness-registry.mjs";
 import { createClaudeCodeDriver } from "./claude-code-driver.mjs";
 import { createExecutionProfile } from "./execution-profile.mjs";
@@ -29,6 +35,8 @@ const NATIVE_TEAM_WITNESS_MEMORY_PREFIXES = Object.freeze([
 const MAX_NATIVE_TEAM_WITNESS_EVENTS = 32;
 const MAX_NATIVE_TEAM_WITNESS_NAME_BYTES = 96;
 const MAX_NATIVE_TEAM_WITNESS_PATHS = 16_384;
+const SKILL_BYTES_LIMIT = 11_500;
+const DEFAULT_PROMPT_CHARS_LIMIT = 800;
 const SAFE_WITNESS_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 const NATIVE_TEAM_WITNESS_JOB_ID = "native-team-witness";
 
@@ -597,7 +605,6 @@ export async function probeInstalledMcp(options = {}) {
     env: {
       ...(options.env ?? process.env),
       CODEX_HARNESSDOCK_RUNTIME_HOME: runtimeHome,
-      ...(options.ensureService === false ? { CODEX_HARNESSDOCK_SKIP_OPENCODE_ENSURE: "1" } : {}),
     },
     stderr: "pipe",
   });
@@ -608,6 +615,11 @@ export async function probeInstalledMcp(options = {}) {
     await client.connect(transport);
     const listed = await client.listTools(undefined, callOptions(60_000));
     const tools = listed.tools.map((tool) => tool.name);
+    const rawClientDescriptionCharacters = mcpExposedDescriptionCharacters(listed.tools, client.getInstructions());
+    const projectedModelVisibleCharacters = mcpProjectedModelVisibleCharacters(listed.tools, client.getInstructions());
+    if (projectedModelVisibleCharacters > HARNESSDOCK_MCP_EXPOSED_DESCRIPTION_CHAR_LIMIT) {
+      throw new Error(`Installed MCP projects ${projectedModelVisibleCharacters} guidance characters; limit is ${HARNESSDOCK_MCP_EXPOSED_DESCRIPTION_CHAR_LIMIT}.`);
+    }
     let agentCount = null;
     let harnessCount = null;
     let schemaRejected = null;
@@ -671,6 +683,8 @@ export async function probeInstalledMcp(options = {}) {
         (harnessCount == null || options.expectedHarnessCount == null || harnessCount === options.expectedHarnessCount) &&
         (schemaRejected == null || schemaRejected === true),
       tools,
+      rawClientDescriptionCharacters,
+      projectedModelVisibleCharacters,
       agentCount,
       harnessCount,
       schemaRejected,
@@ -709,6 +723,16 @@ export async function runReleaseSmoke(options = {}) {
     );
   }
   const skills = installedSkills(parity.installed.snapshotRoot);
+  const skillBytes = skills.reduce(
+    (total, name) => total + fs.statSync(path.join(parity.installed.snapshotRoot, "skills", name, "SKILL.md")).size,
+    0,
+  );
+  const defaultPromptChars = JSON.parse(
+    fs.readFileSync(path.join(parity.installed.snapshotRoot, ".codex-plugin", "plugin.json"), "utf8"),
+  )?.interface?.defaultPrompt?.join("\n")?.length;
+  if (skillBytes > SKILL_BYTES_LIMIT || !Number.isInteger(defaultPromptChars) || defaultPromptChars > DEFAULT_PROMPT_CHARS_LIMIT) {
+    throw new Error("Installed Plugin guidance exceeds its Skill or default-prompt context budget.");
+  }
   const expectedSkills = [
     "followup-task",
     "interrupt-agent",
@@ -765,6 +789,13 @@ export async function runReleaseSmoke(options = {}) {
     installedVersion: parity.installed.version,
     installedSnapshot: parity.installed.snapshotRoot,
     skills,
+    contextBudgets: {
+      skillBytes,
+      defaultPromptChars,
+      rawClientDescriptionCharacters: mcp.rawClientDescriptionCharacters ?? null,
+      projectedModelVisibleCharacters: mcp.projectedModelVisibleCharacters ?? null,
+      freshHostMeasurement: "pending installed task",
+    },
     tools: mcp.tools,
     listAgents: { isolated: true, agentCount: mcp.agentCount },
     nativeRouteDiscovery,

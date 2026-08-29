@@ -312,6 +312,24 @@ describe("opencode driver: readiness and route admission", () => {
     assert.equal(server.requests.find((request) => request.path === "/provider")?.query.directory, WORKSPACE_ROOT);
   });
 
+  it("admits bounded dormant native routes without starting a Server", async () => {
+    let discovered = 0;
+    const driver = driverFor("http://127.0.0.1:4998", {
+      nativeDiscovery: async () => {
+        discovered += 1;
+        return { ok: true, routes: [{ model: OPENCODE_EXPLORER_MODEL, efforts: ["high"] }] };
+      },
+    });
+    const [inspection] = await driver.inspectInstances(
+      createDriverScope({ driver, purpose: "inspect", env: { OPENCODE_SERVER_URL: "http://127.0.0.1:4998" }, workspaceRoot: WORKSPACE_ROOT })
+    );
+    assert.equal(discovered, 1);
+    assert.equal(inspection.readiness, "ready");
+    assert.equal(inspection.liveValidated, false);
+    assert.equal(inspection.detailCode, "dormant_native_config");
+    assert.equal(driver.validateRoute(routeRequest(), inspection).model, OPENCODE_EXPLORER_MODEL);
+  });
+
   it("blocks a scope that names another configured Server without any request", async () => {
     const { server, url } = await startFake();
     const driver = driverFor(url);
@@ -809,6 +827,38 @@ describe("opencode driver: refusals before native submission", () => {
 // ---------------------------------------------------------------------------
 
 describe("opencode driver: terminal settlement", () => {
+  it("keeps an exact durable lease around a turn on a reused service", async () => {
+    const { url } = await startFake();
+    const calls = [];
+    const lease = { file: "/opaque/reused-service-lease", token: "a".repeat(32), rootId: "root_1", agentId: "agent_1", turnId: "job_1", attemptId: "att_1" };
+    const driver = driverFor(url, {
+      serviceManager: {
+        ensure: async () => ({ status: "reused" }),
+        acquireTurnLease: async (identity) => { calls.push(["acquire", identity]); return lease; },
+        releaseTurnLease: async (value) => { calls.push(["release", value]); return true; },
+      },
+    });
+    const { live } = await launch(driver, url);
+    await live.result;
+    assert.deepEqual(calls, [["acquire", { rootId: "root_1", agentId: "agent_1", turnId: "job_1", attemptId: "att_1" }], ["release", lease]]);
+  });
+
+  it("retains a reused-service lease when native acceptance remains unknown", async () => {
+    const { url } = await startFake({ promptDestroy: true });
+    const calls = [];
+    const lease = { file: "/opaque/unknown-lease", token: "b".repeat(32), rootId: "root_1", agentId: "agent_1", turnId: "job_1", attemptId: "att_1" };
+    const driver = driverFor(url, {
+      serviceManager: {
+        ensure: async () => ({ status: "reused" }),
+        acquireTurnLease: async (identity) => { calls.push(["acquire", identity]); return lease; },
+        releaseTurnLease: async () => { calls.push(["release"]); return true; },
+      },
+    });
+    const { live } = await launch(driver, url);
+    await assert.rejects(live.result, (error) => error instanceof OpencodeTurnError && error.code === "transport_lost");
+    assert.deepEqual(calls, [["acquire", { rootId: "root_1", agentId: "agent_1", turnId: "job_1", attemptId: "att_1" }]]);
+  });
+
   async function terminalFor(scenario, options = {}) {
     const { server, url } = await startFake(scenario);
     const driver = driverFor(url, options);

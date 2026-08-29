@@ -130,6 +130,7 @@ function setup(serverUrl) {
     cwd: workspace,
     envFile,
     env: {
+      CODEX_HOME: process.env.CODEX_HOME,
       CODEX_THREAD_ID: OWNER_ROOT_ID,
       CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID: OWNER_ROOT_ID,
       CODEX_HARNESSDOCK_RUNTIME_HOME: RUNTIME_HOME,

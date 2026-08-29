@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
-import { readOpencodeSecrets, resolveRuntimeEnvironment } from "../../runtime/environment.mjs";
+import { readOpencodeSecrets, resolveOpencodeIdleTtlSeconds, resolveRuntimeEnvironment } from "../../runtime/environment.mjs";
 
 const cleanups = [];
 afterEach(() => {
@@ -159,6 +159,21 @@ describe("runtime environment", () => {
     assert.equal(result.env.OPENCODE_EXECUTABLE, "/selected/opencode");
     assert.equal(result.env.OPENCODE_SERVER_URL, "http://127.0.0.1:4096");
     assert.equal(JSON.stringify(result.receipt).includes("/selected/opencode"), false);
+  });
+
+  it("uses the bounded OpenCode idle TTL only from canonical dotenv data", () => {
+    const { root } = fixture();
+    const envFile = path.join(root, "runtime.env");
+    const emptyEnvFile = path.join(root, "empty.env");
+    fs.writeFileSync(envFile, "HARNESSDOCK_OPENCODE_IDLE_TTL_SECONDS=60\n");
+    fs.writeFileSync(emptyEnvFile, "");
+    assert.equal(resolveRuntimeEnvironment({ cwd: root, envFile, env: {} }).env.HARNESSDOCK_OPENCODE_IDLE_TTL_SECONDS, "60");
+    assert.equal(resolveRuntimeEnvironment({ cwd: root, envFile: emptyEnvFile, env: { HARNESSDOCK_OPENCODE_IDLE_TTL_SECONDS: "60" } }).env.HARNESSDOCK_OPENCODE_IDLE_TTL_SECONDS, undefined);
+    assert.equal(resolveOpencodeIdleTtlSeconds({}), 3600);
+    for (const value of ["59", "604801", "1.5", "$(bad)"]) {
+      fs.writeFileSync(envFile, `HARNESSDOCK_OPENCODE_IDLE_TTL_SECONDS=${value}\n`);
+      assert.throws(() => resolveRuntimeEnvironment({ cwd: root, envFile, env: {} }), /IDLE_TTL/);
+    }
   });
 
   it("rejects OPENCODE_SERVER_USERNAME in a tracked env file", () => {

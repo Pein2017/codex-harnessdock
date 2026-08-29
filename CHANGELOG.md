@@ -1,7 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.24.0 - 2026-08-29
 
+- Remove the extra MCP bootstrap process, discover OpenCode routes while
+  dormant, reap only proven idle owned services after one hour, and compact
+  Plugin/MCP/OpenCode control text without changing the eight-tool contract.
 - Add an explicit one-time identity-adoption receipt for an authoritative
   current data root when the legacy root and cutover recovery boundary are
   both absent.

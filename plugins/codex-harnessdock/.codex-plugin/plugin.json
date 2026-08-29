@@ -1,6 +1,6 @@
 {
   "name": "codex-harnessdock",
-  "version": "0.23.0+codex.20260829035908",
+  "version": "0.24.0+codex.20260829073237",
   "description": "HarnessDock for Codex is an unofficial third-party checkout-owned multi-Harness Agent runtime for Claude Code, OpenCode, and Pi with durable roots, completion delivery, native history, interruption, and exact-session follow-up where supported; it is not affiliated with or endorsed by OpenAI.",
   "author": {
     "name": "Pein2017",
@@ -30,11 +30,10 @@
     "composerIcon": "./assets/harnessdock-icon.svg",
     "logo": "./assets/harnessdock-logo.svg",
     "defaultPrompt": [
-      "Use $codex-harnessdock:spawn-agent with mcp__codex_harnessdock__spawn_agent to create an Experimental named HarnessDock Agent asynchronously on one explicit Harness route",
-      "Use $codex-harnessdock:followup-task with mcp__codex_harnessdock__followup_task to continue a HarnessDock Agent when its route supports continuation",
-      "Use $codex-harnessdock:list-agents with mcp__codex_harnessdock__list_agents to inspect local HarnessDock Agent work",
-      "Use $codex-harnessdock:wait-agent with mcp__codex_harnessdock__wait_agent for one exact Agent turn or a fixed all-settled barrier when the dependency set is known",
-      "Use $codex-harnessdock:read-agent-messages with mcp__codex_harnessdock__read_agent_messages to retrieve earlier native assistant messages without activating the Agent when its route supports history"
+      "Use $codex-harnessdock:spawn-agent and mcp__codex_harnessdock__spawn_agent for an explicit route.",
+      "Use $codex-harnessdock:followup-task and mcp__codex_harnessdock__followup_task for proven continuation.",
+      "Use $codex-harnessdock:list-agents or $codex-harnessdock:wait-agent to inspect or join Agents.",
+      "Use $codex-harnessdock:read-agent-messages only for earlier native history."
     ]
   }
 }

@@ -51,7 +51,8 @@ import { OPENCODE_MAX_FINAL_TEXT_CHARS } from "./opencode-result.mjs";
  * The stable prefix's frozen version. Bump it only together with the envelope
  * text, so a recorded version always identifies exactly one wording.
  */
-export const OPENCODE_PROMPT_PREFIX_VERSION = 1;
+export const OPENCODE_PROMPT_PREFIX_VERSION = 2;
+export const OPENCODE_PROMPT_ENVELOPE_CHAR_LIMIT = 450;
 
 /** The bounded caller task one Explorer turn admits. */
 export const OPENCODE_MAX_TASK_INPUT_CHARS = 32_768;
@@ -95,21 +96,17 @@ function routeFacts(authority) {
     throw new OpencodePromptError("route_authority_required", "The OpenCode prompt requires its accepted explicit authority.");
   }
   const authorityFact = authority === "behavioral_read_only"
-    ? `${authority}: inspect and report only. Do not edit, write, patch, or claim a change.`
-    : `${authority}: complete the caller task, including requested edits, and report the resulting work.`;
+    ? `${authority}: inspect and report only; do not edit or claim change.`
+    : `${authority}: complete requested edits and report them.`;
   return {
     authority: authorityFact,
-    topology: "leaf: answer this task yourself in one turn; do not delegate, spawn, or coordinate other agents.",
+    topology: "leaf: do task; do not delegate/spawn/coordinate agents.",
   };
 }
 
 const RETURN_CONTRACT_FACT =
-  `Answer the caller task above in your final assistant message. Cite the repository-relative paths and ` +
-  `the specific lines or symbols each finding rests on, and state plainly what you could not determine ` +
-  `instead of guessing. Only that final message reaches the caller: no tool transcript, no intermediate ` +
-  `notes, and no partial answer is read. Keep it self-contained plain text of at most ` +
-  `${OPENCODE_MAX_FINAL_TEXT_CHARS} characters; a longer or empty final message is refused rather than ` +
-  `trimmed.`;
+  `Final assistant answer only; state unknowns honestly. Plain text <= ${OPENCODE_MAX_FINAL_TEXT_CHARS}; ` +
+  `empty/long output is refused, not trimmed.`;
 
 function composePrompt(taskInput, authority) {
   const facts = routeFacts(authority);
@@ -146,6 +143,11 @@ if (OPENCODE_PROMPT_ENVELOPE_OVERHEAD_CHARS + OPENCODE_MAX_TASK_INPUT_CHARS > OP
     "The OpenCode Explorer prompt envelope no longer fits its total bound: " +
       `${OPENCODE_PROMPT_ENVELOPE_OVERHEAD_CHARS} envelope characters plus ` +
       `${OPENCODE_MAX_TASK_INPUT_CHARS} task characters exceed ${OPENCODE_MAX_PROMPT_CHARS}.`
+  );
+}
+if (OPENCODE_PROMPT_ENVELOPE_OVERHEAD_CHARS > OPENCODE_PROMPT_ENVELOPE_CHAR_LIMIT) {
+  throw new Error(
+    `The OpenCode Explorer prompt envelope exceeds ${OPENCODE_PROMPT_ENVELOPE_CHAR_LIMIT} characters.`,
   );
 }
 

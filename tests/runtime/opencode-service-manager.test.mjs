@@ -5,7 +5,7 @@ import path from "node:path";
 import { EventEmitter } from "node:events";
 import { afterEach, describe, it } from "node:test";
 
-import { createOpencodeServiceManager } from "../../runtime/opencode-service-manager.mjs";
+import { createOpencodeServiceManager, inspectLoopbackPeerActivity } from "../../runtime/opencode-service-manager.mjs";
 import { resolveExpectedPluginDataRoot } from "../../runtime/paths.mjs";
 
 const cleanups = [];
@@ -257,5 +257,167 @@ describe("OpenCode shared service manager", () => {
     });
     await assert.rejects(manager.ensure(), (error) => error?.code === "startup_failed" && !/EISDIR/.test(error.message));
     assert.equal(terminated, 1);
+  });
+
+  it("holds active leases and reaps only its exact idle managed process", async () => {
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-opencode-reap-"));
+    cleanups.push(runtimeRoot);
+    let now = 1_000;
+    let alive = false;
+    let serverReady = false;
+    let terminated = 0;
+    const durableHistory = path.join(runtimeRoot, "durable-agent-history.json");
+    fs.writeFileSync(durableHistory, "must-survive");
+    const manager = createOpencodeServiceManager({
+      env: { OPENCODE_SERVER_URL: "http://127.0.0.1:4096", OPENCODE_EXECUTABLE: "/opt/opencode", HARNESSDOCK_OPENCODE_IDLE_TTL_SECONDS: "60" },
+      runtimeRoot,
+      probe: async () => ({ kind: serverReady ? "healthy" : "absent" }),
+      executableCheck: () => true,
+      start: () => { alive = true; serverReady = true; return { pid: 99, unref() {} }; },
+      getIdentity: () => "identity-99",
+      isAlive: () => alive,
+      validateIdentity: () => alive,
+      terminate: () => { terminated += 1; alive = false; serverReady = false; return { attempted: true, delivered: true }; },
+      now: () => now,
+      peerActivity: () => "none",
+    });
+    assert.equal((await manager.ensure()).status, "managed");
+    const lease = await manager.acquireTurnLease({ rootId: "root", agentId: "agent", turnId: "turn", attemptId: "attempt" });
+    now += 61_000;
+    assert.deepEqual(await manager.reapIfIdle(), { reaped: false, reason: "turn_held" });
+    await manager.releaseTurnLease(lease);
+    now += 61_000;
+    assert.deepEqual(await manager.reapIfIdle(), { reaped: true, reason: "terminated" });
+    assert.equal(terminated, 1);
+    assert.equal(fs.existsSync(path.join(runtimeRoot, "opencode-service", "receipt.json")), false);
+    const tombstone = JSON.parse(fs.readFileSync(path.join(runtimeRoot, "opencode-service", "tombstone.json"), "utf8"));
+    assert.deepEqual(Object.keys(tombstone).sort(), ["lastActivityAt", "outcome", "reapedAt", "startedAt", "version"]);
+    assert.equal(tombstone.outcome, "terminated");
+    assert.equal(fs.readFileSync(durableHistory, "utf8"), "must-survive");
+  });
+
+  it("keeps reused services usable while their independent durable lease is exact", async () => {
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-opencode-reused-"));
+    cleanups.push(runtimeRoot);
+    let terminated = 0;
+    const manager = createOpencodeServiceManager({
+      env: { OPENCODE_SERVER_URL: "http://127.0.0.1:4096", OPENCODE_EXECUTABLE: "/opt/opencode" },
+      runtimeRoot,
+      probe: async () => ({ kind: "healthy" }),
+      executableCheck: () => true,
+      terminate: () => { terminated += 1; return { attempted: true, delivered: true }; },
+    });
+    assert.deepEqual(await manager.ensure(), { status: "reused" });
+    const first = await manager.acquireTurnLease({ rootId: "root", agentId: "agent", turnId: "turn-a", attemptId: "attempt-a" });
+    const second = await manager.acquireTurnLease({ rootId: "root", agentId: "agent", turnId: "turn-b", attemptId: "attempt-b" });
+    assert.equal(await manager.releaseTurnLease({ ...first, file: second.file }), false);
+    assert.equal(fs.existsSync(second.file), true);
+    assert.equal(await manager.releaseTurnLease(first), true);
+    assert.equal(await manager.releaseTurnLease(second), true);
+    assert.deepEqual(await manager.reapIfIdle(), { reaped: false, reason: "receipt_unproven" });
+    assert.equal(terminated, 0);
+  });
+
+  it("uses Linux socket evidence and refuses reaping on present or unreadable peers", async () => {
+    const header = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode";
+    const established = `${header}\n   0: 0100007F:1000 0100007F:9C40 01 00000000:00000000 00:00000000 00000000 1000 0 1`;
+    assert.equal(inspectLoopbackPeerActivity({}, { platform: "linux", readFile: () => established }), "present");
+    assert.equal(inspectLoopbackPeerActivity({}, { platform: "linux", readFile: () => { throw new Error("unreadable"); } }), "unknown");
+
+    for (const [peerActivity, reason] of [[() => "present", "peer_present"], [() => "unknown", "peer_unknown"]]) {
+      const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-opencode-peer-"));
+      cleanups.push(runtimeRoot);
+      let alive = false;
+      let ready = false;
+      let now = 1_000;
+      let terminated = 0;
+      const manager = createOpencodeServiceManager({
+        env: { OPENCODE_SERVER_URL: "http://127.0.0.1:4096", OPENCODE_EXECUTABLE: "/opt/opencode", HARNESSDOCK_OPENCODE_IDLE_TTL_SECONDS: "60" },
+        runtimeRoot,
+        probe: async () => ({ kind: ready ? "healthy" : "absent" }), executableCheck: () => true,
+        start: () => { alive = true; ready = true; return { pid: 81, unref() {} }; }, getIdentity: () => "identity-81",
+        isAlive: () => alive, validateIdentity: () => alive, now: () => now, peerActivity,
+        terminate: () => { terminated += 1; alive = false; return { attempted: true, delivered: true }; },
+      });
+      await manager.ensure();
+      now += 60_000;
+      assert.deepEqual(await manager.reapIfIdle(), { reaped: false, reason });
+      assert.equal(terminated, 0);
+    }
+  });
+
+  it("does not refresh activity for health or ensure and rechecks the one-hour boundary", async () => {
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-opencode-hour-"));
+    cleanups.push(runtimeRoot);
+    let now = 1_000;
+    let alive = false;
+    let ready = false;
+    const manager = createOpencodeServiceManager({
+      env: { OPENCODE_SERVER_URL: "http://127.0.0.1:4096", OPENCODE_EXECUTABLE: "/opt/opencode" },
+      runtimeRoot, probe: async () => ({ kind: ready ? "healthy" : "absent" }), executableCheck: () => true,
+      start: () => { alive = true; ready = true; return { pid: 82, unref() {} }; }, getIdentity: () => "identity-82",
+      isAlive: () => alive, validateIdentity: () => alive, now: () => now, peerActivity: () => "none",
+      terminate: () => { alive = false; return { attempted: true, delivered: true }; },
+    });
+    await manager.ensure();
+    const receipt = path.join(runtimeRoot, "opencode-service", "receipt.json");
+    const activity = JSON.parse(fs.readFileSync(receipt, "utf8")).lastActivityAt;
+    now += 3_599_999;
+    await manager.inspect();
+    await manager.ensure();
+    assert.equal(JSON.parse(fs.readFileSync(receipt, "utf8")).lastActivityAt, activity);
+    assert.deepEqual(await manager.reapIfIdle(), { reaped: false, reason: "not_idle" });
+    now += 1;
+    assert.deepEqual(await manager.reapIfIdle(), { reaped: true, reason: "terminated" });
+  });
+
+  it("serializes reapers, refuses drift and ambiguous termination, and re-arms one timer", async () => {
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-opencode-fence-"));
+    cleanups.push(runtimeRoot);
+    let now = 1_000;
+    let alive = false;
+    let ready = false;
+    let terminated = 0;
+    const common = {
+      env: { OPENCODE_SERVER_URL: "http://127.0.0.1:4096", OPENCODE_EXECUTABLE: "/opt/opencode", HARNESSDOCK_OPENCODE_IDLE_TTL_SECONDS: "60" },
+      runtimeRoot, probe: async () => ({ kind: ready ? "healthy" : "absent" }), executableCheck: () => true,
+      start: () => { alive = true; ready = true; return { pid: 83, unref() {} }; }, getIdentity: () => "identity-83",
+      isAlive: () => alive, validateIdentity: () => alive, now: () => now, peerActivity: () => "none",
+      terminate: () => { terminated += 1; alive = false; return { attempted: true, delivered: true }; },
+    };
+    const first = createOpencodeServiceManager(common);
+    await first.ensure();
+    now += 60_000;
+    const drift = createOpencodeServiceManager({ ...common, validateIdentity: () => false });
+    assert.deepEqual(await drift.reapIfIdle(), { reaped: false, reason: "receipt_unproven" });
+    const commandDrift = createOpencodeServiceManager({
+      ...common,
+      env: { ...common.env, OPENCODE_EXECUTABLE: "/other/opencode" },
+    });
+    assert.deepEqual(await commandDrift.reapIfIdle(), { reaped: false, reason: "receipt_unproven" });
+
+    const second = createOpencodeServiceManager(common);
+    const outcomes = await Promise.all([first.reapIfIdle(), second.reapIfIdle()]);
+    assert.equal(outcomes.filter((result) => result.reaped).length, 1);
+    assert.equal(terminated, 1);
+
+    const callbacks = [];
+    const timer = createOpencodeServiceManager({ ...common, setTimer: (fn, ms) => {
+      const handle = { fn, ms, unref() {} }; callbacks.push(handle); return handle;
+    } });
+    assert.equal(timer.scheduleReap(), true);
+    assert.equal(timer.scheduleReap(), false);
+    await callbacks[0].fn();
+    assert.equal(callbacks.length, 2);
+
+    const ambiguousRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-opencode-ambiguous-"));
+    cleanups.push(ambiguousRoot);
+    alive = false;
+    ready = false;
+    const ambiguous = createOpencodeServiceManager({ ...common, runtimeRoot: ambiguousRoot, start: () => { alive = true; ready = true; return { pid: 84, unref() {} }; }, getIdentity: () => "identity-84", terminate: () => ({ attempted: true, delivered: false }) });
+    await ambiguous.ensure();
+    assert.deepEqual(await ambiguous.reapIfIdle(), { reaped: false, reason: "not_idle" });
+    now += 60_000;
+    assert.deepEqual(await ambiguous.reapIfIdle(), { reaped: false, reason: "termination_ambiguous" });
   });
 });

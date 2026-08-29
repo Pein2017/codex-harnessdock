@@ -179,7 +179,10 @@ describe("native plugin contract", () => {
     const bootstrap = fs.readFileSync(path.join(pluginRoot, "bootstrap", "harnessdock-mcp.mjs"), "utf8");
     assert.match(bootstrap, /FIXED_RUNTIME_CHECKOUT = "\/data\/CoordExp\/codex-harnessdock"/);
     assert.match(bootstrap, /runtime["',\s]+"mcp-server\.mjs"/);
-    assert.match(bootstrap, /stdio: "inherit"/);
+    assert.match(bootstrap, /process\.chdir\(checkout\)/);
+    assert.match(bootstrap, /await import\(pathToFileURL\(server\)\.href\)/);
+    assert.match(bootstrap, /await runCcMcpServer\(\)/);
+    assert.doesNotMatch(bootstrap, /child_process|spawn\(/);
     assert.doesNotMatch(bootstrap, /plugins\/cache|sendbird\/cc-plugin-codex/);
     assert.match(bootstrap, /assertCheckoutDependencies\(checkout\)/);
 
@@ -232,10 +235,10 @@ describe("native plugin contract", () => {
       path.join(root, "plugins", "codex-harnessdock", "skills", "spawn-agent", "SKILL.md"),
       "utf8",
     );
-    assert.match(text, /one sentence[\s\S]*`model`[\s\S]*`agent_name`[\s\S]*authority[\s\S]*`status`/i);
+    assert.match(text, /On success:[\s\S]*`model`[\s\S]*`agent_name`[\s\S]*authority[\s\S]*`status`/i);
     assert.match(text, /no\s+final\s+Claude\s+text[\s\S]*JSON[\s\S]*internal IDs/i);
-    assert.match(text, /operator diagnostics[\s\S]*deeper evidence/i);
-    assert.match(text, /actionable failure\/recovery detail/i);
+    assert.match(text, /operator diagnostics[\s\S]*actionable[\s\S]*failure\/recovery detail/i);
+    assert.match(text, /actionable\s+failure\/recovery detail/i);
     assert.doesNotMatch(text, /receipt exactly as returned/i);
   });
 
@@ -251,7 +254,7 @@ describe("native plugin contract", () => {
     assert.match(text, /Ask when no model family was selected/i);
     assert.match(text, /low.*medium.*high.*xhigh.*max/s);
     assert.match(text, /Agent label such as Ops5[\s\S]*partial IDs[\s\S]*substitute another[\s\S]*model/i);
-    assert.match(text, /subscription[\s\S]*usage[\s\S]*allowance[\s\S]*credit[\s\S]*quota exhaustion[\s\S]*stop further real Claude tests/i);
+    assert.match(text, /(?:subscription|usage)[\s\S]*(?:quota|credit) exhaustion[\s\S]*stop further\s+real Claude tests/i);
     assert.match(text, /generic transient 429[\s\S]*bounded reconnect/i);
     assert.match(text, /`write: false`[\s\S]*behavioral read\/review-only[\s\S]*`write: true`[\s\S]*task-scoped mutation[\s\S]*not an OS-level/i);
     assert.match(text, /`IS_SANDBOX=1`[\s\S]*`--dangerously-skip-permissions`[\s\S]*never omit `write`/i);
@@ -270,15 +273,15 @@ describe("native plugin contract", () => {
       "openai/gpt-5.6-sol",
     ]) assert.match(text, new RegExp(model.replace("/", "\\/")));
     assert.match(text, /`pi`[\s\S]*provider `openai-codex` only/i);
-    assert.match(text, /Every new turn requires `low`, `medium`, `high`, `xhigh`, or `max`/i);
-    assert.match(text, /No global capacity ceiling[\s\S]*exact native session is serialized/i);
-    assert.match(text, /exact\s+resume only[\s\S]*active input is acknowledged[\s\S]*automatic recovery is absent[\s\S]*native orchestration is disabled/i);
+    assert.match(text, /every turn requires `low`, `medium`, `high`, `xhigh`, or `max`/i);
+    assert.match(text, /No\s+capacity ceiling[\s\S]*exact serialized session/i);
+    assert.match(text, /resume-only[\s\S]*active input\s+acknowledged[\s\S]*no automatic recovery\/orchestration/i);
     assert.match(text, /Pi `write: false` allows only `read`, `grep`, `find`, and[\s\S]*Pi `write: true` also allows `bash`, `edit`, and `write`/i);
     assert.match(text, /`opencode`[\s\S]*leaf[\s\S]*`write: false`/i);
     // OpenCode now takes both authorities as prompt/receipt only and requires
     // an explicit effort mapped to one advertised Server variant, never inferred.
     assert.match(text, /`opencode`[\s\S]*`write: false` or `write: true` \(prompt\/receipt\s+only\)/i);
-    assert.match(text, /`opencode`[\s\S]*every turn requires an explicit `low`.`max` effort mapped to one\s+advertised Server variant, never inferred/i);
+    assert.match(text, /`opencode`[\s\S]*explicit[\s\S]*effort must map to one\s+advertised Server variant,\s+never inferred/i);
     assert.doesNotMatch(text, /no reasoning effort/i);
     assert.doesNotMatch(text, /deepseek|opencode-go/i);
     assert.match(text, /No `-fast` variants/i);
@@ -288,13 +291,12 @@ describe("native plugin contract", () => {
     assert.match(text, /Pi and OpenCode are\s+prompt\/receipt only, inheriting native tools, plugins, MCP, and config unchanged\s+and never enumerated/i);
     assert.match(text, /experimental Native Agent Team lead/i);
     assert.match(text, /named member[\s\S]*launch(?:es|ed)? asynchronously[\s\S]*correlated `SendMessage`[\s\S]*succeed(?:s)?/i);
-    assert.match(text, /definition-owned[\s\S]*requested models[\s\S]*effective teammate model[\s\S]*unknown/i);
-    assert.match(text, /intended effort[\s\S]*inherited lead effort/i);
+    assert.match(text, /definition-owned[\s\S]*models[\s\S]*effective teammate model[\s\S]*unknown/i);
+    assert.match(text, /effective teammate model, effort, and cost are unknown/i);
     assert.match(text, /explicit follow-up[\s\S]*fresh native team/i);
-    assert.match(text, /local\s+native-memory/i);
     assert.match(text, /not an OS-level/i);
     assert.match(text, /at most three[\s\S]*six creations[\s\S]*behavioral/i);
-    assert.match(text, /same-team[\s\S]*SendMessage/i);
+    assert.match(text, /SendMessage[\s\S]*current-team/i);
     assert.match(text, /`Workflow`[\s\S]*remains disabled/i);
     assert.doesNotMatch(text, /allowed_tools/);
     assert.doesNotMatch(text, /fork_turns|execution_profile/);
@@ -355,7 +357,7 @@ describe("native plugin contract", () => {
         assert.match(text, /wake_on_progress: true[\s\S]*an intermediate update/i);
         assert.match(text, /hook[\s\S]*private/i);
         assert.match(text, /Do not repeat progress waiting/i);
-        assert.match(text, /Do not narrate unchanged timeouts/i);
+        assert.match(text, /narrate unchanged timeouts/i);
         assert.match(text, /`list_agents` or\s+`read_agent_messages` immediately\s+afterward merely to recheck completion/i);
         assert.match(text, /call `wait_agent` again directly/i);
 
@@ -372,18 +374,27 @@ describe("native plugin contract", () => {
 
   it("keeps the eight self-contained Skill instructions within the context budget", () => {
     let words = 0;
+    let bytes = 0;
     for (const name of canonicalSkills) {
       const text = fs.readFileSync(
         path.join(root, "plugins", "codex-harnessdock", "skills", name, "SKILL.md"),
         "utf8",
       );
       words += text.trim().split(/\s+/u).length;
+      bytes += Buffer.byteLength(text, "utf8");
       assert.match(text, /Experimental/i);
       assert.match(text, /If\s+(?:the tool is\s+)?unavailable,\s+report\s+Plugin/i);
     }
     // `canonical-agent-orchestration`: the eight installed Skills' aggregate
     // whitespace-delimited word count SHALL NOT exceed 2,200.
     assert.ok(words <= 2_200, `Agent Skill guidance uses ${words} words`);
+    assert.ok(bytes <= 11_500, `Agent Skill guidance uses ${bytes} bytes`);
+    assert.ok(16_648 > 11_500, "the pre-change 16,648-byte characterization must fail this budget");
+  });
+
+  it("keeps the installed default routing prompt within 800 characters", () => {
+    const manifest = JSON.parse(fs.readFileSync(path.join(root, "plugins", "codex-harnessdock", ".codex-plugin", "plugin.json"), "utf8"));
+    assert.ok(manifest.interface.defaultPrompt.join("\n").length <= 800);
   });
 
   it("marks all eight skill prompts and discovery descriptions Experimental", () => {
@@ -435,11 +446,11 @@ describe("native plugin contract", () => {
     const serverText = fs.readFileSync(path.join(root, "runtime", "mcp-server.mjs"), "utf8");
     // Discovery is stated as fresh/native on both public surfaces.
     assert.match(fs.readFileSync(path.join(pluginRoot, "skills", "list-harnesses", "SKILL.md"), "utf8"), /fresh native discovery/i);
-    assert.match(serverText, /freshly discovered from native Pi\/OpenCode configuration/i);
+    assert.match(serverText, /fresh exact model\/effort routes/i);
     assert.match(serverText, /freshly validated against native discovery/i);
     // Spawn requires an explicit effort; follow-up inherits the frozen route.
     assert.match(fs.readFileSync(path.join(pluginRoot, "skills", "spawn-agent", "SKILL.md"), "utf8"), /`reasoning_effort` \(required for every route/i);
-    assert.match(fs.readFileSync(path.join(pluginRoot, "skills", "followup-task", "SKILL.md"), "utf8"), /frozen route effort is inherited/i);
+    assert.match(fs.readFileSync(path.join(pluginRoot, "skills", "followup-task", "SKILL.md"), "utf8"), /route is frozen at creation[\s\S]*inherited unchanged, including effort/i);
     // No surface promises an enumerable native inventory or OS-level containment.
     const forbidden = [
       /enumerate[sd]? (?:the )?native (?:plugins?|MCP|tools?|prompt templates?)/i,

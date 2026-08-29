@@ -21,7 +21,7 @@ import { ADMITTED_GENERATION_HARNESS_IDS } from "./harness-registry.mjs";
 import { HARNESSDOCK_MCP_API_GENERATION } from "./mcp-api.mjs";
 import { removeRuntimeLoaderMarker, resolveGitCommonDirectory } from "./promotion-gate.mjs";
 import { PACKAGE_VERSION } from "./version.mjs";
-import { ensureConfiguredOpencodeService } from "./opencode-service-manager.mjs";
+import { createOpencodeServiceManager } from "./opencode-service-manager.mjs";
 
 export const CODEX_SANDBOX_META_KEY = "codex/sandbox-state-meta";
 export const HARNESSDOCK_MCP_TOOL_NAMES = Object.freeze([
@@ -54,6 +54,8 @@ const boundedRouteText = z.string().min(1).max(256).refine(
 );
 const boundedRouteAtom = boundedRouteText.refine(isBoundedRouteAtom, "must be one bounded route atom");
 const MODEL_FACING_WAIT_TIMEOUT_MS = 3_600_000;
+export const HARNESSDOCK_MCP_EXPOSED_DESCRIPTION_CHAR_LIMIT = 4_500;
+export const HARNESSDOCK_MCP_HOST_PROJECTION_CHAR_RESERVE = 2_932;
 
 const exactTarget = z.string().trim().min(1).describe(
   "Exact current-root Agent ID, /root/<task_name>, or normalized name."
@@ -65,13 +67,13 @@ const executionFields = {
 const TOOL_DEFINITIONS = Object.freeze({
   list_harnesses: {
     description:
-      "Experimental: list the Harnesses this checkout admits, with each instance's readiness, capability maturity, capacity, and the exact model and reasoning-effort choices freshly discovered from native Pi/OpenCode configuration. Observes state only; enumerates no native config, plugins, MCP, or tools.",
+      "Experimental: list admitted Harness readiness and fresh exact model/effort routes; observe only.",
     inputSchema: z.object({}).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   spawn_agent: {
     description:
-      "Experimental: start one durable Agent asynchronously on an explicitly stated route. The Harness, full model, reasoning effort, topology, and behavioral authority are all required, freshly validated against native discovery, and frozen on the Agent; none is defaulted, inferred, or aliased.",
+      "Experimental: start one durable Agent asynchronously on an explicitly stated route. Harness, full model, effort, topology, and behavioral authority are required, freshly validated against native discovery, and frozen on the Agent; never default or alias a route.",
     inputSchema: z.object({
       task_name: z.string().regex(/^[a-z0-9_]+$/),
       message,
@@ -92,19 +94,19 @@ const TOOL_DEFINITIONS = Object.freeze({
   },
   send_message: {
     description:
-      "Experimental: deliver to a running Agent or queue for idle; never activates it.",
+      "Experimental: deliver to a running Agent or queue for idle; never activate it.",
     inputSchema: z.object({ target: exactTarget, message }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   followup_task: {
     description:
-      "Experimental: deliver work or activate one proven Agent continuation asynchronously. The Agent's immutable route, including reasoning effort, is inherited.",
+      "Experimental: deliver work or activate one proven continuation; inherit its immutable route and effort.",
     inputSchema: z.object({ target: exactTarget, message }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
   wait_agent: {
     description:
-      "Experimental: join one current-root Agent turn or a fixed all-settled target barrier; one target may opt into one progress update.",
+      "Experimental: join one current-root Agent turn or fixed all-settled target barrier; one target may opt into one progress update. Fixed one hour, no caller timeout. Completion returns full message/token; acknowledge once later. Fail closed.",
     inputSchema: z.object({
       targets: z.array(exactTarget).min(1).max(8).optional().describe(
         "Fixed exact current-root Agent turns to join; one target may observe progress and multiple targets form a completion-only barrier."
@@ -133,19 +135,19 @@ const TOOL_DEFINITIONS = Object.freeze({
   },
   interrupt_agent: {
     description:
-      "Experimental: request that only the current Agent turn stop; preserve identity and proven continuation.",
+      "Experimental: request only the current turn stop; preserve Agent identity and proven continuation.",
     inputSchema: z.object({ target: exactTarget }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   },
   list_agents: {
     description:
-      "Experimental: list current-root logical Agent Cards, optionally by path prefix. This observes state only.",
+      "Experimental: list current-root logical Agent Cards, optionally by path prefix; observes state only.",
     inputSchema: z.object({ path_prefix: z.string().trim().min(1).optional() }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   read_agent_messages: {
     description:
-      "Experimental: read complete recent outer-assistant text from an Agent's proven native history without activation.",
+      "Experimental: read complete recent outer-assistant text from proven native history without activation.",
     inputSchema: z.object({
       target: exactTarget,
       before: z.string().trim().min(1).optional(),
@@ -154,6 +156,17 @@ const TOOL_DEFINITIONS = Object.freeze({
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
 });
+
+export function mcpExposedDescriptionCharacters(tools, instructions) {
+  return (Array.isArray(tools) ? tools : []).reduce(
+    (total, tool) => total + String(tool?.description ?? "").length + String(instructions ?? "").length,
+    0,
+  );
+}
+
+export function mcpProjectedModelVisibleCharacters(tools, instructions) {
+  return HARNESSDOCK_MCP_HOST_PROJECTION_CHAR_RESERVE + mcpExposedDescriptionCharacters(tools, instructions);
+}
 
 function contextError(detail) {
   return new Error(
@@ -340,10 +353,10 @@ export function invokeIsolatedRuntimeOperation(options) {
  * mistake -- passing a bare factory function where an options object belongs --
  * sent a test turn to an operator's live Server.
  */
-const HARNESSDOCK_MCP_SERVER_OPTIONS = Object.freeze(["runtimeFactory", "runtimeInvoker"]);
+const HARNESSDOCK_MCP_SERVER_OPTIONS = Object.freeze(["runtimeFactory", "runtimeInvoker", "onOperationComplete"]);
 
 /**
- * @param {{runtimeFactory?: (context: any) => any, runtimeInvoker?: (input: any) => Promise<any>}} [options]
+ * @param {{runtimeFactory?: (context: any) => any, runtimeInvoker?: (input: any) => Promise<any>, onOperationComplete?: () => Promise<void>|void}} [options]
  */
 export function createCcMcpServer(options = {}) {
   if (options === null || typeof options !== "object" || Array.isArray(options)) {
@@ -368,12 +381,12 @@ export function createCcMcpServer(options = {}) {
   }
   const runtimeFactory = options.runtimeFactory;
   const runtimeInvoker = options.runtimeInvoker ?? invokeIsolatedRuntimeOperation;
+  const onOperationComplete = options.onOperationComplete ?? null;
   const server = new McpServer(
     { name: "codex-harnessdock", version: PACKAGE_VERSION },
     {
       capabilities: { experimental: { [CODEX_SANDBOX_META_KEY]: {} } },
-      instructions:
-        "Use the eight Experimental Agent tools. list_harnesses observes which Harnesses this checkout admits and the exact models and reasoning-effort choices each instance freshly discovers from native configuration; it enumerates no native config, plugins, MCP, or tools. Spawn starts one Agent asynchronously on an explicitly stated Harness, full model, reasoning effort, topology, and behavioral authority, all freshly validated against native discovery and then frozen on that Agent; follow-up inherits them, including effort. wait_agent has implementation-defined completion-priority, wakes on durable activity, has a fixed one-hour upper bound, and takes no timeout argument. Targets form one to eight exact targets joined as either one exact turn or an all-settled barrier; only one target may opt into one progress update. A completion token is acknowledged exactly once on a later wait only if needed. After a quiet timeout, call wait_agent again instead of list_agents or read_agent_messages. list_agents observes logical Agent Cards without delivery. Tool calls are scoped by trusted Codex metadata.",
+      instructions: "Experimental tools; trusted Codex metadata.",
     }
   );
 
@@ -391,6 +404,8 @@ export function createCcMcpServer(options = {}) {
         return runtimeReceiptResult(receipt);
       } catch (error) {
         throw sanitizedError(error);
+      } finally {
+        try { await onOperationComplete?.(); } catch { /* housekeeping is never an MCP operation failure */ }
       }
     });
   }
@@ -398,12 +413,12 @@ export function createCcMcpServer(options = {}) {
 }
 
 export async function runCcMcpServer() {
-  // Startup is the one mutating lifecycle boundary. An unavailable OpenCode
-  // instance remains listed as unavailable; it never prevents Claude or Pi.
-  if (process.env.CODEX_HARNESSDOCK_SKIP_OPENCODE_ENSURE !== "1") {
-    await ensureConfiguredOpencodeService({ envFile: FIXED_ENV_FILE, cwd: SOURCE_ROOT }).catch(() => {});
-  }
-  const server = createCcMcpServer();
+  const serviceManager = createOpencodeServiceManager({ envFile: FIXED_ENV_FILE, cwd: SOURCE_ROOT });
+  await serviceManager.reapIfIdle().catch(() => {});
+  serviceManager.scheduleReap();
+  const server = createCcMcpServer({ onOperationComplete: async () => {
+    try { await serviceManager.reapIfIdle(); } finally { serviceManager.scheduleReap(); }
+  } });
   const transport = new StdioServerTransport();
   transport.onerror = (error) => {
     process.stderr.write(`HarnessDock MCP transport error: ${error.message}\n`);

@@ -18,6 +18,7 @@ import {
   OPENCODE_MAX_PROMPT_CHARS,
   OPENCODE_MAX_TASK_INPUT_CHARS,
   OPENCODE_PROMPT_ENVELOPE_OVERHEAD_CHARS,
+  OPENCODE_PROMPT_ENVELOPE_CHAR_LIMIT,
   OPENCODE_PROMPT_PREFIX_VERSION,
   OPENCODE_TASK_BLOCK_CLOSE,
   OPENCODE_TASK_BLOCK_OPEN,
@@ -208,6 +209,8 @@ describe("opencode prompt: frozen bounds and closed input", () => {
       OPENCODE_PROMPT_ENVELOPE_OVERHEAD_CHARS + OPENCODE_MAX_TASK_INPUT_CHARS <= OPENCODE_MAX_PROMPT_CHARS,
       "the frozen bounds must be mutually consistent"
     );
+    assert.ok(OPENCODE_PROMPT_ENVELOPE_OVERHEAD_CHARS <= OPENCODE_PROMPT_ENVELOPE_CHAR_LIMIT);
+    assert.ok(OPENCODE_PROMPT_ENVELOPE_CHAR_LIMIT < 789, "v1 characterization must fail the v2 budget");
   });
 
   it("refuses a total prompt beyond the total bound", () => {
