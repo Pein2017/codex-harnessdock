@@ -615,6 +615,7 @@ const V2_RECORD_KEYS = Object.freeze([
   "delegationMode",
   "description",
   "driverVersion",
+  "executionRoot",
   "finalizedJobIds",
   "harnessId",
   "lastTerminalJobId",

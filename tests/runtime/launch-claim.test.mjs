@@ -42,6 +42,7 @@ import {
   MAX_ASSIGNED_MESSAGE_IDS,
   SUBMISSION_STATES,
   bindLaunchClaimLease,
+  bindLaunchClaimLeases,
   createLaunchIntent,
   createLaunchClaim,
   beginPreSubmissionRollback,
@@ -54,6 +55,7 @@ import {
   recordLaunchAcceptanceRejected,
   recordLaunchAcceptanceUnknown,
   resolveLaunchClaimDirectory,
+  verifyPreparedLaunchClaim,
 } from "../../runtime/launch-claim.mjs";
 import {
   acquireInstanceLease,
@@ -61,12 +63,18 @@ import {
   acquireNativeSessionLease,
   acquiredLeaseEvidence,
   inspectLeaseInventory,
+  releaseLeasesForPreSubmissionRollback,
 } from "../../runtime/instance-admission-lease.mjs";
 import { acquireWorkspaceWriterLease } from "../../runtime/workspace-writer-lease.mjs";
+import {
+  recordVersionThreeTurnRunning,
+  recordVersionThreeTurnUncertain,
+} from "../../runtime/v3-job-store.mjs";
 import { validateLiveHarnessTurn } from "../../runtime/harness-contract.mjs";
 import { getProcessIdentity } from "../../runtime/process-control.mjs";
 import { createFakeServiceDriver } from "./fixtures/fake-service-driver.mjs";
 import { V3_DRIVER_VERSION, V3_HARNESS_ID, V3_INSTANCE_KEY, versionThreeRoute } from "./fixtures/version-three-state.mjs";
+import { FUTURE_WRITE_GENERATION } from "../../runtime/durable-state-v3.mjs";
 
 const contentionFixture = fileURLToPath(
   new URL("./fixtures/launch-claim-contender.mjs", import.meta.url)
@@ -203,6 +211,7 @@ function fakeLiveHarnessTurn({ route = versionThreeRoute(), live = {} } = {}) {
 
 const RECORD_FIELDS = [
   "version", "ownerRootId", "agentId", "jobId", "attemptId",
+  "lifecycleOwner",
   "route", "leaseState", "leaseIntent", "leaseBindings", "assignedMessageIds", "turnOptions", "inputDigest",
   "acceptance", "nativeTurnRef", "nativeSessionRef", "acceptanceEvidenceAt", "sanitizedDetail",
   "submissionState", "submissionStartedAt",
@@ -220,12 +229,47 @@ function materializeLegacyVersionOne(record) {
   delete legacy.leaseState;
   delete legacy.leaseIntent;
   delete legacy.turnOptions;
+  delete legacy.lifecycleOwner;
   fs.rmSync(currentDirectory, { recursive: true, force: true });
   fs.mkdirSync(legacyDirectory, { recursive: true, mode: 0o700 });
   const fileName = `${createHash("sha256").update(record.attemptId).digest("hex")}.json`;
   const filePath = path.join(legacyDirectory, fileName);
   fs.writeFileSync(filePath, `${JSON.stringify(legacy, null, 2)}\n`, { mode: 0o600 });
   return { legacy, filePath };
+}
+
+function materializeLegacyIncompleteWriter(record) {
+  const filePath = path.join(
+    resolveLaunchClaimDirectory(record),
+    `${createHash("sha256").update(record.attemptId).digest("hex")}.json`,
+  );
+  const canonicalRoute = record.route;
+  const routeDigest = createHash("sha256").update(JSON.stringify(canonicalRoute)).digest("hex");
+  const projectReceipt = (receipt) => {
+    const projected = { ...receipt, routeDigest };
+    projected.evidenceDigest = createHash("sha256").update(JSON.stringify({
+      kind: projected.kind,
+      keyFields: projected.keyFields,
+      capacity: projected.capacity,
+      routeDigest,
+      ownerRootId: projected.ownerRootId,
+      agentId: projected.agentId,
+      jobId: projected.jobId,
+    })).digest("hex");
+    return projected;
+  };
+  const legacy = {
+    ...record,
+    route: canonicalRoute,
+    leaseIntent: record.leaseIntent.filter((receipt) => receipt.kind !== "writer").map(projectReceipt),
+    leaseBindings: record.leaseBindings.filter((receipt) => receipt.kind !== "writer").map(projectReceipt),
+  };
+  delete legacy.controlRoot;
+  delete legacy.executionRoot;
+  delete legacy.lifecycleOwner;
+  const bytes = Buffer.from(`${JSON.stringify(legacy, null, 2)}\n`);
+  fs.writeFileSync(filePath, bytes);
+  return { filePath, bytes, legacy };
 }
 
 describe("launch claim: closed identity and durable binding", () => {
@@ -310,6 +354,7 @@ describe("launch claim: closed identity and durable binding", () => {
     materializeLegacyVersionOne(prepared);
     const legacyCompatible = { ...prepared };
     delete legacyCompatible.turnOptions;
+    delete legacyCompatible.lifecycleOwner;
     assert.deepEqual(createLaunchClaim(claimInput()), legacyCompatible);
   });
 
@@ -338,13 +383,124 @@ describe("launch claim: closed identity and durable binding", () => {
     assert.deepEqual(readLaunchClaim(binding()), created);
   });
 
-  it("persists exact lease intent before acquisition and refuses submission until the matching holder is bound", () => {
+  it("reads a pre-writer-bundle v2 write claim byte-for-byte but refuses verify, replay, and submission", () => {
     setup();
+    const route = versionThreeRoute({ authority: "behavioral_write" });
+    const created = createLaunchClaim(claimInput({
+      route,
+      leaseBindings: [instanceLease({ route }), writerLease({ route })],
+    }));
+    const { filePath, bytes } = materializeLegacyIncompleteWriter(created);
+
+    const readable = readLaunchClaim(binding());
+    assert.equal(readable.route.authority, "behavioral_write");
+    assert.deepEqual(readable.leaseBindings.map((receipt) => receipt.kind), ["instance"]);
+    assert.deepEqual(fs.readFileSync(filePath), bytes);
+    assert.throws(
+      () => verifyPreparedLaunchClaim({
+        ...binding(),
+        attemptId: readable.attemptId,
+        lifecycleOwner: "version_three_worker",
+        route,
+        assignedMessageIds: readable.assignedMessageIds,
+        preparedInput: "hello world",
+        turnOptions: null,
+      }),
+      (error) => error?.code === "legacy_incomplete_writer_authority",
+    );
+    assert.throws(
+      () => markNativeSubmissionStarted({ ...binding(), attemptId: readable.attemptId }),
+      (error) => error?.code === "legacy_incomplete_writer_authority",
+    );
+    assert.throws(
+      () => createLaunchClaim(claimInput({
+        route,
+        leaseBindings: [instanceLease({ route })],
+      })),
+      (error) => error?.code === "legacy_incomplete_writer_authority",
+    );
+    assert.deepEqual(fs.readFileSync(filePath), bytes);
+  });
+
+  it("blocks only the unresolved legacy writer's authoritative execution root", () => {
+    const { root } = setup();
+    const route = versionThreeRoute({ authority: "behavioral_write" });
+    createLaunchClaim(claimInput({
+      route,
+      leaseBindings: [instanceLease({ route }), writerLease({ route })],
+    }));
+    markNativeSubmissionStarted({ ...binding(), attemptId: "attempt-1" });
+    const proven = recordLaunchAcceptanceProven({
+      ...binding(),
+      attemptId: "attempt-1",
+      liveHarnessTurn: fakeLiveHarnessTurn({ route }),
+    });
+    materializeLegacyIncompleteWriter(proven);
+    const executionRoot = fs.mkdtempSync(path.join(root, "legacy-root-"));
+    const otherRoot = fs.mkdtempSync(path.join(root, "other-root-"));
+    recordVersionThreeTurnRunning({
+      generation: FUTURE_WRITE_GENERATION,
+      ...binding(),
+      attemptId: "attempt-1",
+      workspaceRoot: executionRoot,
+      route,
+      nativeTurnRef: proven.nativeTurnRef,
+    });
+    recordVersionThreeTurnUncertain({
+      generation: FUTURE_WRITE_GENERATION,
+      ...binding(),
+      attemptId: "attempt-1",
+      reason: "worker_lost",
+    });
+
+    assert.throws(
+      () => acquireWorkspaceWriterLease({
+        ownerRootId: "root-2",
+        agentId: "agent-2",
+        jobId: "job-2",
+        route: versionThreeRoute({
+          authority: "behavioral_write",
+          instanceKey: "writer-contender",
+        }),
+        workspaceRoot: executionRoot,
+      }),
+      (error) => error?.code === "legacy_writer_authority_unsettled",
+    );
+    assert.equal(acquireWorkspaceWriterLease({
+      ownerRootId: "root-3",
+      agentId: "agent-3",
+      jobId: "job-3",
+      route: versionThreeRoute({
+        authority: "behavioral_write",
+        instanceKey: "other-root-writer",
+      }),
+      workspaceRoot: otherRoot,
+    }).kind, "writer");
+    assert.equal(acquireInstanceLease({
+      ownerRootId: "root-4",
+      agentId: "agent-4",
+      jobId: "job-4",
+      route: versionThreeRoute({ instanceKey: "read-only-contender" }),
+      harnessId: V3_HARNESS_ID,
+      instanceKey: "read-only-contender",
+      capacityClass: "legacy-writer-read-only",
+      capacityLimit: 1,
+    }).kind, "instance");
+  });
+
+  it("persists the complete write lease bundle before acquisition and refuses partial binding", () => {
+    setup();
+    const route = versionThreeRoute({ authority: "behavioral_write" });
+    const executionRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-launch-intent-ws-"));
     const intent = createLaunchIntent({
       ...binding(),
       attemptId: "attempt-1",
-      route: versionThreeRoute(),
-      expectedLease: { kind: "instance", capacityClass: "default", capacityLimit: 4 },
+      lifecycleOwner: "version_three_worker",
+      route,
+      expectedLeases: [
+        { kind: "instance", capacityClass: "default", capacityLimit: 4 },
+        { kind: "writer", workspaceRoot: executionRoot },
+      ],
       assignedMessageIds: ["message-1"],
       preparedInput: "hello world",
       turnOptions: null,
@@ -357,10 +513,10 @@ describe("launch claim: closed identity and durable binding", () => {
       /acquired lease proof/,
     );
 
-    const acquired = bindLaunchClaimLease({
+    const acquired = bindLaunchClaimLeases({
       ...binding(),
       attemptId: "attempt-1",
-      lease: instanceLease(),
+      leases: [instanceLease({ route }), writerLease({ route, workspaceRoot: executionRoot })],
     });
     assert.equal(acquired.leaseState, "acquired");
     assert.deepEqual(acquired.leaseBindings, acquired.leaseIntent);
@@ -371,7 +527,7 @@ describe("launch claim: closed identity and durable binding", () => {
     const route = versionThreeRoute();
     const expectedLease = { kind: "instance", capacityClass: "default", capacityLimit: 4 };
     const intent = createLaunchIntent({
-      ...binding(), attemptId: "attempt-1", route, expectedLease,
+      ...binding(), attemptId: "attempt-1", lifecycleOwner: "version_three_worker", route, expectedLease,
       assignedMessageIds: ["message-1"], preparedInput: "hello world", turnOptions: null,
     });
     const lease = acquireIntendedInstanceLease({
@@ -513,10 +669,10 @@ describe("launch claim: lease binding authority is Task 4's brand-gated acquisit
   it("REVIEWER ATTACK -- a native_session lease for REAL conflicts with one for GHOST on replay", () => {
     setup();
     const real = nativeSessionLease("REAL-session");
-    createLaunchClaim(claimInput({ leaseBindings: [instanceLease(), real] }));
+    createLaunchClaim(claimInput({ leaseBindings: [real] }));
     const ghost = nativeSessionLease("GHOST-session");
     assert.throws(
-      () => createLaunchClaim(claimInput({ leaseBindings: [instanceLease(), ghost] })),
+      () => createLaunchClaim(claimInput({ leaseBindings: [ghost] })),
       /identity mismatch/
     );
   });
@@ -1290,6 +1446,7 @@ describe("launch claim: pre-submission rollback fence", () => {
     return createLaunchIntent({
       ...binding(),
       attemptId: "attempt-1",
+      lifecycleOwner: "version_three_worker",
       route: versionThreeRoute(),
       expectedLease: { kind: "instance", capacityClass: "default", capacityLimit: 4 },
       assignedMessageIds: ["message-1"],
@@ -1342,6 +1499,37 @@ describe("launch claim: pre-submission rollback fence", () => {
     assert.equal(await acquire.exit, "acquired");
     assert.equal(await rollback.exit, "rolled_back");
     assert.equal(readLaunchClaim(binding()).submissionState, "rollback_complete");
+    assert.equal(exactHolderPresent(), false);
+  });
+
+  it("lets a stale rollback releaser converge after its peer completed the same tombstone", () => {
+    setup();
+    createRaceIntent();
+    const lease = acquireIntendedInstanceLease({
+      ...binding(),
+      attemptId: "attempt-1",
+      route: versionThreeRoute(),
+      harnessId: V3_HARNESS_ID,
+      instanceKey: V3_INSTANCE_KEY,
+      capacityClass: "default",
+      capacityLimit: 4,
+    });
+    bindLaunchClaimLeases({ ...binding(), attemptId: "attempt-1", leases: [lease] });
+    const current = readLaunchClaim(binding());
+    const rollback = beginPreSubmissionRollback({
+      ...binding(), token: launchClaimRollbackEligibility(current).token,
+    });
+
+    assert.deepEqual(releaseLeasesForPreSubmissionRollback({ claim: rollback }), {
+      outcome: "all", released: true,
+    });
+    assert.equal(
+      completePreSubmissionRollback({ ...binding(), attemptId: "attempt-1" }).submissionState,
+      "rollback_complete",
+    );
+    assert.deepEqual(releaseLeasesForPreSubmissionRollback({ claim: rollback }), {
+      outcome: "all", released: true,
+    });
     assert.equal(exactHolderPresent(), false);
   });
 

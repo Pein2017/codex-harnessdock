@@ -1,19 +1,20 @@
 ---
 name: spawn-agent
-description: 'Experimental: start a durable Agent asynchronously on one fully stated route (harness, model, topology, write, reasoning_effort).'
+description: 'Experimental: start an async durable Agent on one explicit route (harness, model, topology, write, reasoning_effort).'
 ---
 
 # Spawn Agent
 
 Call `mcp__codex_harnessdock__spawn_agent` with `task_name`, self-contained
-`message`, and `harness`, `model`, `topology`, `write`, and `reasoning_effort` (required for every route, freshly validated by the Driver); optional `description`.
-No default Harness or route. Trusted Codex metadata owns cwd/root; never pass
-environment, session, or fork selectors. If unavailable, report Plugin startup or discovery failure; never use a shell fallback.
+`message`, and `harness`, `model`, `topology`, `write`, and `reasoning_effort` (required for every route);
+optional `description`. Trusted Codex metadata owns cwd/root.
+`target_worktree`: exact absolute registered sibling; confirm both checkouts. Omission
+uses control; target is spawn-only/frozen. Never pass cwd/directory, env,
+session, or fork selectors. No create/repair/retarget/approval brokerage.
+No default route. If unavailable, report Plugin startup or discovery failure; never use shell fallback.
 
 Release drift: use the exact retained Skill path; latest-version instructions
 are emergency-only; `HARNESSDOCK_MCP_RESTART_REQUIRED` means new Codex task. Never repair Plugin Cache.
-
-## Routes
 
 `$codex-harnessdock:list-harnesses` reports what is ready from fresh native
 discovery; use full model IDs.
@@ -41,8 +42,6 @@ CC subscription, usage, allowance, credit, or quota exhaustion: stop further
 real Claude tests; do not retry or fall back. A generic transient 429 may use
 bounded reconnect.
 
-## Authority and topology
-
 `write: false` is behavioral read/review-only authority; `write: true` permits
 task-scoped mutation. Pi `write: false` allows only `read`, `grep`, `find`, and
 `ls`; Pi `write: true` also allows `bash`, `edit`, and `write`. Authority is
@@ -66,6 +65,5 @@ effective teammate model, effort, and cost are unknown. At most three active
 teammates and six creations are behavioral limits, not containment.
 Transport never auto-reconnects: an explicit follow-up forms a fresh native team; `Workflow` remains disabled.
 
-On success: `model`, role, `agent_name`, authority, `status`; no final Claude
-text, JSON, or internal IDs. Operator diagnostics holds actionable
-failure/recovery detail; `blocking` uses its `retry`.
+On success: exactly `agent_name`, `model`, and `status`; never worktree paths,
+final Harness text, JSON, or internal IDs. Operator diagnostics hold actionable failure/recovery detail.

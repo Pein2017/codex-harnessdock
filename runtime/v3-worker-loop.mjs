@@ -94,6 +94,8 @@ const WORKER_LOOP_INPUT_FIELDS = Object.freeze([
   "assignedMessageIds",
   "assignedInputs",
   "leaseBindings",
+  "controlRoot",
+  "executionRoot",
   "workspaceRoot",
   "env",
   "signal",
@@ -207,7 +209,7 @@ function snapshotWorkerLoopInput(input) {
   for (const field of [
     "ownerRootId", "agentId", "jobId", "attemptId", "route", "driver",
     "preparedTurn", "preparedInput", "assignedMessageIds", "leaseBindings",
-    "workspaceRoot", "cwd",
+    "cwd",
     // Stated, not necessarily non-empty. The launch core binds it into the
     // durable claim digest; this loop only requires that a value exists.
     "turnOptions",
@@ -215,6 +217,16 @@ function snapshotWorkerLoopInput(input) {
     if (!Object.hasOwn(snapshot, field)) {
       throw new Error(`Version-three worker loop input requires ${field}.`);
     }
+  }
+  const hasSplitRoots = Object.hasOwn(snapshot, "controlRoot") || Object.hasOwn(snapshot, "executionRoot");
+  if (
+    hasSplitRoots &&
+    !(Object.hasOwn(snapshot, "controlRoot") && Object.hasOwn(snapshot, "executionRoot"))
+  ) {
+    throw new Error("Version-three worker loop input must state controlRoot and executionRoot together.");
+  }
+  if (!hasSplitRoots && !Object.hasOwn(snapshot, "workspaceRoot")) {
+    throw new Error("Version-three worker loop input requires its durable roots.");
   }
   const route = validateVersionThreeRoute(snapshot.route, "Version-three worker loop route");
   assertHarnessId(snapshot.driver?.harnessId);
@@ -257,22 +269,26 @@ function snapshotWorkerLoopInput(input) {
     );
   }
 
-  // One canonical workspace root, resolved through the Agent store's own
-  // canonicalizer. `cwd` is where this worker runs; `workspaceRoot` is the
-  // write-authority root its leases bind. They must name the same canonical
-  // workspace, or the Agent registry and the writer lease would be talking
-  // about two different trees -- and the durable record that a later
-  // reconciliation reopens the store from could not name either honestly.
-  // This is pre-launch input validation, so failing closed here is safe.
+  // The detached worker and all durable state stay in the control root. Only
+  // the Driver scope and writer lease use the separately immutable execution
+  // root. Legacy single-root inputs interpret their one stored workspace as
+  // both roots without rewriting durable state.
   const cwd = assertText(snapshot.cwd, "Version-three worker cwd");
-  const declaredWorkspaceRoot = assertText(snapshot.workspaceRoot, "Version-three worker workspaceRoot");
+  const declaredControlRoot = assertText(
+    hasSplitRoots ? snapshot.controlRoot : snapshot.workspaceRoot,
+    "Version-three worker controlRoot",
+  );
+  const declaredExecutionRoot = assertText(
+    hasSplitRoots ? snapshot.executionRoot : snapshot.workspaceRoot,
+    "Version-three worker executionRoot",
+  );
   const canonicalWorkspaceRoot = canonicalAgentWorkspaceRoot(cwd);
-  if (canonicalAgentWorkspaceRoot(declaredWorkspaceRoot) !== canonicalWorkspaceRoot) {
+  if (canonicalAgentWorkspaceRoot(declaredControlRoot) !== canonicalWorkspaceRoot) {
     throw new Error(
-      "Version-three worker workspaceRoot and cwd resolve to different canonical workspaces; " +
-      "one turn has exactly one canonical workspace root."
+      "Version-three worker controlRoot and cwd resolve to different canonical workspaces."
     );
   }
+  const canonicalExecutionRoot = canonicalAgentWorkspaceRoot(declaredExecutionRoot);
 
   return Object.freeze({
     ownerRootId: assertText(snapshot.ownerRootId, "Version-three worker ownerRootId"),
@@ -291,7 +307,9 @@ function snapshotWorkerLoopInput(input) {
     assignedInputs,
     promptMessageIds: Object.freeze(assignedMessageIds.filter((id) => !activeInputIds.includes(id))),
     leaseBindings,
-    workspaceRoot: declaredWorkspaceRoot,
+    controlRoot: canonicalWorkspaceRoot,
+    executionRoot: canonicalExecutionRoot,
+    workspaceRoot: canonicalExecutionRoot,
     canonicalWorkspaceRoot,
     env: plainDataTree(snapshot.env ?? {}, "Version-three worker env", 3),
     signal: snapshot.signal ?? null,
@@ -318,6 +336,7 @@ function launchInputOf(snapshot) {
     agentId: snapshot.agentId,
     jobId: snapshot.jobId,
     attemptId: snapshot.attemptId,
+    lifecycleOwner: "version_three_worker",
     route: snapshot.route,
     driver: snapshot.driver,
     preparedTurn: snapshot.preparedTurn,
@@ -325,7 +344,8 @@ function launchInputOf(snapshot) {
     assignedMessageIds: snapshot.assignedMessageIds,
     assignedInputs: [],
     leaseBindings: snapshot.leaseBindings,
-    workspaceRoot: snapshot.workspaceRoot,
+    controlRoot: snapshot.controlRoot,
+    executionRoot: snapshot.executionRoot,
     env: snapshot.env,
     signal: snapshot.signal,
     deadlineAt: snapshot.deadline?.text ?? null,
@@ -1425,6 +1445,8 @@ export async function runVersionThreeWorkerLoop(input) {
       // The canonical root, not this worker's working directory: a later
       // reconciliation reopens the Agent store and completion inbox from it.
       workspaceRoot: snapshot.canonicalWorkspaceRoot,
+      controlRoot: snapshot.canonicalWorkspaceRoot,
+      executionRoot: snapshot.executionRoot,
       route: snapshot.route,
       nativeTurnRef: launchClaim.nativeTurnRef,
     });

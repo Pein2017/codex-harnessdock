@@ -27,6 +27,7 @@ import {
 import { validateVersionThreeRoute } from "./durable-state-v3.mjs";
 import { validateNativeReferenceEnvelope } from "./native-reference.mjs";
 import { plainDataTree, plainRecordSnapshot } from "./plain-record.mjs";
+import { admitTargetWorktree } from "./target-worktree-admission.mjs";
 import { types } from "node:util";
 
 /**
@@ -44,10 +45,13 @@ const LAUNCH_INPUT_FIELDS = Object.freeze([
   "assignedInputs",
   "assignedMessageIds",
   "attemptId",
+  "controlRoot",
   "deadlineAt",
   "driver",
   "env",
+  "executionRoot",
   "jobId",
+  "lifecycleOwner",
   "leaseBindings",
   "nativeSessionRef",
   "ownerRootId",
@@ -135,7 +139,7 @@ function snapshotLaunchInput(input) {
   }
   for (const field of [
     "ownerRootId", "agentId", "jobId", "attemptId", "route", "driver", "preparedTurn",
-    "preparedInput", "assignedMessageIds", "leaseBindings", "workspaceRoot",
+    "preparedInput", "assignedMessageIds", "leaseBindings", "lifecycleOwner",
     // Stated, not necessarily non-empty: a route whose Driver owns no turn
     // options states `null`. Omission is refused so no attempt is ever
     // claimed, digested, or submitted under options nobody declared.
@@ -144,6 +148,16 @@ function snapshotLaunchInput(input) {
     if (!Object.hasOwn(snapshot, field)) {
       throw new Error(`Version-three worker launch input requires ${field}.`);
     }
+  }
+  const hasSplitRoots = Object.hasOwn(snapshot, "controlRoot") || Object.hasOwn(snapshot, "executionRoot");
+  if (
+    hasSplitRoots &&
+    !(Object.hasOwn(snapshot, "controlRoot") && Object.hasOwn(snapshot, "executionRoot"))
+  ) {
+    throw new Error("Version-three worker launch input must state controlRoot and executionRoot together.");
+  }
+  if (!hasSplitRoots && !Object.hasOwn(snapshot, "workspaceRoot")) {
+    throw new Error("Version-three worker launch input requires its durable roots.");
   }
   /** @type {Record<string, *>} */
   const stable = {
@@ -164,6 +178,8 @@ function snapshotLaunchInput(input) {
     assignedInputs: snapshot.assignedInputs == null
       ? Object.freeze([])
       : snapshotArray(snapshot.assignedInputs, "Version-three worker assignedInputs"),
+    controlRoot: hasSplitRoots ? snapshot.controlRoot : snapshot.workspaceRoot,
+    executionRoot: hasSplitRoots ? snapshot.executionRoot : snapshot.workspaceRoot,
   };
   return Object.freeze(stable);
 }
@@ -272,7 +288,7 @@ export async function launchVersionThreeTurn(input) {
     taskInput: snapshot.preparedInput,
     turnOptions,
     assignedInputs: snapshot.assignedInputs,
-    workspaceRoot: snapshot.workspaceRoot,
+    workspaceRoot: snapshot.executionRoot,
     deadlineAt: snapshot.deadlineAt ?? null,
     signal: snapshot.signal ?? null,
     env: snapshot.env ?? {},
@@ -283,7 +299,10 @@ export async function launchVersionThreeTurn(input) {
   const identity = claimIdentity(snapshot);
   const created = verifyPreparedLaunchClaim({
     ...identity,
+    lifecycleOwner: snapshot.lifecycleOwner,
     route,
+    controlRoot: snapshot.controlRoot,
+    executionRoot: snapshot.executionRoot,
     assignedMessageIds: snapshot.assignedMessageIds,
     preparedInput: snapshot.preparedInput,
     turnOptions,
@@ -304,6 +323,22 @@ export async function launchVersionThreeTurn(input) {
     launchContext = await driver.revalidatePreparedTurn(preparedTurn, scope);
   } catch (error) {
     throw launchFailure(error, "not_submitted", { acceptancePersisted: false });
+  }
+  if (snapshot.executionRoot !== snapshot.controlRoot) {
+    try {
+      const admitted = admitTargetWorktree({
+        controlRoot: snapshot.controlRoot,
+        targetWorktree: snapshot.executionRoot,
+      });
+      if (
+        admitted.controlRoot !== snapshot.controlRoot ||
+        admitted.executionRoot !== snapshot.executionRoot
+      ) {
+        throw new Error("target_owner_drift");
+      }
+    } catch (error) {
+      throw launchFailure(error, "not_submitted", { acceptancePersisted: false });
+    }
   }
   const submission = await claimNativeSubmissionStartAsync(identity);
   if (!submission.started) {

@@ -385,11 +385,15 @@ export async function runTrackedJob(job, runner, options = {}) {
       execution.payload?.failureClass === "cancelled_or_interrupted";
     // A successful result that raced with SIGINT remains completed. An
     // observed interrupted terminal is kept separate from destructive cancel.
-    const completionStatus = interrupted
+    const statedTerminalStatus = ["completed", "failed", "interrupted", "unknown"]
+      .includes(execution.terminalStatus)
+      ? execution.terminalStatus
+      : null;
+    const completionStatus = statedTerminalStatus ?? (interrupted
       ? "interrupted"
       : execution.exitStatus === 0
         ? "completed"
-        : "failed";
+        : "failed");
     const completedAt = nowIso();
     const terminalData = {
       threadId: execution.threadId ?? null,
@@ -403,7 +407,7 @@ export async function runTrackedJob(job, runner, options = {}) {
           ? "done"
           : completionStatus === "interrupted"
             ? "interrupted"
-            : "failed",
+            : completionStatus === "unknown" ? "unknown" : "failed",
       completedAt,
       summary: execution.summary,
       result: execution.payload,

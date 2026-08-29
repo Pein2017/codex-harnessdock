@@ -527,6 +527,13 @@ function validateAgent(agent, rootThreadId, workspaceRoot) {
   assertText(agent.agentId, "Agent ID");
   if (agent.rootThreadId !== rootThreadId) throw new Error("Agent root does not match its registry.");
   if (agent.workspaceRoot !== workspaceRoot) throw new Error("Agent workspace does not match its registry.");
+  const executionRoot = agent.executionRoot ?? agent.workspaceRoot;
+  if (
+    typeof executionRoot !== "string" || executionRoot.includes("\0") ||
+    !path.isAbsolute(executionRoot) || path.normalize(executionRoot) !== executionRoot
+  ) {
+    throw new Error("Agent execution root is invalid.");
+  }
   const name = displayName(agent.name);
   if (agent.normalizedName !== normalizedName(name) || agent.path !== agentPath(name)) {
     throw new Error("Agent name or flat path is invalid.");
@@ -610,9 +617,13 @@ function validateRegistry(registry, rootThreadId, workspaceRoot, directory) {
   const normalizedAgents = {};
   for (const [agentId, agent] of Object.entries(registry.agents)) {
     if (agentId !== agent.agentId) throw new Error("Agent registry ID index is invalid.");
-    const normalizedAgent = agent.version === AGENT_RECORD_VERSION_V3
-      ? agent
-      : { ...agent, delegationMode: agent.delegationMode ?? "leaf" };
+    const normalizedAgent = {
+      ...agent,
+      executionRoot: agent.executionRoot ?? agent.workspaceRoot,
+      ...(agent.version === AGENT_RECORD_VERSION_V3
+        ? {}
+        : { delegationMode: agent.delegationMode ?? "leaf" }),
+    };
     validateAgent(normalizedAgent, root, workspaceRoot);
     if (expectedNames[normalizedAgent.normalizedName]) throw new Error("Agent registry contains duplicate normalized names.");
     expectedNames[normalizedAgent.normalizedName] = agentId;
@@ -931,6 +942,7 @@ function publicAgent(agent) {
     ...(versionThree ? { topology: route.topology, authority: route.authority } : {}),
     rootThreadId: agent.rootThreadId,
     workspaceRoot: agent.workspaceRoot,
+    executionRoot: agent.executionRoot ?? agent.workspaceRoot,
     activeJobId: agent.activeJobId,
     latestJobId: agent.latestJobId,
     ...claudeSession,
@@ -1076,6 +1088,7 @@ function recordFromVersionThreeInput(input, rootThreadId, workspaceRoot) {
     agentId,
     rootThreadId,
     workspaceRoot,
+    executionRoot: canonicalWorkspace(input?.executionRoot ?? workspaceRoot),
     name,
     normalizedName: normalizedName(name),
     path: agentPath(name),
@@ -1105,6 +1118,7 @@ function recordFromInput(input, rootThreadId, workspaceRoot, storeHarness) {
     agentId,
     rootThreadId,
     workspaceRoot,
+    executionRoot: canonicalWorkspace(input?.executionRoot ?? workspaceRoot),
     name,
     normalizedName: normalizedName(name),
     path: agentPath(name),
@@ -1371,6 +1385,7 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir, harness, w
         "agentId",
         "rootThreadId",
         "workspaceRoot",
+        "executionRoot",
         "name",
         "normalizedName",
         "path",

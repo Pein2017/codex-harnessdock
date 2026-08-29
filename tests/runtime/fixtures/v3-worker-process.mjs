@@ -86,6 +86,7 @@ async function run() {
     createLaunchIntent({
       ...identity,
       attemptId: payload.attemptId,
+      lifecycleOwner: "version_three_worker",
       route,
       expectedLease: payload.nativeSessionId == null
         ? { kind: "instance", capacityClass: payload.capacityClass, capacityLimit: 1 }

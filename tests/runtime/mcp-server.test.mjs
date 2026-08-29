@@ -74,8 +74,13 @@ describe("typed HarnessDock MCP server", () => {
     assert.equal(Object.hasOwn(spawn.inputSchema.properties, "execution_profile"), false);
     assert.equal(Object.hasOwn(spawn.inputSchema.properties, "allowed_tools"), false);
     assert.equal(Object.hasOwn(spawn.inputSchema.properties, "delegation_mode"), false);
+    assert.deepEqual(Object.keys(spawn.inputSchema.properties), [
+      "task_name", "message", "description", "harness", "model", "topology", "write", "target_worktree", "reasoning_effort",
+    ]);
     assert.deepEqual(spawn.inputSchema.properties.harness.enum, ["claude-code", "opencode", "pi"]);
     assert.deepEqual(spawn.inputSchema.properties.topology.enum, ["leaf", "native_orchestrator"]);
+    assert.equal(spawn.inputSchema.properties.target_worktree.type, "string");
+    assert.match(spawn.inputSchema.properties.target_worktree.description, /absolute[\s\S]*spawn-only[\s\S]*worktree/i);
     assert.match(spawn.description, /explicitly stated route/i);
     assert.match(spawn.description, /frozen on the Agent/i);
     assert.match(spawn.inputSchema.properties.write.description, /Required behavioral authority[\s\S]*false[\s\S]*true permits[\s\S]*Process access is unchanged/i);
@@ -345,17 +350,8 @@ describe("typed HarnessDock MCP server", () => {
     const receipts = {
       spawn_agent: {
         agent_name: "/root/compact",
-        harness: "claude-code",
-        route_maturity: null,
         model: "claude-sonnet-5",
-        reasoning_effort: null,
-        authority: "behavioral_read_only",
-        delegation_mode: "leaf",
         status: "working",
-        phase: "thinking",
-        started_at: "2026-08-07T00:00:00.000Z",
-        last_activity_at: null,
-        elapsed_seconds: 3,
       },
       followup_task: {
         agent_name: "/root/compact",
@@ -427,6 +423,43 @@ describe("typed HarnessDock MCP server", () => {
       assert.equal(Object.hasOwn(call.input, "dangerously_skip_permissions"), false);
       assert.equal(Object.hasOwn(call.input, "permission_mode"), false);
     }
+  });
+
+  it("forwards target_worktree only to spawn and never adds either path to its compact receipt", async () => {
+    const target = "/tmp/harnessdock target/linked";
+    const calls = [];
+    const receipt = { agent_name: "/root/targeted", model: "claude-sonnet-5", status: "working" };
+    const { client, server } = await inMemoryClient(() => runtimeMethods((name, input) => {
+      calls.push({ name, input });
+      return receipt;
+    }));
+    closers.push(() => client.close(), () => server.close());
+
+    const result = await client.callTool({
+      name: "spawn_agent",
+      arguments: {
+        task_name: "targeted",
+        message: "bounded task",
+        harness: "claude-code",
+        model: "claude-sonnet-5",
+        reasoning_effort: "high",
+        topology: "leaf",
+        write: false,
+        target_worktree: target,
+      },
+      _meta: meta,
+    });
+    assert.equal(calls[0].input.target_worktree, target);
+    assert.deepEqual(result.structuredContent, receipt);
+    assert.equal(JSON.stringify(result).includes(target), false);
+
+    const followup = await client.callTool({
+      name: "followup_task",
+      arguments: { target: "/root/targeted", message: "continue", target_worktree: target },
+      _meta: meta,
+    });
+    assert.equal(followup.isError, true);
+    assert.equal(calls.length, 1);
   });
 
   it("binds every call to trusted Codex thread and workspace metadata", async () => {

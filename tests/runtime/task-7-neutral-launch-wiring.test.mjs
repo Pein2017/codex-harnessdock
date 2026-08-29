@@ -573,6 +573,7 @@ describe("Task 7 correction — turn options are durably bound to the launch cla
       launchVersionThreeTurn({
         ...binding,
         attemptId: "attempt-omit",
+        lifecycleOwner: "version_three_worker",
         route,
         driver,
         preparedTurn: driver.prepareTurn({ route, taskInput: preparedInput }),
@@ -608,6 +609,7 @@ describe("Task 7 correction — turn options are durably bound to the launch cla
     const launchInput = (turnOptions) => ({
       ...binding,
       attemptId: "attempt-sub",
+      lifecycleOwner: "version_three_worker",
       route,
       driver,
       preparedTurn: { ...driver.prepareTurn({ route, taskInput: preparedInput }), turnOptions },
@@ -622,6 +624,7 @@ describe("Task 7 correction — turn options are durably bound to the launch cla
     createLaunchClaim({
       ...binding,
       attemptId: "attempt-sub",
+      lifecycleOwner: "version_three_worker",
       route,
       leaseBindings: [lease],
       assignedMessageIds: ["message-1"],

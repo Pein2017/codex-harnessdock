@@ -923,6 +923,9 @@ function preTransportRejection(cause) {
  */
 export function createClaudeCodeDriverV2(options = {}) {
   const fixedEnv = options.env ?? process.env;
+  const jobStateRoot = options.jobStateRoot ?? null;
+  const sessionName = String(options.sessionName ?? "").trim() || null;
+  const reportProgress = typeof options.onProgress === "function" ? options.onProgress : undefined;
   const runTurnSession = options.runTurnSession ?? runClaudeTaskSession;
   const requestInterruptSignal = options.requestInterrupt ?? requestClaudeInterrupt;
   const observeAvailability = options.observeAvailability ?? getClaudeAvailability;
@@ -1340,7 +1343,7 @@ export function createClaudeCodeDriverV2(options = {}) {
       let nativeSettled = false;
 
       const sessionPromise = (async () => runTurnSession({
-        workspaceRoot,
+        workspaceRoot: jobStateRoot ?? workspaceRoot,
         jobId: turnId,
         cwd: workspaceRoot,
         prompt: envelope.taskInput,
@@ -1350,8 +1353,10 @@ export function createClaudeCodeDriverV2(options = {}) {
           ...profile.claudeOptions,
           claudeBin: executable,
           delegationMode,
+          sessionName: sessionName ?? undefined,
           resumeSessionId: resumeSessionId ?? undefined,
         },
+        onProgress: reportProgress,
         harnessInstance: {
           harnessId: CLAUDE_CODE_HARNESS_ID,
           instanceKey: route.instanceKey,

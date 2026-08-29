@@ -61,6 +61,10 @@ const exactTarget = z.string().trim().min(1).describe(
   "Exact current-root Agent ID, /root/<task_name>, or normalized name."
 );
 const message = z.string().trim().min(1);
+const targetWorktree = z.string().refine(
+  (value) => path.isAbsolute(value) && !value.includes("\0"),
+  "must be an absolute target worktree path",
+);
 const executionFields = {
   reasoning_effort: boundedRouteAtom,
 };
@@ -88,6 +92,9 @@ const TOOL_DEFINITIONS = Object.freeze({
       write: z.boolean().describe(
         "Required behavioral authority: false is read/review-only; true permits task-scoped writes. Process access is unchanged."
       ),
+      target_worktree: targetWorktree.describe(
+        "Absolute spawn-only worktree."
+      ).optional(),
       ...executionFields,
     }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },

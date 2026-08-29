@@ -54,6 +54,7 @@ import {
 import { projectAgentCard } from "./agent-card.mjs";
 import { enqueueControlCommand } from "./turn-control.mjs";
 import { reconcilePreparedVersionThreeTurns } from "./v3-worker-entry.mjs";
+import { admitTargetWorktree } from "./target-worktree-admission.mjs";
 
 const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "interrupted", "cancelled", "unknown"]);
 const TERMINAL_AGENT_STATUSES = new Set(["completed", "interrupted", "errored"]);
@@ -370,9 +371,9 @@ function observedAgentJob(agent, job, ownerRootId) {
 }
 
 function publicSpawnReceipt(cwd, agent) {
-  const job = agent.activeJobId ? readJobFile(cwd, agent.activeJobId) : null;
   return {
-    ...projectAgentCard(agent, job),
+    agent_name: agent.path,
+    model: agent.route?.model ?? agent.model,
     status: canonicalAgentStatus(agent),
   };
 }
@@ -1004,12 +1005,13 @@ class AgentRuntime {
    * cannot be handed the turn, the activation and its unread first message are
    * rolled back so nothing half-exists.
    */
-  async spawnVersionThreeAgent({ accepted, taskName, description, message, jobId, turnOptions }) {
+  async spawnVersionThreeAgent({ accepted, taskName, description, message, jobId, turnOptions, executionRoot }) {
     const store = this.versionThreeStore();
     const agent = store.createAgent({
       task_name: taskName,
       description,
       route: accepted.route,
+      executionRoot,
       initialMessage: message,
     });
     const initialMessage = store.listMessages(agent.agentId)[0];
@@ -1112,7 +1114,7 @@ class AgentRuntime {
    * refuses, or a capability snapshot needing an approval broker all fail here,
    * before any readiness side effect, durable write, session, or native turn.
    */
-  async acceptStatedRoute(input, label) {
+  async acceptStatedRoute(input, label, executionRoot = this.cwd) {
     const harnessId = assertText(input.harness, `${label} harness`);
     if (!ADMITTED_GENERATION_HARNESS_IDS.includes(harnessId)) {
       throw new Error(
@@ -1129,7 +1131,7 @@ class AgentRuntime {
       throw new Error(`${label} requires explicit reasoning_effort.`);
     }
     // One route-time readiness observation, through the runtime's own seam.
-    const observed = await this.jobs.inspectRouteInstance(harnessId);
+    const observed = await this.jobs.inspectRouteInstance(harnessId, executionRoot);
     const driver = observed.driver;
     const request = {
       harnessId,
@@ -1166,6 +1168,11 @@ class AgentRuntime {
       "permission_mode",
       "dangerously_skip_permissions",
       "allowed_tools",
+      "cwd",
+      "directory",
+      "working_directory",
+      "workspace_root",
+      "env_file",
     ]) {
       if (input[key] != null) throw new Error(`spawn_agent does not support ${key}.`);
     }
@@ -1174,9 +1181,22 @@ class AgentRuntime {
       throw new Error("spawn_agent task_name must match [a-z0-9_]+.");
     }
     const message = assertText(input.message, "spawn_agent message");
+    const { executionRoot } = admitTargetWorktree({
+      controlRoot: this.cwd,
+      targetWorktree: input.target_worktree,
+    });
     // The whole route is the caller's explicit decision, accepted before any
     // readiness side effect or durable Agent reservation exists.
-    const accepted = await this.acceptStatedRoute(input, "spawn_agent");
+    const accepted = await this.acceptStatedRoute(input, "spawn_agent", executionRoot);
+    if (input.target_worktree != null) {
+      const revalidated = admitTargetWorktree({
+        controlRoot: this.cwd,
+        targetWorktree: executionRoot,
+      });
+      if (revalidated.executionRoot !== executionRoot) {
+        throw Object.assign(new Error("target_owner_drift"), { code: "target_owner_drift" });
+      }
+    }
     const jobId = generateJobId("hd-agent");
     // Reasoning effort is Driver-discriminated: the Driver that owns the accepted
     // route decides whether one is admitted at all, and it decides here, before
@@ -1198,6 +1218,7 @@ class AgentRuntime {
         message,
         jobId,
         turnOptions: acceptedTurnOptions,
+        executionRoot,
       });
     }
     const driver = this.jobs.driverForHarness(accepted.route.harnessId);
@@ -1219,7 +1240,7 @@ class AgentRuntime {
     // so this can only ever remove a duplicate, never a check.
     const readinessReceipt = accepted.launchReadiness?.ready === true
       ? accepted.launchReadiness
-      : this.jobs.assertReady(driver.harnessId);
+      : this.jobs.assertReady(driver.harnessId, executionRoot);
     // Every new Agent gets the version-three identity plane: the whole route is
     // immutable from creation. Its TURNS still run on the version-one
     // supervisor, which is a separate question with a separate owner
@@ -1230,6 +1251,7 @@ class AgentRuntime {
       task_name: taskName,
       description: input.description,
       route: accepted.route,
+      executionRoot,
       initialMessage: message,
     });
     const initialMessage = store.listMessages(agent.agentId)[0];
@@ -1243,6 +1265,8 @@ class AgentRuntime {
         agentId: agent.agentId,
         sessionName: agent.name,
         title: `${driver.harnessId} Agent ${agent.name}`,
+        executionRoot,
+        route: accepted.route,
       });
     } catch (error) {
       // A sender may have reached this newly-created Agent while local job
@@ -1265,7 +1289,9 @@ class AgentRuntime {
       const attached = this.jobs.attachPreparedStart(prepared, agent.agentId);
       launchAttempted = true;
       const assigned = activation.assignedMessages;
-      await this.jobs.launchPreparedStart(attached, messageText(assigned));
+      await this.jobs.launchPreparedStart(attached, messageText(assigned), {
+        assignedMessageIds: assigned.map((message) => message.messageId),
+      });
       this.markInitialPromptMessages(agent.agentId, jobId, assigned, store);
       return publicSpawnReceipt(this.cwd, store.resolveTarget(agent.agentId));
     } catch (error) {
@@ -1511,7 +1537,10 @@ class AgentRuntime {
     }
     // A frozen route's behavioral authority is immutable: a follow-up inherits
     // it and can never widen, narrow, or restate it.
-    for (const key of ["write", "harness", "topology"]) {
+    for (const key of [
+      "write", "harness", "topology", "target_worktree",
+      "cwd", "directory", "working_directory", "workspace_root", "env_file",
+    ]) {
       if (input[key] != null) {
         throw new Error(
           `followup_task does not accept ${key}: an Agent's route and behavioral authority are frozen at ` +
@@ -1675,6 +1704,8 @@ class AgentRuntime {
         title: initialActivation
           ? `${driver.harnessId} Agent ${agent.name} initial activation`
           : `${driver.harnessId} Agent ${agent.name} follow-up`,
+        executionRoot: agent.executionRoot ?? agent.workspaceRoot,
+        route: agent.route,
       }
     );
     let activation = this.store.reserveActivation(agent.agentId, jobId, {
@@ -1729,7 +1760,9 @@ class AgentRuntime {
     try {
       const attached = this.jobs.attachPreparedStart(prepared, agent.agentId);
       launchAttempted = true;
-      await this.jobs.launchPreparedStart(attached, prompt);
+      await this.jobs.launchPreparedStart(attached, prompt, {
+        assignedMessageIds: assigned.map((message) => message.messageId),
+      });
       this.markInitialPromptMessages(agent.agentId, jobId, assigned);
       return publicFollowupReceipt(
         this.store.resolveTarget(agent.agentId),

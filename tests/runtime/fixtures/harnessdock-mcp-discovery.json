@@ -1,5 +1,5 @@
 {
-  "generation": 7,
+  "generation": 8,
   "tools": [
     {
       "name": "list_harnesses",
@@ -59,6 +59,10 @@
           "write": {
             "type": "boolean",
             "description": "Required behavioral authority: false is read/review-only; true permits task-scoped writes. Process access is unchanged."
+          },
+          "target_worktree": {
+            "type": "string",
+            "description": "Absolute spawn-only worktree."
           },
           "reasoning_effort": {
             "type": "string",

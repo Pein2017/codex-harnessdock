@@ -163,6 +163,7 @@ export function reconcilePreparedVersionThreeTurns({ cwd, ownerRootId, reconcili
   if (!Number.isFinite(startedAt)) throw new Error("Pre-submission reconciliation requires its pass start time.");
   const receipts = [];
   for (const claim of listLaunchClaimsForOwnerRoot({ ownerRootId })) {
+    if (claim.lifecycleOwner !== "version_three_worker") continue;
     const immediatelyCompletable = claim.submissionState === "rollback_in_progress";
     const ageEligible = (
       claim.acceptance === "acceptance_rejected" ||
@@ -224,6 +225,9 @@ export async function runDetachedVersionThreeTurn(input) {
   if (!claim || claim.attemptId !== attemptId) {
     throw new Error(`Version-three worker found no exact prepared claim for attempt ${attemptId}.`);
   }
+  if (claim.lifecycleOwner !== "version_three_worker") {
+    throw new Error(`Version-three worker refuses claim ${jobId} owned by another or legacy lifecycle.`);
+  }
   const { taskInput, assignedMessageIds } = requireAssignedInput(
     store, agent, jobId, claim.assignedMessageIds
   );
@@ -242,19 +246,37 @@ export async function runDetachedVersionThreeTurn(input) {
         kind: "session",
         route,
       });
-  const preparedLease = claim.leaseBindings[0];
+  const controlRoot = agent.workspaceRoot ?? canonicalAgentWorkspaceRoot(cwd);
+  const executionRoot = agent.executionRoot ?? controlRoot;
+  if (
+    claim.controlRoot != null &&
+    (claim.controlRoot !== controlRoot || claim.executionRoot !== executionRoot)
+  ) {
+    throw new Error("Version-three worker Agent roots do not match its durable launch claim.");
+  }
+  const admissionLease = claim.leaseBindings.find((binding) =>
+    binding.kind === (nativeSessionRef == null ? "instance" : "native_session")
+  );
+  const writerLease = claim.leaseBindings.find((binding) => binding.kind === "writer") ?? null;
   if (claim.leaseState !== "acquired") {
     throw new Error("Version-three worker claim has no durable acquired lease proof.");
   }
-  if (nativeSessionRef == null && preparedLease?.kind !== "instance") {
+  if (nativeSessionRef == null && admissionLease?.kind !== "instance") {
     throw new Error("Fresh version-three worker claim does not hold its prepared instance lease.");
   }
   if (
     nativeSessionRef != null &&
-    (preparedLease?.kind !== "native_session" ||
-      preparedLease.keyFields.nativeSessionId !== nativeSessionRef.locator.sessionId)
+    (admissionLease?.kind !== "native_session" ||
+      admissionLease.keyFields.nativeSessionId !== nativeSessionRef.locator.sessionId)
   ) {
     throw new Error("Exact-session worker claim does not match the Agent's persisted validated session.");
+  }
+  const requiresWriter = route.authority === "behavioral_write";
+  if (
+    (requiresWriter && writerLease?.keyFields.workspaceRoot !== executionRoot) ||
+    (!requiresWriter && writerLease != null)
+  ) {
+    throw new Error("Version-three worker claim does not bind the Agent's execution-root writer authority.");
   }
   try {
     return await runVersionThreeWorkerLoop({
@@ -274,7 +296,8 @@ export async function runDetachedVersionThreeTurn(input) {
       // The stored canonical workspace root, never a fresh alias: every lease and
       // writer release in this path must round-trip the exact key the durable
       // record was written under.
-      workspaceRoot: agent.workspaceRoot ?? canonicalAgentWorkspaceRoot(cwd),
+      controlRoot,
+      executionRoot,
       env,
       cwd,
       signal: input.signal ?? null,

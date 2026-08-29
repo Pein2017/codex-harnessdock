@@ -83,6 +83,7 @@ export const V3_JOB_STATUSES = Object.freeze(["running", "unknown", ...V3_TERMIN
 const V3_JOB_FIELDS = Object.freeze([
   "version", "harnessStateVersion",
   "ownerRootId", "agentId", "jobId", "attemptId", "workspaceRoot",
+  "controlRoot", "executionRoot",
   "route", "nativeTurnRef", "status", "uncertainty", "terminalJob",
   "agentProjectionReconciledAt", "completionPublishedAt",
   "createdAt", "updatedAt",
@@ -500,8 +501,15 @@ function validateVersionThreeJobRecord(parsed) {
   for (const field of Object.keys(snapshot)) {
     if (!V3_JOB_FIELDS.includes(field)) throw new Error(`${label} declares an unknown field: ${field}.`);
   }
+  const hasControlRoot = Object.hasOwn(snapshot, "controlRoot");
+  const hasExecutionRoot = Object.hasOwn(snapshot, "executionRoot");
+  if (hasControlRoot !== hasExecutionRoot) {
+    throw new Error(`${label} must state controlRoot and executionRoot together.`);
+  }
   for (const field of V3_JOB_FIELDS) {
-    if (!(field in snapshot)) throw new Error(`${label} is missing required field: ${field}.`);
+    if (!["controlRoot", "executionRoot"].includes(field) && !(field in snapshot)) {
+      throw new Error(`${label} is missing required field: ${field}.`);
+    }
   }
   if (snapshot.version !== V3_JOB_SCHEMA_VERSION) {
     throw taggedError("unsupported_version", `${label} declares unsupported schema version.`);
@@ -546,12 +554,24 @@ function validateVersionThreeJobRecord(parsed) {
   if (!isTerminal && (completionPublishedAt != null || agentProjectionReconciledAt != null)) {
     throw new Error(`${label} cannot claim a terminal projection or completion before it is terminal.`);
   }
+  const workspaceRoot = assertIdentityText(snapshot.workspaceRoot, `${label} workspaceRoot`, 4096);
+  const controlRoot = hasControlRoot
+    ? assertIdentityText(snapshot.controlRoot, `${label} controlRoot`, 4096)
+    : workspaceRoot;
+  const executionRoot = hasExecutionRoot
+    ? assertIdentityText(snapshot.executionRoot, `${label} executionRoot`, 4096)
+    : workspaceRoot;
+  if (workspaceRoot !== controlRoot) {
+    throw new Error(`${label} legacy workspaceRoot must remain its control root.`);
+  }
   return Object.freeze({
     version: V3_JOB_SCHEMA_VERSION,
     harnessStateVersion: JOB_STATE_VERSION_V3,
     ...identity,
     attemptId,
-    workspaceRoot: assertIdentityText(snapshot.workspaceRoot, `${label} workspaceRoot`, 4096),
+    workspaceRoot,
+    controlRoot,
+    executionRoot,
     route,
     nativeTurnRef,
     status: snapshot.status,
@@ -711,7 +731,8 @@ function persist(identity, generation, build) {
  * rather than resetting a lifecycle that may already have advanced.
  */
 export function recordVersionThreeTurnRunning({
-  generation, ownerRootId, agentId, jobId, attemptId, workspaceRoot, route, nativeTurnRef,
+  generation, ownerRootId, agentId, jobId, attemptId, workspaceRoot,
+  controlRoot = workspaceRoot, executionRoot = workspaceRoot, route, nativeTurnRef,
 }) {
   const identity = assertBindingIdentity({ ownerRootId, agentId, jobId });
   return persist(identity, generation, (previous) => {
@@ -723,6 +744,8 @@ export function recordVersionThreeTurnRunning({
       ...identity,
       attemptId,
       workspaceRoot,
+      controlRoot,
+      executionRoot,
       route,
       nativeTurnRef,
       status: "running",
@@ -871,7 +894,7 @@ export function reconcileVersionThreeTerminalJob({ generation, record }) {
     return { reconciled: false, reason: "already_reconciled", agentProjected: true, completionPublished: true };
   }
   const store = createAgentStore({
-    cwd: record.workspaceRoot,
+    cwd: record.controlRoot ?? record.workspaceRoot,
     ownerRootId: record.ownerRootId,
     writeGeneration: generation,
   });

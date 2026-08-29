@@ -56,6 +56,7 @@ import {
 import { launchVersionThreeTurn } from "../../runtime/v3-worker-launch.mjs";
 import {
   PRE_SUBMISSION_RECONCILIATION_AGE_MS,
+  reconcilePreparedVersionThreeTurns,
   rollbackPreparedVersionThreeTurn,
 } from "../../runtime/v3-worker-entry.mjs";
 import { buildLeaseReleaseTargets, runVersionThreeWorkerLoop } from "../../runtime/v3-worker-loop.mjs";
@@ -217,22 +218,14 @@ function setup(options = {}) {
     capacityLimit: 1,
   });
 
-  // Every lease kind this runtime admits, not just the instance lease the
-  // other cases exercise: settlement must release all three together.
+  // A write turn owns one primary admission plus its execution-root writer
+  // lease. Native-session admission is the mutually exclusive continuation
+  // case covered above.
   const nativeSessionId = `session-recon-${sequence}`;
   const leaseBindings = [lease];
   if (options.allLeaseKinds) {
     leaseBindings.push(acquireWorkspaceWriterLease({
       ownerRootId, agentId: agent.agentId, jobId, route, workspaceRoot: options.workspaceRoot ?? workspaceRoot,
-    }));
-    leaseBindings.push(acquireNativeSessionLease({
-      ownerRootId,
-      agentId: agent.agentId,
-      jobId,
-      route,
-      harnessId: route.harnessId,
-      instanceKey: route.instanceKey,
-      nativeSessionId,
     }));
   }
 
@@ -403,6 +396,56 @@ function rawTerminalResultFor(record, { status = "completed", nativeTurnRef = re
 }
 
 describe("version-three worker loss: before native submission (scenario 1)", () => {
+  it("does not let generic v3 reconciliation claim an ownerless supervisor launch", () => {
+    sequence += 1;
+    const ownerRootId = `root-v1-supervisor-collision-${sequence}`;
+    const jobId = `job-v1-supervisor-collision-${sequence}`;
+    const attemptId = `attempt-v1-supervisor-collision-${sequence}`;
+    const route = versionThreeRoute({ instanceKey: `v1-supervisor-${sequence}` });
+    const store = createAgentStore({
+      cwd: workspaceRoot,
+      ownerRootId,
+      writeGeneration: FUTURE_WRITE_GENERATION,
+    });
+    const agent = store.createAgent({
+      task_name: `v1_supervisor_collision_${sequence}`,
+      route,
+      initialMessage: PROMPT,
+    });
+    const reservation = store.reserveActivation(agent.agentId, jobId, { initial: true });
+    const lease = acquireInstanceLease({
+      ownerRootId,
+      agentId: agent.agentId,
+      jobId,
+      route,
+      harnessId: route.harnessId,
+      instanceKey: route.instanceKey,
+      capacityClass: "v1-supervisor-collision",
+      capacityLimit: 1,
+    });
+    createLaunchClaim({
+      ownerRootId,
+      agentId: agent.agentId,
+      jobId,
+      attemptId,
+      lifecycleOwner: "version_one_supervisor",
+      route,
+      leaseBindings: [lease],
+      assignedMessageIds: reservation.assignedMessages.map((message) => message.messageId),
+      preparedInput: PROMPT,
+      turnOptions: null,
+    });
+    const before = store.readAgent(agent.agentId);
+
+    assert.deepEqual(reconcilePreparedVersionThreeTurns({
+      cwd: workspaceRoot,
+      ownerRootId,
+      reconciliationStartedAt: Date.now() + PRE_SUBMISSION_RECONCILIATION_AGE_MS + 1,
+    }), []);
+    assert.deepEqual(store.readAgent(agent.agentId), before);
+    assert.equal(readLaunchClaim({ ownerRootId, agentId: agent.agentId, jobId }).submissionState, "not_started");
+  });
+
   it("finishes an already-owned rollback immediately from the public owning wait path", async () => {
     sequence += 1;
     const payload = {
@@ -647,6 +690,7 @@ describe("version-three worker loss: before native submission (scenario 1)", () 
     const { liveTurn, launchClaim } = await launchVersionThreeTurn({
       ...identity,
       attemptId: claim.attemptId,
+      lifecycleOwner: "version_three_worker",
       route,
       driver: fixture.driver,
       preparedTurn,
@@ -710,6 +754,7 @@ describe("version-three worker loss: during native submission (scenario 2)", () 
       launchVersionThreeTurn({
         ...identity,
         attemptId: claim.attemptId,
+        lifecycleOwner: "version_three_worker",
         route,
         driver: fixture.driver,
         preparedTurn,
@@ -1255,7 +1300,8 @@ describe("Section 5 defense: durable read and projection failures are closed rec
     // reader refuses outright.
     const claimDirectory = resolveLaunchClaimDirectory(context.identity);
     const [existing] = fs.readdirSync(claimDirectory).filter((entry) => entry.endsWith(".json"));
-    fs.copyFileSync(path.join(claimDirectory, existing), path.join(claimDirectory, `forged-${existing}`));
+    const forgedFile = path.join(claimDirectory, `forged-${existing}`);
+    fs.copyFileSync(path.join(claimDirectory, existing), forgedFile);
 
     const { driver, calls } = observingDriver(context.fixture.driver, async (ref, scope, base) => base.observeTurn(ref, scope));
     const receipt = await reconcile(context, driver);
@@ -1265,6 +1311,7 @@ describe("Section 5 defense: durable read and projection failures are closed rec
     assert.ok(receipt.detail === null || /^[A-Za-z_]+$/.test(receipt.detail), `unexpected detail: ${receipt.detail}`);
     assert.equal(context.v3Record().status, "unknown");
     assert.equal(context.leaseHeld(), true);
+    fs.unlinkSync(forgedFile);
   });
 
   it("keeps a terminal record retryable when its projection cannot be completed", async () => {
@@ -1424,21 +1471,19 @@ describe("Section 5 defense: an observation is bounded, and cancellation is not 
 });
 
 describe("Section 5 coverage: leases, cross-process convergence, and restart", () => {
-  it("releases the instance, writer, and native-session leases together", async () => {
+  it("releases the instance and writer leases together", async () => {
     const context = setup({ allLeaseKinds: true, authority: "behavioral_write" });
     await loseTurn(context);
     context.fixture.control.complete(context.turnId(), "completed");
     assert.equal(context.leaseHeld(), true);
     assert.equal(context.writerLeaseHeld(), true);
-    assert.equal(context.nativeSessionLeaseHeld(), true);
 
     const receipt = await reconcile(context, context.fixture.driver);
     assert.equal(receipt.reconciled, true);
     assert.equal(receipt.leaseRelease.outcome, "all");
-    assert.equal(receipt.leaseRelease.releasedCount, 3);
+    assert.equal(receipt.leaseRelease.releasedCount, 2);
     assert.equal(receipt.leaseRelease.retainedCount, 0);
     assert.equal(context.leaseHeld(), false);
-    assert.equal(context.nativeSessionLeaseHeld(), false);
     assert.equal(context.writerLeaseHeld(), false);
     assert.equal(context.events().length, 1);
   });

@@ -16,18 +16,28 @@ import {
   runDetachedVersionThreeTurn,
 } from "./v3-worker-entry.mjs";
 import { createAgentStore } from "./agent-store.mjs";
-import { FUTURE_WRITE_GENERATION } from "./durable-state-v3.mjs";
-import { validateNativeReferenceEnvelope } from "./native-reference.mjs";
+import { FUTURE_WRITE_GENERATION, versionThreeRouteText } from "./durable-state-v3.mjs";
+import {
+  NATIVE_REFERENCE_ENVELOPE_VERSION,
+  validateNativeReferenceEnvelope,
+} from "./native-reference.mjs";
+import { CLAUDE_LOCATOR_VERSION } from "./claude-code-driver.mjs";
 import {
   acquireIntendedInstanceLease,
   acquireIntendedNativeSessionLease,
+  releaseLeasesForPreSubmissionRollback,
+  releaseLeasesOnSettlement,
 } from "./instance-admission-lease.mjs";
 import {
-  bindLaunchClaimLease,
+  beginPreSubmissionRollback,
+  bindLaunchClaimLeases,
+  completePreSubmissionRollback,
   createLaunchIntent,
+  launchClaimRollbackEligibility,
   readLaunchClaim,
   recordLaunchAcceptanceUnknown,
 } from "./launch-claim.mjs";
+import { acquireIntendedWorkspaceWriterLease } from "./workspace-writer-lease.mjs";
 import {
   HARNESS_CAPABILITY_NAMES,
   assertHarnessCapability,
@@ -41,6 +51,7 @@ import {
   admittedDriverDescription,
   validateHarnessTurnResult,
   validateInstanceInspection,
+  validateNormalizedTerminalResult,
 } from "./harness-contract.mjs";
 import {
   ADMITTED_GENERATION_HARNESS_IDS,
@@ -89,6 +100,8 @@ import { configureRuntimePaths, resolvePluginStateRoot, samePath } from "./paths
 import { renderTaskResult } from "./render.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
 import { listVersionThreeJobRecords } from "./v3-job-store.mjs";
+import { buildLeaseReleaseTargets } from "./v3-worker-loop.mjs";
+import { launchVersionThreeTurn } from "./v3-worker-launch.mjs";
 import {
   acknowledgeAgentCompletionEvents,
   readUnreadAgentCompletionSummaries,
@@ -643,6 +656,7 @@ class InternalAgentRuntime {
         }),
       recordWorkerHandoffUncertainty:
         options.launchDependencies?.recordWorkerHandoffUncertainty ?? recordWorkerHandoffUncertainty,
+      resolveDriverV2: options.launchDependencies?.resolveDriverV2 ?? resolveDriverV2,
     };
     this.waitDependencies = {
       watch: options.waitDependencies?.watch ?? fs.watch,
@@ -722,7 +736,7 @@ class InternalAgentRuntime {
    * a caller, a test, or a later generation replaces one function rather than
    * reaching into a Driver. It starts, repairs, and creates nothing.
    */
-  async inspectRouteInstance(harnessId) {
+  async inspectRouteInstance(harnessId, executionRoot = this.cwd) {
     const driver = resolveDriverV2(assertStatedHarnessId(harnessId, "Route instance inspection"), {
       env: this.env,
     });
@@ -730,7 +744,7 @@ class InternalAgentRuntime {
       driver,
       purpose: "inspect",
       rootId: this.ownerRootId,
-      workspaceRoot: this.cwd,
+      workspaceRoot: executionRoot,
       env: this.env,
     }));
     // One host observation per route acceptance. A Harness whose turns run on
@@ -739,7 +753,7 @@ class InternalAgentRuntime {
     // making the same (subprocess-shaped) observation a second time. A Driver
     // that offers none simply returns null and the caller observes for itself.
     const offered = typeof driver.launchPreflightFromInspection === "function"
-      ? driver.launchPreflightFromInspection(this.cwd)
+      ? driver.launchPreflightFromInspection(executionRoot)
       : null;
     return Object.freeze({
       driver,
@@ -752,7 +766,7 @@ class InternalAgentRuntime {
       // `assertReady()` would have produced it.
       launchReadiness: offered == null
         ? null
-        : this.readinessFromPreflight(this.driverForHarness(driver.harnessId), offered),
+        : this.readinessFromPreflight(this.driverForHarness(driver.harnessId), offered, executionRoot),
     });
   }
 
@@ -808,9 +822,9 @@ class InternalAgentRuntime {
     };
   }
 
-  readiness(harnessId = this.generationHarnessId) {
+  readiness(harnessId = this.generationHarnessId, executionRoot = this.cwd) {
     const driver = this.driverForHarness(harnessId);
-    return this.readinessFromPreflight(driver, driver.preflight({ cwd: this.cwd, env: this.env }));
+    return this.readinessFromPreflight(driver, driver.preflight({ cwd: executionRoot, env: this.env }), executionRoot);
   }
 
   /**
@@ -822,7 +836,7 @@ class InternalAgentRuntime {
    * preflight came from a fresh observation or from the one a route acceptance
    * already made.
    */
-  readinessFromPreflight(driver, preflight) {
+  readinessFromPreflight(driver, preflight, executionRoot = this.cwd) {
     return {
       ...preflight,
       harness: {
@@ -831,7 +845,7 @@ class InternalAgentRuntime {
         instanceKey: preflight.instanceKey,
         capabilities: driver.capabilities,
       },
-      cwd: this.cwd,
+      cwd: executionRoot,
       claudeConfigDir: this.env.CLAUDE_CONFIG_DIR ?? null,
       environment: this.environmentReceipt,
       sourceRoot: this.sourceRoot,
@@ -844,18 +858,18 @@ class InternalAgentRuntime {
     };
   }
 
-  assertReady(harnessId) {
+  assertReady(harnessId, executionRoot = this.cwd) {
     const driver = this.driverForHarness(harnessId);
-    const receipt = this.readiness(driver.harnessId);
+    const receipt = this.readiness(driver.harnessId, executionRoot);
     const unready = driver.describeUnreadiness(receipt);
     if (unready) throw new Error(unready);
     return receipt;
   }
 
-  assertPreparedReadiness(receipt, driver = this.driver) {
-    if (receipt == null) return this.assertReady(driver.harnessId);
+  assertPreparedReadiness(receipt, driver = this.driver, executionRoot = this.cwd) {
+    if (receipt == null) return this.assertReady(driver.harnessId, executionRoot);
     return driver.validatePreparedPreflight(receipt, {
-      cwd: this.cwd,
+      cwd: executionRoot,
       env: this.env,
       sourceRoot: this.sourceRoot,
     });
@@ -929,7 +943,8 @@ class InternalAgentRuntime {
     // before it publishes an active Agent reservation. Reuse that exact,
     // scope-bound receipt here so the small reservation-to-job window contains
     // only local durable writes and worker launch.
-    const readiness = this.assertPreparedReadiness(options.readinessReceipt, driver);
+    const executionRoot = fs.realpathSync.native(options.executionRoot ?? this.cwd);
+    const readiness = this.assertPreparedReadiness(options.readinessReceipt, driver, executionRoot);
     const jobId = String(options.jobId ?? "").trim() || generateJobId("hd-agent");
     if (!/^[\w.-]+$/.test(jobId)) throw new Error(`Invalid internal Claude job id: ${jobId}.`);
     const title = options.title ?? "Claude Code Task";
@@ -949,6 +964,8 @@ class InternalAgentRuntime {
         title,
         summary: summaryOf(prompt),
         workspaceRoot: this.cwd,
+        controlRoot: this.cwd,
+        executionRoot,
         write: Boolean(options.write),
         profile,
         // A prepared fact intentionally has no persisted agentId. Losing a
@@ -993,6 +1010,7 @@ class InternalAgentRuntime {
           delegationMode: executionProfile.delegationMode,
           write: Boolean(options.write),
         },
+        route: options.route ?? null,
         status: HARNESS_QUEUED_JOB_STATUS,
         phase: "activation_prepared",
         activationPrepared: true,
@@ -1020,6 +1038,8 @@ class InternalAgentRuntime {
         summary: base.summary,
         profile,
         workspaceRoot: this.cwd,
+        controlRoot: this.cwd,
+        executionRoot,
         launcherPid: process.pid,
         launcherIdentity,
         launcherGeneration,
@@ -1080,7 +1100,7 @@ class InternalAgentRuntime {
     return true;
   }
 
-  async launchPreparedStart(prepared, task) {
+  async launchPreparedStart(prepared, task, options = {}) {
     const jobId = assertJobId(prepared?.jobId);
     const current = readJobFile(this.cwd, jobId);
     const launcher = {
@@ -1112,7 +1132,10 @@ class InternalAgentRuntime {
         this.driverForHarness(legacyRecordHarnessId(current)).resolveInstanceKey(this.env),
     });
     try {
-      sessionLease = resumeSessionId
+      // Version-three Agents use the shared native-session admission bundle
+      // below. Keep the older session-lease owner only for genuinely legacy
+      // jobs rather than holding two independent session locks for one turn.
+      sessionLease = resumeSessionId && current.route == null
         ? reserveSessionLease(this.cwd, harnessInstance, resumeSessionId, jobId)
         : null;
       launched = patchJob(this.cwd, jobId, {
@@ -1131,6 +1154,9 @@ class InternalAgentRuntime {
           ...current.request,
           prompt: prompt || "Continue where you left off.",
         },
+        assignedMessageIds: Array.isArray(options.assignedMessageIds)
+          ? [...options.assignedMessageIds]
+          : (current.assignedMessageIds ?? null),
       });
       if (!launched || launched.status !== HARNESS_QUEUED_JOB_STATUS) {
         throw new Error(`Prepared job ${jobId} could not enter the queued launch state.`);
@@ -1343,7 +1369,7 @@ class InternalAgentRuntime {
     const taskInput = assigned.map((message) => message.text).join("\n\n");
     const driver = resolveDriverV2(agent.route.harnessId, { env: this.env });
     const turnOptions = options.turnOptions ?? null;
-    let lease = null;
+    let leases = [];
     let claim = readLaunchClaim(identity);
     try {
       if (claim) {
@@ -1382,13 +1408,21 @@ class InternalAgentRuntime {
         claim = createLaunchIntent({
           ...identity,
           attemptId,
+          lifecycleOwner: "version_three_worker",
+          controlRoot: agent.workspaceRoot,
+          executionRoot: agent.executionRoot ?? agent.workspaceRoot,
           route: agent.route,
-          expectedLease,
+          expectedLeases: [
+            expectedLease,
+            ...(agent.route.authority === "behavioral_write"
+              ? [{ kind: "writer", workspaceRoot: agent.executionRoot ?? agent.workspaceRoot }]
+              : []),
+          ],
           assignedMessageIds,
           preparedInput: taskInput,
           turnOptions: preparedTurn.turnOptions ?? turnOptions,
         });
-        lease = nativeSessionRef == null
+        const admissionLease = nativeSessionRef == null
           ? acquireIntendedInstanceLease({
               ...identity,
               attemptId,
@@ -1406,10 +1440,19 @@ class InternalAgentRuntime {
               instanceKey: agent.route.instanceKey,
               nativeSessionId: nativeSessionRef.locator.sessionId,
             });
-        claim = bindLaunchClaimLease({
+        leases = [admissionLease];
+        if (agent.route.authority === "behavioral_write") {
+          leases.push(acquireIntendedWorkspaceWriterLease({
+            ...identity,
+            attemptId,
+            route: agent.route,
+            workspaceRoot: agent.executionRoot ?? agent.workspaceRoot,
+          }));
+        }
+        claim = bindLaunchClaimLeases({
           ...identity,
           attemptId,
-          lease,
+          leases,
         });
       }
     } catch (error) {
@@ -1562,9 +1605,15 @@ class InternalAgentRuntime {
       onEvent: createJobProgressUpdater(this.cwd, id),
     });
     return runTrackedJob(stored, (onSpawn) => {
+      if (
+        stored.agentId && stored.route &&
+        Array.isArray(stored.assignedMessageIds) && stored.assignedMessageIds.length > 0
+      ) {
+        return this.executeVersionOneAgentTurn(stored, onSpawn, progress);
+      }
       const driver = this.assertJobDriver(stored);
       const launchContext = driver.revalidatePreparedPreflight(stored.readiness, {
-        cwd: this.cwd,
+        cwd: stored.executionRoot ?? stored.workspaceRoot,
         env: this.env,
         sourceRoot: this.sourceRoot,
       });
@@ -1573,6 +1622,263 @@ class InternalAgentRuntime {
       logFile: stored.logFile,
       claimStatuses: [requiredQueueStatus],
     });
+  }
+
+  rollbackPreparedLeaseBundle(identity, attemptId) {
+    let claim = readLaunchClaim(identity);
+    if (!claim) return null;
+    if (claim.submissionState === "rollback_complete") return claim;
+    if (claim.submissionState !== "rollback_in_progress") {
+      const eligibility = launchClaimRollbackEligibility(claim);
+      if (!eligibility.eligible) return null;
+      claim = beginPreSubmissionRollback({ ...identity, token: eligibility.token });
+    }
+    releaseLeasesForPreSubmissionRollback({ claim });
+    return completePreSubmissionRollback({ ...identity, attemptId });
+  }
+
+  async executeVersionOneAgentTurn(job, onSpawn, onProgress = null) {
+    const ownerRootId = this.assertOwnerRoot();
+    const store = createAgentStore({
+      cwd: this.cwd,
+      ownerRootId,
+      writeGeneration: FUTURE_WRITE_GENERATION,
+    });
+    const agent = store.resolveTarget(job.agentId);
+    if (
+      agent.activeJobId !== job.id ||
+      versionThreeRouteText(agent.route) !== versionThreeRouteText(job.route)
+    ) {
+      throw new Error(`Claude job ${job.id} no longer matches its immutable Agent activation.`);
+    }
+    const controlRoot = agent.workspaceRoot;
+    const executionRoot = agent.executionRoot ?? controlRoot;
+    if (
+      (job.controlRoot ?? job.workspaceRoot) !== controlRoot ||
+      (job.executionRoot ?? job.workspaceRoot) !== executionRoot
+    ) {
+      throw new Error(`Claude job ${job.id} roots no longer match its immutable Agent roots.`);
+    }
+    const identity = { ownerRootId, agentId: agent.agentId, jobId: job.id };
+    const attemptId = `v1-${job.id}`;
+    const driver = this.launchDependencies.resolveDriverV2(agent.route.harnessId, {
+      env: this.env,
+      jobStateRoot: controlRoot,
+      sessionName: job.request?.sessionName ?? null,
+      onProgress,
+    });
+    const taskInput = String(job.request?.prompt ?? "");
+    const turnOptions = agent.route.effort == null ? null : { effort: agent.route.effort };
+    const preparedTurn = driver.prepareTurn({
+      route: agent.route,
+      taskInput,
+      turnOptions,
+      turnId: job.id,
+    });
+    const storedNativeSessionRef = agent.nativeSessionRef == null
+      ? null
+      : Object.hasOwn(agent.nativeSessionRef, "locator")
+        ? agent.nativeSessionRef
+        : {
+            version: NATIVE_REFERENCE_ENVELOPE_VERSION,
+            harnessId: agent.nativeSessionRef.harnessId,
+            driverVersion: agent.route.driverVersion,
+            instanceKey: agent.nativeSessionRef.instanceKey,
+            locatorVersion: CLAUDE_LOCATOR_VERSION,
+            locator: { sessionId: agent.nativeSessionRef.nativeSessionId },
+          };
+    const nativeSessionRef = storedNativeSessionRef == null
+      ? null
+      : validateNativeReferenceEnvelope(storedNativeSessionRef, {
+          driver,
+          kind: "session",
+          route: agent.route,
+        });
+    let claim = readLaunchClaim(identity);
+    try {
+      if (claim) {
+        throw new Error(`Claude job ${job.id} recovered a prior launch claim without replay.`);
+      }
+      const expectedAdmission = nativeSessionRef == null
+        ? {
+            kind: "instance",
+            capacityClass: `${V3_TURN_EVIDENCE_CLASS}:${job.id}`,
+            capacityLimit: 1,
+          }
+        : { kind: "native_session", nativeSessionId: nativeSessionRef.locator.sessionId };
+      claim = createLaunchIntent({
+        ...identity,
+        attemptId,
+        lifecycleOwner: "version_one_supervisor",
+        controlRoot,
+        executionRoot,
+        route: agent.route,
+        expectedLeases: [
+          expectedAdmission,
+          ...(agent.route.authority === "behavioral_write"
+            ? [{ kind: "writer", workspaceRoot: executionRoot }]
+            : []),
+        ],
+        assignedMessageIds: job.assignedMessageIds,
+        preparedInput: taskInput,
+        turnOptions: preparedTurn.turnOptions ?? turnOptions,
+      });
+      const leases = [nativeSessionRef == null
+        ? acquireIntendedInstanceLease({
+            ...identity,
+            attemptId,
+            route: agent.route,
+            harnessId: agent.route.harnessId,
+            instanceKey: agent.route.instanceKey,
+            capacityClass: `${V3_TURN_EVIDENCE_CLASS}:${job.id}`,
+            capacityLimit: 1,
+          })
+        : acquireIntendedNativeSessionLease({
+            ...identity,
+            attemptId,
+            route: agent.route,
+            harnessId: agent.route.harnessId,
+            instanceKey: agent.route.instanceKey,
+            nativeSessionId: nativeSessionRef.locator.sessionId,
+          })];
+      if (agent.route.authority === "behavioral_write") {
+        leases.push(acquireIntendedWorkspaceWriterLease({
+          ...identity,
+          attemptId,
+          route: agent.route,
+          workspaceRoot: executionRoot,
+        }));
+      }
+      claim = bindLaunchClaimLeases({ ...identity, attemptId, leases });
+    } catch (error) {
+      this.rollbackPreparedLeaseBundle(identity, attemptId);
+      throw error;
+    }
+
+    let launched;
+    try {
+      launched = await launchVersionThreeTurn({
+        ...identity,
+        attemptId,
+        lifecycleOwner: "version_one_supervisor",
+        route: agent.route,
+        driver,
+        preparedTurn,
+        preparedInput: taskInput,
+        assignedMessageIds: job.assignedMessageIds,
+        assignedInputs: [],
+        leaseBindings: claim.leaseBindings.map((binding) => ({ ...binding, route: claim.route })),
+        turnOptions: preparedTurn.turnOptions ?? turnOptions,
+        nativeSessionRef,
+        controlRoot,
+        executionRoot,
+        env: this.env,
+      });
+    } catch (error) {
+      const durable = readLaunchClaim(identity);
+      const eligibility = durable == null ? null : launchClaimRollbackEligibility(durable);
+      if (eligibility?.eligible || durable?.submissionState === "rollback_in_progress") {
+        this.rollbackPreparedLeaseBundle(identity, attemptId);
+        throw error;
+      }
+      return {
+        terminalStatus: "unknown",
+        exitStatus: 1,
+        threadId: null,
+        turnId: null,
+        payload: { status: "unknown", reason: "native_acceptance_unknown" },
+        rendered: "Native acceptance is unknown; authority leases remain held.",
+        summary: "Native acceptance unknown",
+      };
+    }
+
+    const locator = launched.liveTurn.nativeTurnRef?.locator ?? {};
+    if (onSpawn({ pid: locator.pid, pidIdentity: locator.processIdentity }) !== true) {
+      try { await launched.liveTurn.dispose(); } catch {}
+      return {
+        terminalStatus: "unknown",
+        exitStatus: 1,
+        threadId: null,
+        turnId: null,
+        payload: { status: "unknown", reason: "native_process_identity_not_published" },
+        rendered: "Native process ownership is unknown; authority leases remain held.",
+        summary: "Native process ownership unknown",
+      };
+    }
+    let turn;
+    try {
+      turn = validateNormalizedTerminalResult(await launched.liveTurn.result, {
+        driver,
+        route: agent.route,
+      });
+    } catch (error) {
+      try { await launched.liveTurn.dispose(); } catch {}
+      return {
+        terminalStatus: "unknown",
+        exitStatus: 1,
+        threadId: null,
+        turnId: null,
+        payload: { status: "unknown", reason: "terminal_evidence_invalid" },
+        rendered: "Terminal evidence is unknown; authority leases remain held.",
+        summary: "Terminal evidence unknown",
+      };
+    }
+    const release = releaseLeasesOnSettlement({
+      normalizedTerminalResult: turn,
+      releases: buildLeaseReleaseTargets(
+        claim.leaseBindings.map((binding) => ({ ...binding, route: claim.route }))
+      ),
+    });
+    try { await launched.liveTurn.dispose(); } catch {}
+    if (release.outcome !== "all") {
+      return {
+        terminalStatus: "unknown",
+        exitStatus: 1,
+        threadId: null,
+        turnId: null,
+        payload: { status: "unknown", reason: `lease_release_${release.outcome}` },
+        rendered: "Terminal settlement did not release the complete authority bundle.",
+        summary: "Authority settlement unknown",
+      };
+    }
+    const nativeSession = turn.continuation.nativeSessionRef;
+    const sessionId = nativeSession?.locator?.sessionId ?? null;
+    return {
+      terminalStatus: turn.status,
+      exitStatus: turn.status === "completed" ? 0 : 1,
+      threadId: sessionId,
+      turnId: null,
+      payload: {
+        status: turn.status,
+        sessionId,
+        rawOutput: turn.finalMessage ?? "",
+        partialOutput: turn.finalMessage ?? "",
+        failureClass: turn.failure.class,
+        failureReason: turn.failure.reason,
+        resumable: turn.failure.resumable,
+        requiresAttention: Boolean(turn.failure.requiresAttention),
+        recoveryAttempts: turn.metrics?.plugin_observed?.recovery_attempt_count ?? 0,
+        metrics: turn.metrics,
+        harnessId: turn.harnessId,
+        driverVersion: turn.driverVersion,
+        nativeSessionRef: nativeSession,
+        sessionExactness: nativeSession == null ? "unproven" : "exact",
+        driverReceipt: turn.driverReceipt,
+        normalizedTerminalResult: turn,
+        runtimeReceipt: {
+          environment: this.environmentReceipt,
+          workspaceRoot: executionRoot,
+          sourceRoot: this.sourceRoot,
+          leaseRelease: release,
+        },
+      },
+      rendered: renderTaskResult({
+        rawOutput: turn.finalMessage ?? "",
+        failureReason: turn.failure.reason,
+        failureMessage: turn.failure.detail,
+      }),
+      summary: summaryOf(turn.finalMessage || turn.failure.reason || job.summary),
+    };
   }
 
   /**
@@ -1584,9 +1890,10 @@ class InternalAgentRuntime {
   async execute(job, onProgress, onSpawn, launchContext) {
     const request = job.request ?? {};
     const driver = this.assertJobDriver(job);
+    const executionRoot = job.executionRoot ?? job.workspaceRoot;
     const turn = validateHarnessTurnResult(await driver.startTurn({
-      workspaceRoot: this.cwd,
-      cwd: this.cwd,
+      workspaceRoot: executionRoot,
+      cwd: executionRoot,
       jobId: job.id,
       prompt: request.prompt,
       route: {
@@ -1636,7 +1943,7 @@ class InternalAgentRuntime {
       runtimeReceipt: {
         ...(turn.runtime ?? {}),
         environment: this.environmentReceipt,
-        workspaceRoot: this.cwd,
+        workspaceRoot: executionRoot,
         sourceRoot: this.sourceRoot,
       },
     };

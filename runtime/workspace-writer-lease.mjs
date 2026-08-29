@@ -49,4 +49,20 @@ export function acquireWorkspaceWriterLease({ ownerRootId, agentId, jobId, route
   });
 }
 
+/** Acquire the writer holder only while its exact durable launch intent is rollback-safe. */
+export function acquireIntendedWorkspaceWriterLease({
+  ownerRootId, agentId, jobId, attemptId, route, workspaceRoot,
+}) {
+  return acquireLease({
+    kind: "writer",
+    ownerRootId,
+    agentId,
+    jobId,
+    route,
+    workspaceRoot,
+    capacityLimit: 1,
+    launchAttemptId: attemptId,
+  });
+}
+
 export { releaseLeasesOnSettlement };

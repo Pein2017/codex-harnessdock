@@ -47,7 +47,10 @@ import path from "node:path";
 import { types } from "node:util";
 
 import { validateVersionThreeRoute } from "./durable-state-v3.mjs";
-import { readLaunchClaim } from "./launch-claim.mjs";
+import {
+  listLegacyIncompleteWriterAuthorityClaims,
+  readLaunchClaim,
+} from "./launch-claim.mjs";
 import { assertNativeReferenceEnvelopeShape } from "./native-reference.mjs";
 import { assertHarnessId, canonicalNativeSessionRef } from "./harness-contract.mjs";
 import { resolvePluginStateRoot } from "./paths.mjs";
@@ -58,6 +61,10 @@ import {
   validateProcessIdentity,
 } from "./process-control.mjs";
 import { classifyTurnSettlement } from "./turn-settlement.mjs";
+import {
+  V3_TERMINAL_STATUSES,
+  readVersionThreeJobRecord,
+} from "./v3-job-store.mjs";
 
 export const LEASE_SCHEMA_VERSION = 1;
 export const LEASE_KINDS = Object.freeze(["instance", "native_session", "writer"]);
@@ -686,7 +693,14 @@ function assertSameLeaseIdentity(record, { kind, keyText, ownerRootId, agentId, 
 function assertDurableLaunchIntent({ kind, keyFields, capacity, identity, route, attemptId }) {
   const claim = readLaunchClaim(identity);
   const intended = claim?.leaseIntent;
-  const receipt = Array.isArray(intended) && intended.length === 1 ? intended[0] : null;
+  const matching = Array.isArray(intended)
+    ? intended.filter((candidate) =>
+        candidate?.kind === kind &&
+        JSON.stringify(candidate?.keyFields) === JSON.stringify(keyFields) &&
+        JSON.stringify(candidate?.capacity) === JSON.stringify(capacity)
+      )
+    : [];
+  const receipt = matching.length === 1 ? matching[0] : null;
   const routeDigest = createHash("sha256").update(JSON.stringify(route)).digest("hex");
   if (
     claim?.attemptId !== attemptId ||
@@ -706,6 +720,34 @@ function assertDurableLaunchIntent({ kind, keyFields, capacity, identity, route,
       "launch_intent_not_acquirable",
       "Lease acquisition requires the exact durable rollback-safe launch intent."
     );
+  }
+}
+
+function assertNoLegacyWriterAuthority(workspaceRoot) {
+  for (const claim of listLegacyIncompleteWriterAuthorityClaims()) {
+    if (claim.submissionState === "rollback_complete") continue;
+    const job = readVersionThreeJobRecord(claim);
+    const authoritative = job != null &&
+      job.ownerRootId === claim.ownerRootId &&
+      job.agentId === claim.agentId &&
+      job.jobId === claim.jobId &&
+      job.attemptId === claim.attemptId &&
+      JSON.stringify(job.route) === JSON.stringify(claim.route) &&
+      claim.acceptance === "acceptance_proven" &&
+      JSON.stringify(job.nativeTurnRef) === JSON.stringify(claim.nativeTurnRef);
+    if (!authoritative) {
+      throw taggedError(
+        "legacy_writer_authority_ambiguous",
+        "Legacy writer authority lacks an unambiguous durable lifecycle owner.",
+      );
+    }
+    if (V3_TERMINAL_STATUSES.includes(job.status)) continue;
+    if (job.executionRoot === workspaceRoot) {
+      throw taggedError(
+        "legacy_writer_authority_unsettled",
+        "Legacy writer authority for this execution root remains unsettled.",
+      );
+    }
   }
 }
 
@@ -749,6 +791,9 @@ export function acquireLease({
   const identity = assertBindingIdentity({ ownerRootId, agentId, jobId });
   const canonicalRoute = validateVersionThreeRoute(route, "Lease route");
   assertKeyFieldsMatchRoute(kind, keyFields, canonicalRoute);
+  if (kind === "writer" && "workspaceRoot" in keyFields) {
+    assertNoLegacyWriterAuthority(keyFields.workspaceRoot);
+  }
   const capacity = assertCapacityEvidence(kind, { capacityClass, capacityLimit });
   const routeText = JSON.stringify(canonicalRoute);
 
@@ -1017,7 +1062,14 @@ export function releaseLeasesForPreSubmissionRollback({ claim }) {
     agentId: claim.agentId,
     jobId: claim.jobId,
   });
-  if (!durable || JSON.stringify(durable) !== JSON.stringify(claim)) {
+  const exact = durable != null && JSON.stringify(durable) === JSON.stringify(claim);
+  const completedByPeer = durable?.submissionState === "rollback_complete" &&
+    JSON.stringify(durable) === JSON.stringify({
+      ...claim,
+      submissionState: "rollback_complete",
+      updatedAt: durable.updatedAt,
+    });
+  if (!exact && !completedByPeer) {
     throw new Error("Pre-submission lease release requires the exact durable rollback claim.");
   }
   const bindings = claim.leaseBindings.length === 0 ? claim.leaseIntent : claim.leaseBindings;

@@ -250,7 +250,7 @@ describe("Task 7.4 — current codex_harnessdock MCP discovery stays generation-
     }
   });
 
-  it("keeps the public MCP API generation unchanged by this change", () => {
+  it("tracks the public MCP API generation in the discovery fixture", () => {
     assert.equal(HARNESSDOCK_MCP_API_GENERATION, discoveryFixture.generation);
   });
 });
@@ -318,6 +318,7 @@ describe("Task 7.2 — no generic or version-three path carries a Harness defaul
         agentId,
         jobId,
         attemptId: "attempt-1",
+        lifecycleOwner: "version_three_worker",
         driver: createFakeServiceDriver().driver,
         preparedTurn: {},
         preparedInput: "task",

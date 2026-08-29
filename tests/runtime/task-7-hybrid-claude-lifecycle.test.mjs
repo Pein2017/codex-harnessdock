@@ -37,6 +37,9 @@ import { claudeCodeInstanceKey } from "../../runtime/claude-code-driver.mjs";
 import { harnessExecutionLifecycle, resolveDriverV2 } from "../../runtime/harness-registry.mjs";
 import { readJobFile, writeJobFile } from "../../runtime/job-store.mjs";
 import { observeClaudeCredentialState } from "../../runtime/claude-credential-state.mjs";
+import { inspectLeaseInventory } from "../../runtime/instance-admission-lease.mjs";
+import { readLaunchClaim } from "../../runtime/launch-claim.mjs";
+import { driverPreTransportRejection } from "../../runtime/v3-worker-launch.mjs";
 import { resolveVersionThreeJobDirectory } from "../../runtime/v3-job-store.mjs";
 import { CLAUDE_LEGACY_HARNESS_ID } from "../../runtime/claude-legacy-adapter.mjs";
 import { ADMITTED_GENERATION_HARNESS_IDS } from "../../runtime/harness-registry.mjs";
@@ -168,8 +171,8 @@ describe("Task 7 hybrid — a new Claude spawn writes a version-three Agent", ()
     // The route's instance key is the redacted identity, never the raw path.
     assert.match(agent.route.instanceKey, /^claude-config-[0-9a-f]{16}$/);
     assert.equal(JSON.stringify(agent).includes(runtime.jobs.env.CLAUDE_CONFIG_DIR), false);
-    // The public card keeps stating the same lineage.
-    assert.equal(receipt.harness, "claude-code");
+    // Spawn exposes only the bounded three-field receipt.
+    assert.deepEqual(Object.keys(receipt).sort(), ["agent_name", "model", "status"]);
     assert.equal(receipt.model, "claude-sonnet-5");
   });
 
@@ -184,6 +187,8 @@ describe("Task 7 hybrid — a new Claude spawn writes a version-three Agent", ()
     // reset leaves no pre-rename record to read.
     assert.match(agent.activeJobId, /^hd-agent-/);
     const job = readJobFile(workspace, agent.activeJobId);
+    assert.equal(agent.activeJobId, job.id);
+    assert.deepEqual(job.route, agent.route);
     assert.equal(job?.id, agent.activeJobId);
     assert.equal(job.agentId, agent.agentId);
 
@@ -195,6 +200,55 @@ describe("Task 7 hybrid — a new Claude spawn writes a version-three Agent", ()
       false,
       "a version-one-lifecycle Agent must write no version-three job record"
     );
+  });
+
+  it("binds instance and execution-root writer authority before the version-one Claude Driver seam", async () => {
+    const { runtime, workspace } = setup();
+    const receipt = await spawnClaude(runtime, { task_name: "hybrid_writer", write: true });
+    const store = runtime.versionThreeStore();
+    const agent = store.resolveTarget(receipt.agent_name);
+    const assignedMessageIds = store.listMessages(agent.agentId)
+      .filter((message) => message.assignedJobId === agent.activeJobId)
+      .map((message) => message.messageId);
+    const job = readJobFile(workspace, agent.activeJobId);
+    assert.equal(agent.activeJobId, job.id);
+    assert.deepEqual(job.route, agent.route);
+    const preparedJob = {
+      ...job,
+      assignedMessageIds,
+      status: "running",
+    };
+    let observedClaim = null;
+    let startCalls = 0;
+    const base = resolveDriverV2(agent.route.harnessId, { env: runtime.jobs.env });
+    const driver = Object.freeze({
+      ...base,
+      async revalidatePreparedTurn() {
+        return Object.freeze({ compatibility: { executable: process.execPath } });
+      },
+      async startTurn() {
+        startCalls += 1;
+        observedClaim = readLaunchClaim({
+          ownerRootId: "hybrid-root",
+          agentId: agent.agentId,
+          jobId: agent.activeJobId,
+        });
+        throw driverPreTransportRejection();
+      },
+    });
+    runtime.jobs.launchDependencies.resolveDriverV2 = () => driver;
+
+    await assert.rejects(
+      runtime.jobs.executeVersionOneAgentTurn(preparedJob, () => true),
+      /acceptance_rejected/,
+    );
+    assert.equal(startCalls, 1);
+    assert.equal(observedClaim.lifecycleOwner, "version_one_supervisor");
+    assert.deepEqual(observedClaim.leaseBindings.map((binding) => binding.kind), ["instance", "writer"]);
+    assert.equal(observedClaim.controlRoot, workspace);
+    assert.equal(observedClaim.executionRoot, workspace);
+    assert.equal(observedClaim.leaseBindings[1].keyFields.workspaceRoot, workspace);
+    assert.equal(inspectLeaseInventory({ kinds: ["instance", "writer"] }).total, 0);
   });
 
   it("steers interrupt_agent through the version-one execution path", async () => {

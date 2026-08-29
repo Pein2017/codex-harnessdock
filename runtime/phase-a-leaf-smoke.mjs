@@ -821,6 +821,7 @@ export async function runPhaseALeafSmoke(options = {}) {
         agentId: agent.agentId,
         jobId,
         attemptId,
+        lifecycleOwner: "version_three_worker",
         route,
         expectedLease: {
           kind: "instance",

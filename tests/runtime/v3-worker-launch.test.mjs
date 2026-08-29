@@ -71,6 +71,7 @@ function setup(options = {}) {
     agentId,
     jobId,
     attemptId,
+    lifecycleOwner: "version_three_worker",
     route,
     driver,
     preparedTurn,

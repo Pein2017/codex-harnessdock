@@ -375,10 +375,7 @@ describe("canonical Agent runtime CLI", () => {
       "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "haiku_smoke",
       "--model", "claude-haiku-4-5", "--reasoning-effort", "low", "--json", "session=haiku delay=40",
     ]);
-    assert.deepEqual(Object.keys(spawned).sort(), [
-      "agent_name", "authority", "delegation_mode", "elapsed_seconds", "harness",
-      "last_activity_at", "model", "phase", "reasoning_effort", "route_maturity", "started_at", "status",
-    ]);
+    assert.deepEqual(Object.keys(spawned).sort(), ["agent_name", "model", "status"]);
     assert.equal(spawned.agent_name, "/root/haiku_smoke");
     assert.equal(spawned.model, "claude-haiku-4-5");
     assert.match(spawned.status, /^(starting|working)$/);
@@ -420,10 +417,7 @@ describe("canonical Agent runtime CLI", () => {
       "--model", "claude-fable-5", "--reasoning-effort", "max",
       "--topology", "native_orchestrator", "--json", "session=fable delay=40",
     ]);
-    assert.deepEqual(Object.keys(spawned).sort(), [
-      "agent_name", "authority", "delegation_mode", "elapsed_seconds", "harness",
-      "last_activity_at", "model", "phase", "reasoning_effort", "route_maturity", "started_at", "status",
-    ]);
+    assert.deepEqual(Object.keys(spawned).sort(), ["agent_name", "model", "status"]);
     assert.equal(spawned.agent_name, "/root/fable_smoke");
     assert.equal(spawned.model, "claude-fable-5");
     assert.match(spawned.status, /^(starting|working)$/);
@@ -524,10 +518,7 @@ describe("canonical Agent runtime CLI", () => {
     const spawned = run(test, [
       "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "alpha", "--model", "claude-sonnet-5", "--reasoning-effort", "high", "--json", "session=alpha delay=700",
     ]);
-    assert.deepEqual(Object.keys(spawned).sort(), [
-      "agent_name", "authority", "delegation_mode", "elapsed_seconds", "harness",
-      "last_activity_at", "model", "phase", "reasoning_effort", "route_maturity", "started_at", "status",
-    ]);
+    assert.deepEqual(Object.keys(spawned).sort(), ["agent_name", "model", "status"]);
     assert.equal(spawned.agent_name, "/root/alpha");
     assert.equal(spawned.model, "claude-sonnet-5");
     assert.match(spawned.status, /^(starting|working)$/);

@@ -161,6 +161,32 @@ describe("Agent durable store", () => {
     assert.equal(normalized.agents[legacy.agentId].delegationMode, "leaf");
   });
 
+  it("persists one immutable execution root and interprets workspace-only records without a read write", () => {
+    const { root, workspace, ownerRootId, claudeConfigDir, store } = setup();
+    const executionRoot = path.join(root, "execution");
+    fs.mkdirSync(executionRoot);
+    const targeted = store.createAgent({ task_name: "targeted", executionRoot });
+    assert.equal(targeted.workspaceRoot, fs.realpathSync.native(workspace));
+    assert.equal(targeted.executionRoot, fs.realpathSync.native(executionRoot));
+    assert.throws(
+      () => store.updateAgent(targeted.agentId, (agent) => ({ ...agent, executionRoot: agent.workspaceRoot })),
+      /immutable field executionRoot/,
+    );
+
+    const legacy = store.createAgent({ task_name: "workspace_only" });
+    const registryFile = findRegistryFile(process.env.CODEX_HARNESSDOCK_RUNTIME_HOME);
+    const registry = JSON.parse(fs.readFileSync(registryFile, "utf8"));
+    delete registry.agents[legacy.agentId].executionRoot;
+    fs.writeFileSync(registryFile, `${JSON.stringify(registry, null, 2)}\n`, "utf8");
+    const beforeRead = fs.readFileSync(registryFile, "utf8");
+    const restarted = createAgentStore({ cwd: workspace, ownerRootId, claudeConfigDir, harness: HARNESS });
+    assert.equal(restarted.resolveTarget(legacy.agentId).executionRoot, fs.realpathSync.native(workspace));
+    assert.equal(fs.readFileSync(registryFile, "utf8"), beforeRead);
+    restarted.updateAgent(legacy.agentId, (agent) => ({ ...agent, status: "completed" }));
+    const afterMutation = JSON.parse(fs.readFileSync(registryFile, "utf8"));
+    assert.equal(afterMutation.agents[legacy.agentId].executionRoot, fs.realpathSync.native(workspace));
+  });
+
   it("uses exact ID, path, or normalized-name targeting and reserves one active turn", () => {
     const { store } = setup();
     const alpha = store.createAgent({ task_name: "alpha" });
