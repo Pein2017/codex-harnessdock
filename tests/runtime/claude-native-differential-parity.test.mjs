@@ -201,7 +201,7 @@ async function launchDriver(test, {
   let initializedResolve;
   const initialized = new Promise((resolve) => { initializedResolve = resolve; });
   const env = test.env(scenario);
-  const driver = createClaudeCodeDriverV2({
+  const nativeDriver = createClaudeCodeDriverV2({
     env,
     runTurnSession: (request) => runClaudeTaskSession({
       ...request,
@@ -214,6 +214,18 @@ async function launchDriver(test, {
       },
     }),
   });
+  const driver = {
+    ...nativeDriver,
+    // This fixture runs exactly one direct CLI model/effort pair. It projects
+    // that observed pair only; it does not advertise a general Claude roster.
+    async inspectInstances(scope) {
+      return (await nativeDriver.inspectInstances(scope)).map((inspection) => (
+        inspection.readiness === "ready"
+          ? { ...inspection, routes: { ...inspection.routes, models: [MODEL], effortsByModel: { [MODEL]: [EFFORT] } } }
+          : inspection
+      ));
+    },
+  };
   const inspectionScope = createDriverScope({
     driver,
     purpose: "inspect",
