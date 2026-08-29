@@ -117,12 +117,13 @@ describe("Pi Driver v2", () => {
     assert.equal(fake.state.argv.includes("--no-approve"), false);
     assert.equal(fake.state.argv.includes("--tools"), false);
     for (const flag of ["--no-extensions", "--no-skills", "--no-prompt-templates"]) assert.equal(fake.state.argv.includes(flag), false);
-    assert.deepEqual(route.capabilities.values, { interaction: "noninteractive_fixed_policy", activeInput: "acknowledged_active_stream", continuation: "exact_resume", history: "assistant_messages", interruptRequest: "supported", turnObservation: "terminal_observable", automaticRecovery: "none", authorityEnforcement: "prompt_only", leafEnforcement: "prompt_only", nativeOrchestration: "opaque_bounded" });
+    assert.deepEqual(route.capabilities.values, { interaction: "noninteractive_fixed_policy", activeInput: "acknowledged_active_stream", continuation: "exact_resume", history: "assistant_messages", interruptRequest: "supported", turnObservation: "unavailable", automaticRecovery: "none", authorityEnforcement: "prompt_only", leafEnforcement: "prompt_only", nativeOrchestration: "opaque_bounded" });
     assert.equal(Object.hasOwn(inspection.routes, "reasoningEfforts"), false);
     assert.deepEqual(inspection.routes.effortsByModel, { [PI_MODEL]: ["medium", "high"] });
     assert.equal(inspection.routes.continuation, "exact_resume");
+    assert.equal(inspection.routes.turnObservation, "unavailable");
     assert.equal(inspection.routes.automaticRecovery, "none");
-    assert.equal(typeof driver.observeTurn, "function");
+    assert.equal(typeof driver.observeTurn, "undefined");
     assert.deepEqual(fakes[0].state.commands.map((command) => command.type), ["get_available_models", "set_model", "get_available_thinking_levels", "get_state", "get_commands"]);
     assert.deepEqual(fakes[0].state.commands[1], { id: fakes[0].state.commands[1].id, type: "set_model", provider: "openai-codex", modelId: "gpt-5.6-luna" });
     assert.equal(Object.hasOwn(fakes[0].state.commands[1], "model"), false);
@@ -183,12 +184,10 @@ describe("Pi Driver v2", () => {
     await Promise.all([read.live.result, write.live.result]);
   });
 
-  it("fails closed before history or observation opens a persisted Pi session after route disappearance", async () => {
+  it("fails closed before history opens a persisted Pi session after route disappearance", async () => {
     const context = await started({ modelsForSpawn: (index) => index >= 3 ? ["openai-codex/gpt-5.6-terra"] : [PI_MODEL] });
     await assert.rejects(context.driver.readAssistantHistory({ route: context.route, nativeSessionRef: context.live.nativeSessionRef }), /not freshly admitted|drifted/);
     assert.equal(context.fakes.length, 4);
-    await assert.rejects(context.driver.observeTurn(context.live.nativeTurnRef, { route: context.route }), /not freshly admitted|drifted/);
-    assert.equal(context.fakes.length, 5);
   });
 
   it("returns generic uncertainty after a prompt-write framing loss, but marks explicit prompt rejection pretransport", async () => {
@@ -202,7 +201,7 @@ describe("Pi Driver v2", () => {
     }
   });
 
-  it("reads exact UUID history newest-first and observes only post-baseline terminal evidence", async () => {
+  it("reads exact UUID history newest-first", async () => {
     const entries = [
       { type: "message", id: "a-1", timestamp: Date.parse("2026-01-01T00:00:00.000Z"), message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "first" }] } },
       { type: "message", id: "a-2", timestamp: Date.parse("2026-01-02T00:00:00.000Z"), message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "second" }] } },
@@ -211,11 +210,19 @@ describe("Pi Driver v2", () => {
     const history = await driver.readAssistantHistory({ route, nativeSessionRef: live.nativeSessionRef }, { limit: 1 });
     assert.deepEqual(history, { messages: [{ messageId: "a-2", timestamp: "2026-01-02T00:00:00.000Z", text: "second" }], nextBefore: "a-2" });
     assert.deepEqual((await driver.readAssistantHistory({ route, nativeSessionRef: live.nativeSessionRef }, { limit: 1, before: "a-2" })).messages.map((message) => message.messageId), ["a-1"]);
-    const observed = await driver.observeTurn(live.nativeTurnRef, { route, workspaceRoot: "/tmp" });
-    assert.equal(observed.nativeTurn, "terminal");
-    assert.equal(observed.terminalResult.finalMessage, "second");
     assert.equal(fake.state.commands.some((command) => command.type === "prompt" && command.message === "second"), false);
     assert.equal(fakes.filter((candidate) => !candidate.state.argv.includes("--no-session")).some((candidate) => candidate.state.argv.includes("--offline")), false);
+  });
+
+  it("does not expose ambiguous post-baseline history as an old-turn terminal", async () => {
+    const entries = [
+      { type: "message", id: "a-old", timestamp: Date.parse("2026-01-01T00:00:00.000Z"), message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "old turn" }] } },
+      { type: "message", id: "a-later", timestamp: Date.parse("2026-01-02T00:00:00.000Z"), message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "later turn" }] } },
+    ];
+    const { driver, route, live } = await started({ entries });
+    assert.equal(route.capabilities.values.turnObservation, "unavailable");
+    assert.equal(typeof driver.observeTurn, "undefined");
+    assert.equal(live.nativeTurnRef.locator.turnId, "turn-1");
   });
 
   it("uses --session only for a validated exact UUID resume", async () => {
@@ -236,15 +243,6 @@ describe("Pi Driver v2", () => {
     assert.equal(fake.state.settled, false);
     fake.settle();
     assert.equal((await live.result).status, "completed");
-  });
-
-  it("projects an observed aborted final transcript as interrupted", async () => {
-    const entries = [{ type: "message", id: "a-stop", timestamp: Date.parse("2026-01-03T00:00:00.000Z"), message: { role: "assistant", stopReason: "aborted", content: [{ type: "text", text: "partial" }] } }];
-    const { route, live, driver } = await started({ entries });
-    const observed = await driver.observeTurn(live.nativeTurnRef, { route, workspaceRoot: "/tmp" });
-    assert.equal(observed.nativeTurn, "terminal");
-    assert.equal(observed.terminalResult.status, "interrupted");
-    assert.equal(observed.terminalResult.failure.class, "cancelled_or_interrupted");
   });
 
   it("fails closed instead of hiding regressed cumulative usage counters", async () => {

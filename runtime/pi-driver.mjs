@@ -139,7 +139,7 @@ function resultFor({ nativeTurnRef, nativeSessionRef, baseline, after, outcome, 
 }
 function routeCapabilities() {
   return Object.freeze({ capabilitySchemaVersion: ROUTE_CAPABILITY_SCHEMA_VERSION, driverMaturity: "experimental",
-    values: Object.freeze({ interaction: "noninteractive_fixed_policy", activeInput: "acknowledged_active_stream", continuation: "exact_resume", history: "assistant_messages", interruptRequest: "supported", turnObservation: "terminal_observable", automaticRecovery: "none", authorityEnforcement: "prompt_only", leafEnforcement: "prompt_only", nativeOrchestration: "opaque_bounded" }),
+    values: Object.freeze({ interaction: "noninteractive_fixed_policy", activeInput: "acknowledged_active_stream", continuation: "exact_resume", history: "assistant_messages", interruptRequest: "supported", turnObservation: "unavailable", automaticRecovery: "none", authorityEnforcement: "prompt_only", leafEnforcement: "prompt_only", nativeOrchestration: "opaque_bounded" }),
     maturity: Object.freeze(Object.fromEntries(["interaction", "activeInput", "continuation", "history", "interruptRequest", "turnObservation", "automaticRecovery", "authorityEnforcement", "leafEnforcement", "nativeOrchestration"].map((key) => [key, "experimental"]))),
   });
 }
@@ -154,7 +154,7 @@ function inspectionRouteFacts(models, effortsByModel) {
     continuation: "exact_resume",
     history: "assistant_messages",
     interruptRequest: "supported",
-    turnObservation: "terminal_observable",
+    turnObservation: "unavailable",
     automaticRecovery: "none",
     nativeOrchestration: "opaque_bounded",
     authorities: Object.freeze({ behavioral_read_only: Object.freeze({ authorityEnforcement: "prompt_only", leafEnforcement: "prompt_only" }), behavioral_write: Object.freeze({ authorityEnforcement: "prompt_only", leafEnforcement: "prompt_only" }) }),
@@ -320,22 +320,6 @@ export function createPiDriver(options = {}) {
         const messages = newest.slice(start, start + limit).map(({ messageId, timestamp, text }) => ({ messageId, timestamp, text }));
         return { messages, nextBefore: start + messages.length < newest.length && messages.length ? messages.at(-1).messageId : null };
       } finally { await rpc.dispose(); }
-    },
-    async observeTurn(nativeTurnRef, scope) {
-      let route; let ref;
-      try { route = assertRoute(scope?.route, "Pi observation route"); ref = assertNativeReferenceEnvelope(nativeTurnRef, { driver, route, kind: "turn" }); } catch { return { nativeTurn: "unknown", terminalResult: null }; }
-      if (scope?.signal?.aborted) return { nativeTurn: "unknown", terminalResult: null };
-      await proveCurrentRoute(route, scope);
-      let rpc;
-      try {
-        rpc = makeProcess({ route, sessionId: ref.locator.sessionId, resumeOnly: true, cwd: scope?.workspaceRoot ?? process.cwd() });
-        const entries = await rpc.getEntries(ref.locator.baselineLeafId);
-        const after = nativeStats((await rpc.getSessionStats()).data, "Pi observed post-turn stats");
-        const outcome = [...(entries.data?.entries ?? [])].reverse().map(messageOutcome).find(Boolean) ?? null;
-        if (!outcome) return { nativeTurn: "unknown", terminalResult: null };
-        const baseline = { leafId: ref.locator.baselineLeafId, stats: assertNativeStats(ref.locator.baselineStats, "Pi observation baseline") };
-        return { nativeTurn: "terminal", terminalResult: resultFor({ nativeTurnRef: ref, nativeSessionRef: sessionRefFor(route, ref.locator.sessionId), baseline, after, outcome, leafId: entries.data?.leafId ?? null }) };
-      } catch { return { nativeTurn: "unknown", terminalResult: null }; } finally { await rpc?.dispose(); }
     },
     async startTurn(input) {
       const scope = input?.scope; let route; let effort; let sessionId; let resumed = false;
