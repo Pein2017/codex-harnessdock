@@ -622,6 +622,7 @@ export const INSTANCE_DETAIL_CODES = Object.freeze([
   "not_configured",
   "executable_missing",
   "service_unreachable",
+  "dormant_native_config",
   "not_authenticated",
   "incompatible_version",
   "capacity_exhausted",
