@@ -745,6 +745,68 @@ describe("release smoke", () => {
     assert.doesNotMatch(result.stderr, /Starting explicit paid/i);
   });
 
+  it("loads the canonical differential receipt into the production CLI and fails its release outcome", async () => {
+    const stdout = [];
+    const canonicalReceipt = path.join(
+      SOURCE_ROOT, "tests", "runtime", "fixtures", "native-parity", "native-harness-differential-parity.receipt.json",
+    );
+    let suppliedReceipt;
+    const exitCode = await runReleaseSmokeCli([], {
+      sourceRoot: SOURCE_ROOT,
+      assertCheckoutDependencies() {},
+      readFileSync(receiptPath, encoding) {
+        assert.equal(receiptPath, canonicalReceipt);
+        return fs.readFileSync(receiptPath, encoding);
+      },
+      async runReleaseSmoke(options) {
+        suppliedReceipt = options.differentialParityReceipt;
+        const assessment = assessNativeHarnessDifferentialParity(suppliedReceipt);
+        return {
+          status: assessment.status,
+          promotionEligible: assessment.promotionEligible,
+        };
+      },
+      writeStdout(value) { stdout.push(value); },
+      writeStderr() {},
+    });
+    assert.equal(exitCode, 1);
+    assert.equal(suppliedReceipt.schema, "harnessdock.native-harness-differential-parity.v1");
+    assert.deepEqual(JSON.parse(stdout.join("")), { status: "fail", promotionEligible: false });
+  });
+
+  for (const [label, readFileSync] of [
+    ["missing", () => { throw new Error("ENOENT canonical receipt"); }],
+    ["malformed", () => "{"],
+  ]) {
+    it(`fails closed when the canonical differential receipt is ${label}`, async () => {
+      const stderr = [];
+      let called = false;
+      const exitCode = await runReleaseSmokeCli([], {
+        sourceRoot: path.join(os.tmpdir(), "release-smoke-canonical-receipt"),
+        assertCheckoutDependencies() {},
+        readFileSync,
+        async runReleaseSmoke() { called = true; },
+        writeStdout() {},
+        writeStderr(value) { stderr.push(value); },
+      });
+      assert.equal(exitCode, 1);
+      assert.equal(called, false);
+      assert.match(stderr.join(""), label === "missing" ? /ENOENT canonical receipt/ : /JSON/);
+    });
+  }
+
+  it("does not accept a CLI receipt override", async () => {
+    let called = false;
+    const exitCode = await runReleaseSmokeCli(["--differential-parity-receipt", "replacement.json"], {
+      assertCheckoutDependencies() {},
+      async runReleaseSmoke() { called = true; },
+      writeStdout() {},
+      writeStderr() {},
+    });
+    assert.equal(exitCode, 1);
+    assert.equal(called, false);
+  });
+
   it("prints an unverified native-team report before returning a nonzero CLI outcome without launching a model", async () => {
     const stdout = [];
     const stderr = [];
