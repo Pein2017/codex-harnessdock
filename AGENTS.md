@@ -6,6 +6,6 @@
 - Resolve one env file through `runtime/environment.mjs`; never evaluate it as shell code or leak arbitrary values in receipts.
 - Do not add runtime or source dependencies on Sendbird, upstream installers, Codex hooks, forwarding subagents, or versioned plugin cache paths.
 - The independent clone `/data/CoordExp/codex-harnessdock` and its registered worktrees are the only Git/source owners. `/data/CoordExp/external/cc-plugin-codex` is reference-only and must never be used as a runtime, install, worktree, remote, merge, or Git-object dependency.
-- Keep the seven Agent skills under `plugins/codex-harnessdock/skills/`, `runtime/`, package/manifest metadata, and `tests/runtime*` in sync. Old upstream material is not a compatibility contract.
+- Keep the Agent skills under `plugins/codex-harnessdock/skills/`, `runtime/`, package/manifest metadata, and `tests/runtime*` in sync. Old upstream material is not a compatibility contract.
 - Run `npm run check` before merging.
 - For releases, update `CHANGELOG.md` and the base version in `package.json`; the cachebuster refresh derives `plugins/codex-harnessdock/.codex-plugin/plugin.json` from that single source.
