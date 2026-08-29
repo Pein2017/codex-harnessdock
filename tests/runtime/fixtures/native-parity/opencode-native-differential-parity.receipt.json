@@ -9,6 +9,10 @@
       "result": "pass"
     },
     {
+      "dimension": "native_configuration_inheritance",
+      "result": "pass"
+    },
+    {
       "dimension": "execution_directory_propagation",
       "result": "pass"
     },
@@ -38,6 +42,10 @@
     },
     {
       "dimension": "route_drift",
+      "result": "pass"
+    },
+    {
+      "dimension": "managed_service_process_lifecycle",
       "result": "pass"
     }
   ],
@@ -73,17 +81,6 @@
       "observed": "none"
     }
   ],
-  "unprovenRows": [
-    {
-      "dimension": "native_configuration_inheritance",
-      "result": "unproven",
-      "reason": "not_observed_by_fake_transport"
-    },
-    {
-      "dimension": "managed_service_process_lifecycle",
-      "result": "unproven",
-      "reason": "test_owned_server_only"
-    }
-  ],
-  "digest": "sha256:124329040594720e2d7437b6d1ee08d9fb805152db9eec5b8f3908348744209b"
+  "unprovenRows": [],
+  "digest": "sha256:8eb005bb8d3e21cdaebfcee74081baa689b8afa7c3d4f7c2ea11b0284a044b0d"
 }

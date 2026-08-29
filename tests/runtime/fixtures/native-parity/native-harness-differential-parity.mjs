@@ -199,10 +199,7 @@ export function composeNativeHarnessDifferentialParity({ claudeReceipt, piReceip
   }));
   opencodePass("exact_model_effort_inventory", "exact_model_effort_inventory", "exact native model and effort inventory comparison");
   opencodePass("argv_environment_or_request_transport", "request_transport_environment", "exact normalized native request transport comparison");
-  {
-    const { evidence, reason } = unprovenEvidence(opencodeReceipt, opencodeFile, opencode.unproven, "native_configuration_inheritance");
-    cells.push(cell({ harness: "opencode", dimension: "native_configuration_inheritance", evidence: [evidence], mode: "missing native implementation evidence", comparator: "full native configuration inheritance", result: "fail", blockerReason: reason }));
-  }
+  opencodePass("native_configuration_inheritance", "native_configuration_inheritance", "independent native config and resolved Agent witness comparison");
   opencodePass("prompt_authority_delta", "driver_authority_non_prompt_invariance", "authority-only non-prompt request comparison");
   opencodePass("event_tool_order", "ordered_request_event_tool_observations", "ordered native request event and tool comparison");
   for (const dimension of ["interrupt", "exact_session_continuation", "cross_process_turn_observation_or_reconciliation", "automatic_recovery_exact_session_transport"]) {
@@ -212,11 +209,7 @@ export function composeNativeHarnessDifferentialParity({ claudeReceipt, piReceip
   opencodePass("terminal_classification", "terminal_classification", "closed native terminal comparison");
   opencodePass("route_drift", "route_drift", "fresh native route drift refusal");
   opencodePass("native_usage_provenance", "provider_native_usage_source_fields", "provider-native usage source comparison");
-  {
-    const partial = provenEvidence(opencodeReceipt, opencodeFile, opencode.proven, "turn_session_cleanup");
-    const { evidence, reason } = unprovenEvidence(opencodeReceipt, opencodeFile, opencode.unproven, "managed_service_process_lifecycle");
-    cells.push(cell({ harness: "opencode", dimension: "process_lifecycle", evidence: [partial, evidence], mode: "missing native implementation evidence", comparator: "managed Service process lifecycle", result: "fail", blockerReason: reason }));
-  }
+  opencodePass("process_lifecycle", "managed_service_process_lifecycle", "direct executable and managed Service lifecycle comparison");
   if (cells.length !== NATIVE_HARNESS_IDS.length * NATIVE_HARNESS_DIFFERENTIAL_DIMENSIONS.length) fail("did not compose every global matrix cell");
   return sealNativeHarnessDifferentialParityReceipt({ schema: NATIVE_HARNESS_DIFFERENTIAL_PARITY_SCHEMA, cells });
 }

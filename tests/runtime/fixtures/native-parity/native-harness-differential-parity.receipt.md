@@ -1,6 +1,6 @@
 # Native Harness Differential Parity
 
-Status: `fail`; promotion eligible: `false`.
+Status: `hold`; promotion eligible: `false`.
 
 | Harness | Dimension | Result | Evidence |
 | --- | --- | --- | --- |
@@ -32,7 +32,7 @@ Status: `fail`; promotion eligible: `false`.
 | pi | process_lifecycle | pass | pi-native-differential-receipt.json#provenRows/lifecycle_process_cleanup |
 | opencode | exact_model_effort_inventory | pass | opencode-native-differential-parity.receipt.json#provenRows/exact_model_effort_inventory |
 | opencode | argv_environment_or_request_transport | pass | opencode-native-differential-parity.receipt.json#provenRows/request_transport_environment |
-| opencode | native_configuration_inheritance | fail | opencode-native-differential-parity.receipt.json#unprovenRows/native_configuration_inheritance |
+| opencode | native_configuration_inheritance | pass | opencode-native-differential-parity.receipt.json#provenRows/native_configuration_inheritance |
 | opencode | prompt_authority_delta | pass | opencode-native-differential-parity.receipt.json#provenRows/driver_authority_non_prompt_invariance |
 | opencode | event_tool_order | pass | opencode-native-differential-parity.receipt.json#provenRows/ordered_request_event_tool_observations |
 | opencode | interrupt | not_applicable | opencode-native-differential-parity.receipt.json#notApplicableRows/interrupt |
@@ -42,12 +42,10 @@ Status: `fail`; promotion eligible: `false`.
 | opencode | terminal_classification | pass | opencode-native-differential-parity.receipt.json#provenRows/terminal_classification |
 | opencode | route_drift | pass | opencode-native-differential-parity.receipt.json#provenRows/route_drift |
 | opencode | native_usage_provenance | pass | opencode-native-differential-parity.receipt.json#provenRows/provider_native_usage_source_fields |
-| opencode | process_lifecycle | fail | opencode-native-differential-parity.receipt.json#provenRows/turn_session_cleanup, opencode-native-differential-parity.receipt.json#unprovenRows/managed_service_process_lifecycle |
+| opencode | process_lifecycle | pass | opencode-native-differential-parity.receipt.json#provenRows/managed_service_process_lifecycle |
 
 ## Blockers
 
 - claude-code/exact_model_effort_inventory: hold — zero-prompt native controls do not establish the exact selectable full model and effort catalog
 - claude-code/exact_session_continuation: hold — the fake protocol exposes no provider-native persistent turn key; a distinct child PID is not native turn identity
 - claude-code/automatic_recovery_exact_session_transport: hold — same session and non-duplicated input lack a provider-defined accepted-turn or recovery binding
-- opencode/native_configuration_inheritance: fail — not_observed_by_fake_transport
-- opencode/process_lifecycle: fail — test_owned_server_only

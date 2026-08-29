@@ -497,6 +497,11 @@ export function createOpencodeDriver(options = {}) {
       if (routes.length === 0) {
         return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: "blocked", liveValidated: false, maturity: "experimental", detailCode: "interactive_policy", routes: null, capabilityProvenance: OPENCODE_NATIVE_CAPABILITIES.provenance, inspectionGeneration: inspectionGeneration() };
       }
+      // Test-only differential evidence. It stays outside every Driver result
+      // and receipt; the test projects these just-read native facts to digests.
+      if (typeof options._test?.captureNativeAdmissionEvidence === "function") {
+        options._test.captureNativeAdmissionEvidence(Object.freeze({ defaultAgent, agent: policy.agent }));
+      }
       return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: "ready", liveValidated: true, maturity: "experimental", detailCode: "ready", routes: nativeRouteFacts(routes), capabilityProvenance: OPENCODE_NATIVE_CAPABILITIES.provenance, inspectionGeneration: inspectionGeneration() };
     } catch {
       return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: "unavailable", liveValidated: false, maturity: "experimental", detailCode: "service_unreachable", routes: null, capabilityProvenance: OPENCODE_NATIVE_CAPABILITIES.provenance, inspectionGeneration: inspectionGeneration() };

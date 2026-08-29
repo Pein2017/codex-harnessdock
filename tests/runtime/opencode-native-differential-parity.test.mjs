@@ -7,18 +7,24 @@
  * identity is written to the checked-in receipt.
  */
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
+import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import { createOpencodeDriver, opencodeHeldCapacity } from "../../runtime/opencode-driver.mjs";
+import { createOpencodeServiceManager } from "../../runtime/opencode-service-manager.mjs";
+import { getProcessIdentity, isProcessAlive, terminateProcessTree } from "../../runtime/process-control.mjs";
 import { createFakeOpencodeServer } from "./fixtures/fake-opencode-server.mjs";
-import { runRawHttpOpenCodeOracle } from "./fixtures/native-parity/opencode-raw-http-oracle.mjs";
+import { opencodeNativeConfigurationWitness, runRawHttpOpenCodeOracle } from "./fixtures/native-parity/opencode-raw-http-oracle.mjs";
 
 const RECEIPT_PATH = new URL("./fixtures/native-parity/opencode-native-differential-parity.receipt.json", import.meta.url);
 const cleanups = [];
+const PROCESS_EXECUTABLE = new URL("./fixtures/native-parity/fake-opencode-service.mjs", import.meta.url).pathname;
+const PROCESS_TTL_SECONDS = 60;
 
 const NATIVE_INPUT = Object.freeze({
   providerId: "native-provider",
@@ -183,10 +189,14 @@ function splitHarnessRequestEvidence(requests) {
 
 async function runHarnessDockTurn({ server, url, directory, authority = NATIVE_INPUT.authority }) {
   let nativePartTypes = null;
+  let nativeAdmission = null;
   const driver = createOpencodeDriver({
     env: { OPENCODE_SERVER_URL: url },
     serviceManager: { ensure: async () => ({ status: "reused" }) },
-    _test: { captureNativePromptEvidence: (evidence) => { nativePartTypes = evidence.partTypes; } },
+    _test: {
+      captureNativePromptEvidence: (evidence) => { nativePartTypes = evidence.partTypes; },
+      captureNativeAdmissionEvidence: (evidence) => { nativeAdmission = evidence; },
+    },
   });
   const scope = {
     env: { OPENCODE_SERVER_URL: url },
@@ -211,12 +221,17 @@ async function runHarnessDockTurn({ server, url, directory, authority = NATIVE_I
   const terminal = await live.result;
   await live.dispose();
   const requests = server.requests.slice(before);
+  assert.ok(nativeAdmission, "the Driver must preserve the actual pre-session admission witness for this differential test");
   const session = requests.find((request) => request.path === "/session");
   const prompt = requests.find((request) => request.path.endsWith("/message"));
   const requestEvidence = splitHarnessRequestEvidence(requests);
   return {
     inventory: driverRoutes(inspection),
     ...requestEvidence,
+    configuration: opencodeNativeConfigurationWitness(
+      { default_agent: nativeAdmission.defaultAgent },
+      [nativeAdmission.agent],
+    ),
     executionDirectory: {
       witness: terminal.finalMessage === NATIVE_INPUT.configurationWitness ? "loaded" : "missing",
       propagated: typeof session?.query?.directory === "string" && typeof prompt?.query?.directory === "string"
@@ -255,6 +270,7 @@ function compareEvidence(direct, harness) {
   const comparisons = [
     ["exact_model_effort_inventory", direct.inventory, harness.inventory],
     ["request_transport_environment", direct.requestTransport, harness.requestTransport],
+    ["native_configuration_inheritance", direct.configuration, harness.configuration],
     ["execution_directory_propagation", direct.executionDirectory, harness.executionDirectory],
     ["ordered_request_event_tool_observations", direct.events, harness.events],
     ["terminal_classification", direct.terminal, harness.terminal],
@@ -362,6 +378,9 @@ function assertComparatorSensitivity(direct, harness) {
   const mutations = [
     ["provider catalog variant", (value) => { value.inventory[0].efforts = ["other"]; }],
     ["execution directory", (value) => { value.executionDirectory.witness = "missing"; }],
+    ["native config default Agent", (value) => { value.configuration.defaultAgentDigest = "sha256:changed"; }],
+    ["native selected Agent", (value) => { value.configuration.selectedAgentDigest = "sha256:changed"; }],
+    ["native policy", (value) => { value.configuration.permissionDigest = "sha256:changed"; }],
     ["request order", (value) => { value.events.requestOrder = [...value.events.requestOrder].reverse(); }],
     ["response part order", (value) => { value.events.partTypes = [...value.events.partTypes].reverse(); }],
     ["request body model", (value) => { value.requestTransport.requests[2].body.model.variant = "other"; }],
@@ -380,6 +399,38 @@ function assertComparatorSensitivity(direct, harness) {
     mutate(changed);
     assert.throws(() => compareEvidence(direct, changed), undefined, `${label} must fail the behavioral comparator`);
   }
+}
+
+async function assertNativeConfigurationSensitivity(directory) {
+  const baselineServer = await startServer(directory);
+  const baseline = await runRawHttpOpenCodeOracle({
+    serverUrl: baselineServer.url, selection: NATIVE_INPUT, taskInput: NATIVE_INPUT.taskInput,
+    directory, configurationWitness: NATIVE_INPUT.configurationWitness,
+  });
+  baselineServer.server.state.config.body.default_agent = "alternate-primary";
+  baselineServer.server.state.agents.body.push({
+    name: "alternate-primary", mode: "primary", native: false,
+    permission: structuredClone(baselineServer.server.state.agents.body[0].permission),
+  });
+  const changedDefault = await runHarnessDockTurn({ server: baselineServer.server, url: baselineServer.url, directory });
+  assert.throws(
+    () => compareEvidence(baseline, changedDefault),
+    undefined,
+    "a native default-Agent configuration mutation must fail the behavioral comparator",
+  );
+
+  const policyServer = await startServer(directory);
+  const direct = await runRawHttpOpenCodeOracle({
+    serverUrl: policyServer.url, selection: NATIVE_INPUT, taskInput: NATIVE_INPUT.taskInput,
+    directory, configurationWitness: NATIVE_INPUT.configurationWitness,
+  });
+  policyServer.server.state.agents.body[0].permission[0].action = "allow";
+  const changedPolicy = await runHarnessDockTurn({ server: policyServer.server, url: policyServer.url, directory });
+  assert.throws(
+    () => compareEvidence(direct, changedPolicy),
+    undefined,
+    "a native resolved-policy mutation must fail the behavioral comparator",
+  );
 }
 
 function assertAuthoritySensitivity(readOnly, write) {
@@ -418,6 +469,208 @@ async function assertNativeResponseSensitivity(directory) {
   }
 }
 
+function delay(milliseconds) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function freeLoopbackPort() {
+  const server = net.createServer();
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", resolve);
+  });
+  const { port } = server.address();
+  await new Promise((resolve) => server.close(resolve));
+  return port;
+}
+
+async function waitFor(predicate, label) {
+  const deadline = Date.now() + 2_000;
+  while (Date.now() < deadline) {
+    if (await predicate()) return;
+    await delay(10);
+  }
+  throw new Error(`${label} did not settle before the bounded deadline.`);
+}
+
+async function healthyEndpoint(url) {
+  try {
+    const response = await fetch(`${url}/global/health`);
+    const body = await response.json();
+    return response.status === 200 && body?.healthy === true && body?.version === "1.18.23";
+  } catch {
+    return false;
+  }
+}
+
+async function healthy(url, pid) {
+  return isProcessAlive(pid) && healthyEndpoint(url);
+}
+
+function processEnvironment({ url, record, envFile = null }) {
+  return {
+    ...process.env,
+    OPENCODE_EXECUTABLE: PROCESS_EXECUTABLE,
+    OPENCODE_SERVER_URL: url,
+    OPENCODE_PERMISSION: '{"*":"allow"}',
+    OPENCODE_NATIVE_PARITY_CONFIG: "deterministic-zero-model-config-v1",
+    OPENCODE_NATIVE_PARITY_RECORD: record,
+    HARNESSDOCK_OPENCODE_IDLE_TTL_SECONDS: String(PROCESS_TTL_SECONDS),
+    ...(envFile == null ? {} : { CODEX_HARNESSDOCK_RUNTIME_ENV_FILE: envFile }),
+  };
+}
+
+async function readProcessWitness(record, executable) {
+  await waitFor(async () => {
+    try { await fs.access(record); return true; } catch { return false; }
+  }, "test-owned OpenCode process witness");
+  const value = JSON.parse(await fs.readFile(record, "utf8"));
+  return {
+    executable,
+    pid: "{ephemeral-pid}",
+    argv: value.argv.map((argument) => /^\d+$/.test(argument) ? "{ephemeral-port}" : argument),
+    cwd: value.cwd,
+    permissionDigest: value.permissionDigest,
+    configurationDigest: value.configurationDigest,
+  };
+}
+
+async function terminateExactProcess(pid, identity) {
+  const termination = terminateProcessTree(pid, identity);
+  if (termination.delivered) {
+    await waitFor(() => !isProcessAlive(pid), "exact test-owned OpenCode process termination");
+  }
+  return {
+    identity: termination.delivered ? "exact" : "foreign",
+    delivered: termination.delivered ? "true" : "false",
+    survivor: isProcessAlive(pid) ? "present" : "none",
+  };
+}
+
+function expectedProcessLifecycle(witness, termination) {
+  return {
+    process: witness,
+    readiness: "healthy",
+    ownership: { initial: "started", reuse: "same_process" },
+    idleTtl: { beforeExpiry: "not_idle", activityRefresh: "not_idle", atExpiry: "reap" },
+    guards: { activeLease: "retain", activePeer: "retain", foreignIdentity: "retain", failedTermination: "retain" },
+    termination,
+  };
+}
+
+async function runDirectProcessOracle(root) {
+  const port = await freeLoopbackPort();
+  const url = `http://127.0.0.1:${port}`;
+  const record = path.join(root, "direct-process.json");
+  const child = spawn(PROCESS_EXECUTABLE, ["serve", "--hostname", "127.0.0.1", "--port", String(port)], {
+    detached: true,
+    env: processEnvironment({ url, record }),
+    stdio: "ignore",
+  });
+  assert.ok(Number.isSafeInteger(child.pid) && child.pid > 0, "direct oracle must own one exact executable process");
+  const identity = getProcessIdentity(child.pid);
+  cleanups.push(async () => {
+    if (isProcessAlive(child.pid)) await terminateExactProcess(child.pid, identity);
+  });
+  await waitFor(() => healthy(url, child.pid), "direct OpenCode health");
+  assert.equal(await healthy(url, child.pid), true, "a second direct health observation must reuse the same process");
+  const witness = await readProcessWitness(record, PROCESS_EXECUTABLE);
+  const foreign = terminateProcessTree(child.pid, `${identity}-foreign`);
+  assert.equal(foreign.delivered, false, "direct control must refuse a foreign process identity");
+  assert.equal(isProcessAlive(child.pid), true, "a foreign direct termination must preserve the exact child");
+  return expectedProcessLifecycle(witness, await terminateExactProcess(child.pid, identity));
+}
+
+async function runManagedProcessOracle(root, attempt = 0) {
+  const port = await freeLoopbackPort();
+  const url = `http://127.0.0.1:${port}`;
+  const record = path.join(root, "managed-process.json");
+  const runtimeRoot = path.join(root, "managed-runtime");
+  const envFile = path.join(root, "managed-runtime.env");
+  await fs.writeFile(envFile, [
+    `OPENCODE_EXECUTABLE=${PROCESS_EXECUTABLE}`,
+    `OPENCODE_SERVER_URL=${url}`,
+    `HARNESSDOCK_OPENCODE_IDLE_TTL_SECONDS=${PROCESS_TTL_SECONDS}`,
+    "",
+  ].join("\n"));
+  const env = processEnvironment({ url, record, envFile });
+  let now = 1_000;
+  let peerActivity = "none";
+  const options = {
+    env,
+    runtimeRoot,
+    now: () => now,
+    peerActivity: () => peerActivity,
+  };
+  const manager = createOpencodeServiceManager(options);
+  const receiptFile = path.join(runtimeRoot, "opencode-service", "receipt.json");
+  cleanups.push(async () => {
+    try {
+      const receipt = JSON.parse(await fs.readFile(receiptFile, "utf8"));
+      if (isProcessAlive(receipt.pid)) await terminateExactProcess(receipt.pid, receipt.identity);
+    } catch { /* the successful oracle already removed the exact receipt */ }
+  });
+
+  const started = await manager.ensure();
+  if (started.status === "reused") {
+    if (attempt >= 2) throw new Error("could not reserve a test-owned OpenCode process port");
+    return runManagedProcessOracle(await fs.mkdtemp(path.join(root, "retry-")), attempt + 1);
+  }
+  assert.deepEqual(started, { status: "managed" });
+  const firstReceipt = JSON.parse(await fs.readFile(receiptFile, "utf8"));
+  await waitFor(() => healthy(url, firstReceipt.pid), "managed OpenCode health");
+  const witness = await readProcessWitness(record, PROCESS_EXECUTABLE);
+  assert.deepEqual(await manager.ensure(), { status: "managed" });
+  const reusedReceipt = JSON.parse(await fs.readFile(receiptFile, "utf8"));
+  assert.equal(reusedReceipt.pid, firstReceipt.pid, "managed reuse must retain the exact child process identity");
+  assert.equal(reusedReceipt.identity, firstReceipt.identity, "managed reuse must retain the exact child identity witness");
+
+  const lease = await manager.acquireTurnLease({ rootId: "root", agentId: "agent", turnId: "turn", attemptId: "attempt" });
+  now += PROCESS_TTL_SECONDS * 1_000 - 1;
+  assert.deepEqual(await manager.reapIfIdle(), { reaped: false, reason: "not_idle" });
+  now += 1;
+  assert.deepEqual(await manager.reapIfIdle(), { reaped: false, reason: "turn_held" });
+  assert.equal(await manager.releaseTurnLease(lease), true);
+  now += PROCESS_TTL_SECONDS * 1_000 - 1;
+  assert.deepEqual(await manager.reapIfIdle(), { reaped: false, reason: "not_idle" });
+  now += 1;
+  peerActivity = "present";
+  assert.deepEqual(await manager.reapIfIdle(), { reaped: false, reason: "peer_present" });
+  peerActivity = "none";
+  assert.deepEqual(
+    await createOpencodeServiceManager({ ...options, validateIdentity: () => false }).reapIfIdle(),
+    { reaped: false, reason: "receipt_unproven" },
+  );
+  assert.deepEqual(
+    await createOpencodeServiceManager({ ...options, terminate: () => ({ attempted: true, delivered: false }) }).reapIfIdle(),
+    { reaped: false, reason: "termination_ambiguous" },
+  );
+  assert.equal(isProcessAlive(firstReceipt.pid), true, "a failed managed termination must leave the exact process alive");
+  assert.deepEqual(await manager.reapIfIdle(), { reaped: true, reason: "terminated" });
+  await waitFor(() => !isProcessAlive(firstReceipt.pid), "managed exact child termination");
+  return expectedProcessLifecycle(witness, { identity: "exact", delivered: "true", survivor: "none" });
+}
+
+function assertProcessLifecycleSensitivity(direct, managed) {
+  for (const [label, mutate] of [
+    ["executable", (value) => { value.process.executable = "/wrong/opencode"; }],
+    ["argv", (value) => { value.process.argv[0] = "wrong"; }],
+    ["environment", (value) => { value.process.permissionDigest = "sha256:wrong"; }],
+    ["configuration", (value) => { value.process.configurationDigest = "sha256:wrong"; }],
+    ["health", (value) => { value.readiness = "unhealthy"; }],
+    ["foreign identity", (value) => { value.guards.foreignIdentity = "reap"; }],
+    ["active lease", (value) => { value.guards.activeLease = "reap"; }],
+    ["active peer", (value) => { value.guards.activePeer = "reap"; }],
+    ["ttl activity refresh", (value) => { value.idleTtl.activityRefresh = "reap"; }],
+    ["failed termination", (value) => { value.guards.failedTermination = "reap"; }],
+    ["surviving process", (value) => { value.termination.survivor = "present"; }],
+  ]) {
+    const changed = structuredClone(managed);
+    mutate(changed);
+    assert.throws(() => assert.deepEqual(direct, changed), undefined, `${label} must fail the process behavioral comparator`);
+  }
+}
+
 function renderReceipt(rows) {
   const sections = Object.fromEntries(
     Object.entries(rows).map(([name, entries]) => [name, entries.map((entry) => ({ ...entry }))])
@@ -449,6 +702,14 @@ describe("OpenCode native raw-HTTP differential parity", () => {
     assertComparatorSensitivity(direct, harness);
     assertAuthoritySensitivity(harness, writeHarness);
     await assertNativeResponseSensitivity(directory);
+    await assertNativeConfigurationSensitivity(directory);
+    const processRoot = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-native-parity-process-"));
+    cleanups.push(() => fs.rm(processRoot, { recursive: true, force: true }));
+    const directProcess = await runDirectProcessOracle(processRoot);
+    const managedProcess = await runManagedProcessOracle(processRoot);
+    assert.deepEqual(directProcess, managedProcess, "production service management must retain the direct executable lifecycle behavior");
+    assertProcessLifecycleSensitivity(directProcess, managedProcess);
+    const processRow = { dimension: "managed_service_process_lifecycle", result: "pass" };
 
     server.state.provider = providerCatalog();
     const directDrift = await runRawHttpOpenCodeOracle({
@@ -461,12 +722,9 @@ describe("OpenCode native raw-HTTP differential parity", () => {
     const driftRow = compareRouteDrift(directDrift, harnessDrift);
 
     const receipt = renderReceipt({
-      provenRows: [...comparedRows, authorityRow, policyRow, driftRow],
+      provenRows: [...comparedRows, authorityRow, policyRow, driftRow, processRow],
       notApplicableRows: capabilityNotApplicableRows(harness.capabilities),
-      unprovenRows: [
-        { dimension: "native_configuration_inheritance", result: "unproven", reason: "not_observed_by_fake_transport" },
-        { dimension: "managed_service_process_lifecycle", result: "unproven", reason: "test_owned_server_only" },
-      ],
+      unprovenRows: [],
     });
     assert.equal(receipt.includes(directory), false, "receipt must not disclose the disposable configuration identity");
     assert.equal(receipt.includes(url), false, "receipt must not disclose the test origin");

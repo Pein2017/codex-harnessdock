@@ -101,8 +101,8 @@ describe("native Harness differential parity", () => {
     const inputs = localReceipts();
     const receipt = composeNativeHarnessDifferentialParity(inputs);
     const assessment = assessNativeHarnessDifferentialParity(receipt);
-    assert.deepEqual(assessment.counts, { pass: 27, fail: 2, hold: 3, not_applicable: 7 });
-    assert.equal(assessment.status, "fail");
+    assert.deepEqual(assessment.counts, { pass: 29, fail: 0, hold: 3, not_applicable: 7 });
+    assert.equal(assessment.status, "hold");
     assert.equal(assessment.promotionEligible, false);
     assert.equal(receipt.cells.length, 39);
     assert.equal(renderNativeHarnessDifferentialParityReceipt(receipt), fs.readFileSync(RECEIPT_PATH, "utf8"));
@@ -137,7 +137,7 @@ describe("native Harness differential parity", () => {
       (value) => { value.cells[0].localEvidence[0].label = "claude-differential-receipt.json#other"; },
       (value) => { value.cells.find((row) => row.harness === "claude-code" && row.dimension === "exact_model_effort_inventory").result = "pass"; },
       (value) => { value.cells.find((row) => row.harness === "claude-code" && row.dimension === "exact_model_effort_inventory").result = "not_applicable"; value.cells.find((row) => row.harness === "claude-code" && row.dimension === "exact_model_effort_inventory").notApplicableBasis = { capability: "inventory", observed: "unavailable" }; delete value.cells.find((row) => row.harness === "claude-code" && row.dimension === "exact_model_effort_inventory").blockerReason; },
-      (value) => { value.cells.find((row) => row.harness === "opencode" && row.dimension === "native_configuration_inheritance").result = "pass"; delete value.cells.find((row) => row.harness === "opencode" && row.dimension === "native_configuration_inheritance").blockerReason; },
+      (value) => { const row = value.cells.find((entry) => entry.harness === "opencode" && entry.dimension === "native_configuration_inheritance"); row.result = "fail"; row.blockerReason = "forged config gap"; },
     ];
     for (const mutate of mutations) {
       const changed = structuredClone(baseline);

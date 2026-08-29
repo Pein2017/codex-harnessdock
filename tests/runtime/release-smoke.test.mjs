@@ -161,7 +161,7 @@ describe("release smoke", () => {
       "utf8",
     ));
     const assessment = assessNativeHarnessDifferentialParity(differentialParityReceipt);
-    assert.equal(assessment.status, "fail");
+    assert.equal(assessment.status, "hold");
     assert.equal(assessment.promotionEligible, false);
     const report = await runReleaseSmoke({
       installed: fixture.installed,
@@ -174,10 +174,10 @@ describe("release smoke", () => {
         paid: { requested: false, status: "skipped" },
       }),
     });
-    assert.equal(report.status, "fail");
+    assert.equal(report.status, "hold");
     assert.equal(report.promotionEligible, false);
-    assert.deepEqual(report.differentialParity.counts, { pass: 27, fail: 2, hold: 3, not_applicable: 7 });
-    assert.equal(report.differentialParity.blockers.length, 5);
+    assert.deepEqual(report.differentialParity.counts, { pass: 29, fail: 0, hold: 3, not_applicable: 7 });
+    assert.equal(report.differentialParity.blockers.length, 3);
   });
 
   it("validates matching installed Skills and MCP evidence without paid usage by default", async () => {
@@ -771,7 +771,7 @@ describe("release smoke", () => {
     });
     assert.equal(exitCode, 1);
     assert.equal(suppliedReceipt.schema, "harnessdock.native-harness-differential-parity.v1");
-    assert.deepEqual(JSON.parse(stdout.join("")), { status: "fail", promotionEligible: false });
+    assert.deepEqual(JSON.parse(stdout.join("")), { status: "hold", promotionEligible: false });
   });
 
   for (const [label, readFileSync] of [

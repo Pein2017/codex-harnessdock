@@ -448,13 +448,13 @@
       "localEvidence": [
         {
           "label": "opencode-native-differential-parity.receipt.json#provenRows/exact_model_effort_inventory",
-          "digest": "sha256:2a137ffb90540880048abf20839cc5599c4ec7b8cf9a0b62ce7e6cc4c24f74c1"
+          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
         }
       ],
       "mode": "zero-model deterministic native comparison",
       "comparator": "exact native model and effort inventory comparison",
       "result": "pass",
-      "contentDigest": "sha256:84ccad1adf631c52a4e98e0a3759606b5e240b684b35416391ffc9b98756f768"
+      "contentDigest": "sha256:95aff4d0798afbb4646fc14fd5dc1c22591d36d5a9caff01ce3f5b4c375969f7"
     },
     {
       "harness": "opencode",
@@ -464,13 +464,13 @@
       "localEvidence": [
         {
           "label": "opencode-native-differential-parity.receipt.json#provenRows/request_transport_environment",
-          "digest": "sha256:2a137ffb90540880048abf20839cc5599c4ec7b8cf9a0b62ce7e6cc4c24f74c1"
+          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
         }
       ],
       "mode": "zero-model deterministic native comparison",
       "comparator": "exact normalized native request transport comparison",
       "result": "pass",
-      "contentDigest": "sha256:6214899c4d3275ff4dd8a0f3b7bc0575b4ddae858e69816198f34e231a9fa46d"
+      "contentDigest": "sha256:e06d10a70783a14ea9cb548e92a53acc22c2c830053a25e7447f827a32000ad6"
     },
     {
       "harness": "opencode",
@@ -479,15 +479,14 @@
       "dimension": "native_configuration_inheritance",
       "localEvidence": [
         {
-          "label": "opencode-native-differential-parity.receipt.json#unprovenRows/native_configuration_inheritance",
-          "digest": "sha256:2a137ffb90540880048abf20839cc5599c4ec7b8cf9a0b62ce7e6cc4c24f74c1"
+          "label": "opencode-native-differential-parity.receipt.json#provenRows/native_configuration_inheritance",
+          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
         }
       ],
-      "mode": "missing native implementation evidence",
-      "comparator": "full native configuration inheritance",
-      "result": "fail",
-      "blockerReason": "not_observed_by_fake_transport",
-      "contentDigest": "sha256:96bdd10b577cbb5b330f4c187701a77bb556eecc41ea96f3053528e6aaf7e996"
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "independent native config and resolved Agent witness comparison",
+      "result": "pass",
+      "contentDigest": "sha256:0840896b4b8f0420f0111c7ac8e90dcff50659f058db6792bbad0d93677a555e"
     },
     {
       "harness": "opencode",
@@ -497,13 +496,13 @@
       "localEvidence": [
         {
           "label": "opencode-native-differential-parity.receipt.json#provenRows/driver_authority_non_prompt_invariance",
-          "digest": "sha256:2a137ffb90540880048abf20839cc5599c4ec7b8cf9a0b62ce7e6cc4c24f74c1"
+          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
         }
       ],
       "mode": "zero-model deterministic native comparison",
       "comparator": "authority-only non-prompt request comparison",
       "result": "pass",
-      "contentDigest": "sha256:e83faaa6236c373a6535c8822545c3905d3dc306690bd4eec556687e582d42cd"
+      "contentDigest": "sha256:2d057973d4920a95a0e26d9acb0a45c2c8b67399f10eb3c5ca89f6d0d38ac0d5"
     },
     {
       "harness": "opencode",
@@ -513,13 +512,13 @@
       "localEvidence": [
         {
           "label": "opencode-native-differential-parity.receipt.json#provenRows/ordered_request_event_tool_observations",
-          "digest": "sha256:2a137ffb90540880048abf20839cc5599c4ec7b8cf9a0b62ce7e6cc4c24f74c1"
+          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
         }
       ],
       "mode": "zero-model deterministic native comparison",
       "comparator": "ordered native request event and tool comparison",
       "result": "pass",
-      "contentDigest": "sha256:95521275ff17a6b58ef350379eb4875a694755660f43b13451ee9d7bdeb8280e"
+      "contentDigest": "sha256:a99841a6bf4a99fa7bb4d9af49432fa6667ffafcb1ce3db5eede5ceeb2fecb71"
     },
     {
       "harness": "opencode",
@@ -529,7 +528,7 @@
       "localEvidence": [
         {
           "label": "opencode-native-differential-parity.receipt.json#notApplicableRows/interrupt",
-          "digest": "sha256:2a137ffb90540880048abf20839cc5599c4ec7b8cf9a0b62ce7e6cc4c24f74c1"
+          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
         }
       ],
       "mode": "capability-derived",
@@ -539,7 +538,7 @@
         "capability": "interruptRequest",
         "observed": "unsupported"
       },
-      "contentDigest": "sha256:064660c3b8588aff86d8a98cdd12c0b23b12f7990a10e87ca3aad2cf0a974dce"
+      "contentDigest": "sha256:74661a0cc1ded48c1691bc6134254d94b41f497c00ed0c513a6ad55f97b9348e"
     },
     {
       "harness": "opencode",
@@ -549,7 +548,7 @@
       "localEvidence": [
         {
           "label": "opencode-native-differential-parity.receipt.json#notApplicableRows/exact_session_continuation",
-          "digest": "sha256:2a137ffb90540880048abf20839cc5599c4ec7b8cf9a0b62ce7e6cc4c24f74c1"
+          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
         }
       ],
       "mode": "capability-derived",
@@ -559,7 +558,7 @@
         "capability": "continuation",
         "observed": "fresh_only"
       },
-      "contentDigest": "sha256:1e42398a4767f69cb530b0811f3b0899189b8b77e4cf01af69b5758923efac21"
+      "contentDigest": "sha256:f10df49b5175e06bf07e44fcc8a3c85582cc0ba112686f23f82a030d1063c40d"
     },
     {
       "harness": "opencode",
@@ -569,7 +568,7 @@
       "localEvidence": [
         {
           "label": "opencode-native-differential-parity.receipt.json#notApplicableRows/cross_process_turn_observation_or_reconciliation",
-          "digest": "sha256:2a137ffb90540880048abf20839cc5599c4ec7b8cf9a0b62ce7e6cc4c24f74c1"
+          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
         }
       ],
       "mode": "capability-derived",
@@ -579,7 +578,7 @@
         "capability": "turnObservation",
         "observed": "unavailable"
       },
-      "contentDigest": "sha256:22f89e35ad88552b1977d23987e8150727e0f947865f0516e374f43176d19677"
+      "contentDigest": "sha256:d5dd1083faa253da2c60eda4dfeffaed8328e27c2111ef4fc5b548552c7d98e0"
     },
     {
       "harness": "opencode",
@@ -589,7 +588,7 @@
       "localEvidence": [
         {
           "label": "opencode-native-differential-parity.receipt.json#notApplicableRows/automatic_recovery_exact_session_transport",
-          "digest": "sha256:2a137ffb90540880048abf20839cc5599c4ec7b8cf9a0b62ce7e6cc4c24f74c1"
+          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
         }
       ],
       "mode": "capability-derived",
@@ -599,7 +598,7 @@
         "capability": "automaticRecovery",
         "observed": "none"
       },
-      "contentDigest": "sha256:b3cca07a61764c805d01a751c8476db28a70d7d72641be4360a84931734f9d7a"
+      "contentDigest": "sha256:237bfdb0de1aa6721b5c1bd9fe20529f4496a818a4ab9af17834af03b2e6f4b4"
     },
     {
       "harness": "opencode",
@@ -609,13 +608,13 @@
       "localEvidence": [
         {
           "label": "opencode-native-differential-parity.receipt.json#provenRows/terminal_classification",
-          "digest": "sha256:2a137ffb90540880048abf20839cc5599c4ec7b8cf9a0b62ce7e6cc4c24f74c1"
+          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
         }
       ],
       "mode": "zero-model deterministic native comparison",
       "comparator": "closed native terminal comparison",
       "result": "pass",
-      "contentDigest": "sha256:956a58c5ed9556f968dc040fb91cc052882a69bd213b9d49ae40a521d5a99b68"
+      "contentDigest": "sha256:99c5f2c55e9cfd96fbc698ffa7e848dcc510eeac61fca8cf50a70386468b5cad"
     },
     {
       "harness": "opencode",
@@ -625,13 +624,13 @@
       "localEvidence": [
         {
           "label": "opencode-native-differential-parity.receipt.json#provenRows/route_drift",
-          "digest": "sha256:2a137ffb90540880048abf20839cc5599c4ec7b8cf9a0b62ce7e6cc4c24f74c1"
+          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
         }
       ],
       "mode": "zero-model deterministic native comparison",
       "comparator": "fresh native route drift refusal",
       "result": "pass",
-      "contentDigest": "sha256:cfed815fb07fafd62de72d24f36ec99405594995e1a0ccb5a63308e7f678c455"
+      "contentDigest": "sha256:dd8d2cb4ed50abea645ec31ff3257731c21da1e238ef7e1833ed70f979499107"
     },
     {
       "harness": "opencode",
@@ -641,13 +640,13 @@
       "localEvidence": [
         {
           "label": "opencode-native-differential-parity.receipt.json#provenRows/provider_native_usage_source_fields",
-          "digest": "sha256:2a137ffb90540880048abf20839cc5599c4ec7b8cf9a0b62ce7e6cc4c24f74c1"
+          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
         }
       ],
       "mode": "zero-model deterministic native comparison",
       "comparator": "provider-native usage source comparison",
       "result": "pass",
-      "contentDigest": "sha256:3346f985bafb24dfd9c751c7c23b94ebf40cecb2b3a9f45807428c456526ca8a"
+      "contentDigest": "sha256:4f0db3b176aae145fe37680b0d0b891b1c9316c93e85fe40d1804c4af4bf54c1"
     },
     {
       "harness": "opencode",
@@ -656,20 +655,15 @@
       "dimension": "process_lifecycle",
       "localEvidence": [
         {
-          "label": "opencode-native-differential-parity.receipt.json#provenRows/turn_session_cleanup",
-          "digest": "sha256:2a137ffb90540880048abf20839cc5599c4ec7b8cf9a0b62ce7e6cc4c24f74c1"
-        },
-        {
-          "label": "opencode-native-differential-parity.receipt.json#unprovenRows/managed_service_process_lifecycle",
-          "digest": "sha256:2a137ffb90540880048abf20839cc5599c4ec7b8cf9a0b62ce7e6cc4c24f74c1"
+          "label": "opencode-native-differential-parity.receipt.json#provenRows/managed_service_process_lifecycle",
+          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
         }
       ],
-      "mode": "missing native implementation evidence",
-      "comparator": "managed Service process lifecycle",
-      "result": "fail",
-      "blockerReason": "test_owned_server_only",
-      "contentDigest": "sha256:d2dc520abc9604574f9879e607b294a713ad9724832806ef9c030435ca73e75a"
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "direct executable and managed Service lifecycle comparison",
+      "result": "pass",
+      "contentDigest": "sha256:11b97e4fb494307d6b1195966ccaab96a20078666cc81438ef3de4a53d4b70d0"
     }
   ],
-  "digest": "sha256:16a392d09964abd6758917c970bb983c03fe3822777dd9aa8e307bbe2a9caee9"
+  "digest": "sha256:a6eae0af322d255f4e3df789f34cd29e7d817327a25cb5b590de00d090a82035"
 }

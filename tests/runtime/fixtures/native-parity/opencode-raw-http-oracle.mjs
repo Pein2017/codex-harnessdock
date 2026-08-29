@@ -5,6 +5,11 @@
  * deliberately imports no HarnessDock code, OpenCode SDK, or generated
  * expectation: it speaks the pinned HTTP boundary with `fetch` alone.
  */
+import { createHash } from "node:crypto";
+
+function digest(value) {
+  return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
+}
 
 function requestPath(url) {
   const parsed = new URL(url);
@@ -113,6 +118,27 @@ function normalizedRequests(events) {
 }
 
 /**
+ * A deliberately bounded projection of the native configuration surfaces. It
+ * contains no Agent name, pattern, or policy identity; the opaque digests make
+ * an otherwise-benign configuration or resolved-policy drift observable.
+ */
+export function opencodeNativeConfigurationWitness(config, agents) {
+  const defaultAgent = typeof config?.default_agent === "string" ? config.default_agent : null;
+  const catalog = Array.isArray(agents) ? agents : [];
+  const selected = defaultAgent == null ? null : catalog.find((agent) => agent?.name === defaultAgent) ?? null;
+  const rules = Array.isArray(selected?.permission)
+    ? selected.permission
+    : Array.isArray(selected?.ruleset) ? selected.ruleset : null;
+  return Object.freeze({
+    defaultAgentDigest: digest(defaultAgent),
+    selectedAgentDigest: digest(selected?.name ?? null),
+    selectedMode: typeof selected?.mode === "string" ? selected.mode : "missing",
+    permissionRuleCount: rules?.length ?? -1,
+    permissionDigest: digest(rules),
+  });
+}
+
+/**
  * Run one manual raw-HTTP turn. `beforeRecheck` lets the caller introduce a
  * native catalog drift between discovery and the pre-transport recheck.
  */
@@ -137,6 +163,13 @@ export async function runRawHttpOpenCodeOracle({
   if (second.status !== 200 || !hasExactRoute(recheckedInventory, selection)) {
     return { kind: "route_drift", inventory, events: requestEvents(events), routeDrift: "route_not_admitted" };
   }
+
+  // This is intentionally direct raw HTTP rather than a projection from the
+  // Driver. The policy remains opaque in the returned witness.
+  const config = await jsonRequest(serverUrl, "GET", `/config${directoryQuery}`, undefined, events);
+  const agents = await jsonRequest(serverUrl, "GET", `/agent${directoryQuery}`, undefined, events);
+  if (config.status !== 200 || agents.status !== 200) throw new Error("Raw OpenCode oracle could not read native configuration.");
+  const configuration = opencodeNativeConfigurationWitness(config.payload, agents.payload);
 
   const sessionBody = { model: { id: selection.modelId, providerID: selection.providerId, variant: selection.effort } };
   const session = await jsonRequest(serverUrl, "POST", `/session${directoryQuery}`, sessionBody, events);
@@ -163,9 +196,10 @@ export async function runRawHttpOpenCodeOracle({
   return {
     kind: "turn",
     inventory,
-    requestTransport: { origin: "loopback", requests: normalizedRequests(events) },
+    requestTransport: { origin: "loopback", requests: normalizedRequests(events.filter((event) => ["/provider", "/session"].includes(event.path) || event.path.endsWith("/message"))) },
+    configuration,
     executionDirectory: { witness: terminal.configurationWitness, propagated: "session_and_prompt_directory" },
-    events: { requestOrder: requestEvents(events), partTypes: terminal.partTypes, toolCallCount: terminal.toolCallCount },
+    events: { requestOrder: requestEvents(events.filter((event) => ["/provider", "/session"].includes(event.path) || event.path.endsWith("/message"))), partTypes: terminal.partTypes, toolCallCount: terminal.toolCallCount },
     terminal: { classification: terminal.terminal, lineage: terminal.lineage, finish: terminal.finish, finalText: terminal.finalText },
     usage: terminal.provider,
     lifecycle: { sessionLifecycle: "fresh_session_per_agent", settled: prompt.status === 200, cleanup: "no_live_client" },
