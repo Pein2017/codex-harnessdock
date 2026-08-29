@@ -1,0 +1,28 @@
+{
+  "schema": "harnessdock.claude-native-differential-parity.v1",
+  "subject": "test-owned fake Claude CLI, direct Node control, and production Claude Driver v2/adapter",
+  "normalization": {
+    "ephemeralRoot": "<ROOT>",
+    "processPid": "<PID>"
+  },
+  "provenRows": [
+    "argv_environment",
+    "benign_config_inheritance_witness",
+    "prompt_authority_native_input",
+    "ordered_stream_tool_events",
+    "interrupt_behavior",
+    "exact_resume_same_session_distinct_new_turn",
+    "exact_session_transport_recovery_without_duplicate_input",
+    "terminal_classification",
+    "route_drift",
+    "provider_native_usage_source_fields",
+    "process_lifecycle_cleanup"
+  ],
+  "hold": {
+    "dimension": "exact_dynamic_claude_model_effort_inventory",
+    "result": "HOLD",
+    "reason": "zero-prompt native controls do not establish the exact selectable full model and effort catalog",
+    "fallbackUsed": false,
+    "staticCatalogUsed": false
+  }
+}
