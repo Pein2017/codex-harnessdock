@@ -18,6 +18,12 @@ See `proposal.md` and its four delta specs. `runtime/harness-capabilities.mjs` a
 
 ## Decisions
 
+### 0. Generic evidence can start from explicit effort; stronger facts remain gated
+
+The accepted shared foundation that every canonical route carries an explicit effort is the prerequisite for generic schema-v3 validation and whole-replacement work. It permits that implementation now; it does not stand in for universal exact-route enforcement. Final exact-route/provenance stack acceptance remains gated on `enforce-exact-discovered-routes`.
+
+Claude Code 2.1.250 cannot currently zero-prompt validate an exact selectable model-plus-effort catalog. Therefore `discover-claude-native-routes` remains `HOLD` for Claude dynamic/native facts. Until successful discovery supplies matching native or exact-session evidence, Claude may emit only checkout-owned capability/projection facts as `checkout_declared` and explicit unavailable safe configuration-generation evidence. It must not emit `inspection_proven` or `session_negotiated`, infer a catalog, or receive a legacy exception service.
+
 ### 1. Extend the capability schema, not the architecture
 
 Capability schema v3 adds a `provenance` object keyed exactly like `values` and `maturity`, with closed values `checkout_declared`, `inspection_proven`, and `session_negotiated`. Validation snapshots all three objects once and requires exact key equality. The Driver contract states which native receipt proves every `inspection_proven` or `session_negotiated` value.
@@ -59,8 +65,8 @@ The accepted snapshot/generation is stored with the launch/attempt evidence alre
 
 ## Migration Plan
 
-1. Accept exact route shape first; add schema-v3 validation with fake snapshots and read-forward v2 fixtures.
-2. Add Driver-specific safe generation/provenance producers without changing admission decisions; verify whole-replacement and redaction sensitivity.
-3. Bind v3 evidence to new attempts and make capability-dependent operations require current provenance; preserve route identity and old durable records.
+1. Confirm the accepted explicit-canonical-effort foundation; add schema-v3 validation with fake snapshots and read-forward v2 fixtures.
+2. Add generic whole-replacement plus Pi/OpenCode safe generation/provenance producers without changing admission decisions. For Claude under `HOLD`, cover only `checkout_declared` plus unavailable safe configuration-generation evidence; verify no dynamic/native provenance claim.
+3. Bind v3 evidence to new attempts and make capability-dependent operations require current provenance; preserve route identity and old durable records. Integrate universal exact-route revalidation only after `enforce-exact-discovered-routes` is accepted, and Claude dynamic/native facts only after successful `discover-claude-native-routes` discovery.
 4. Update listing, cards, doctor, and MCP redaction/projection tests; run focused migration/coherence suites and `npm run check`.
 5. Do not install or release the intermediate checkpoint. Rollback reads unchanged old state and ignores new optional attempt evidence through the normal versioned reader.

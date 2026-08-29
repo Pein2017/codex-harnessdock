@@ -9,7 +9,8 @@ Fresh discovery currently reports a route value but not how each capability was 
 - Add a secret-safe opaque inspection generation derived only from exact executable identity and native-reported configuration evidence that the Driver actually consumes. When a Harness cannot report configuration evidence safely, state `unavailable` rather than reading arbitrary config contents or inventing a digest.
 - Revalidate persisted exact routes against the new complete projection. A disappeared tuple or narrowed required capability fails closed; a benign configuration-generation change may be observed and receipted without mutating the immutable model/effort route or blocking parity with the next direct native invocation.
 - Expose only bounded provenance/generation facts, never plugin, MCP, skill, tool, prompt-template, endpoint, credential, config-path, or config-content identities. These facts are evidence and cannot be supplied as spawn selectors.
-- Depend on `enforce-exact-discovered-routes`; Claude-specific native provenance additionally depends on `discover-claude-native-routes`.
+- Begin generic schema-v3 and whole-replacement implementation after the accepted shared explicit-canonical-effort foundation (every canonical route carries an explicit effort); this is a behavior prerequisite, not a commit-identity dependency.
+- Final exact-route/provenance stack acceptance still depends on `enforce-exact-discovered-routes`. Claude-specific dynamic/native provenance additionally depends on successful `discover-claude-native-routes` discovery: while that change is `HOLD`, Claude may publish only truthful checkout-owned capability/projection facts as `checkout_declared` with safe configuration-generation evidence `unavailable`, never `inspection_proven` or `session_negotiated` route facts.
 
 ## Capabilities
 
