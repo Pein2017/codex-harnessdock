@@ -63,6 +63,9 @@ function argvShape(argv) {
   return argv.map((item, index) => (index > 0 && ["--session-id", "--session"].includes(argv[index - 1]) ? "<native-session>" : (index > 0 && argv[index - 1] === "--session-dir" ? "<bounded-session-root>" : item)));
 }
 function eventTypes(recordOrEvents) { return (Array.isArray(recordOrEvents) ? recordOrEvents : recordOrEvents.events).map((event) => event.type); }
+function commandShape(commands) { return commands.map(({ id: _id, ...command }) => command); }
+function normalizeAuthorityStatement(message) { return message.replace(/^- [^\n]+/m, "- <authority-statement>"); }
+function authorityStatement(message) { return message.match(/^- ([^\n]+)/m)?.[1] ?? null; }
 function usageDelta(before, after) {
   return {
     input_tokens: after.tokens.input - before.tokens.input,
@@ -78,7 +81,7 @@ function mustFail(comparator) { assert.throws(comparator, /parity mismatch/); }
 function noLivePid(pid) { assert.throws(() => process.kill(pid, 0), { code: "ESRCH" }); }
 function sourceGuard() {
   const direct = fs.readFileSync(path.join(path.dirname(FIXTURE), "direct-pi-jsonl-client.mjs"), "utf8");
-  assert.doesNotMatch(direct, /(?:pi-driver|pi-rpc-process|harness-contract|terminal-metrics|harness-registry|piRpcArgv|fixedPrompt|statsDelta)/);
+  assert.doesNotMatch(direct, /(?:pi-driver|pi-rpc-process|harness-contract|terminal-metrics|harness-registry|piRpcArgv|fixedPrompt|statsDelta|HarnessDock route contract|Task-scoped writes|Read only\. Do not change|Work as one leaf|Return one final assistant message)/);
 }
 
 function harness(current) {
@@ -115,12 +118,12 @@ async function launch(current, subject, { authority = "behavioral_read_only", ta
 }
 async function completed(current, subject, options) { const output = await launch(current, subject, options); return { ...output, result: await output.live.result }; }
 
-function row(dimension, direct, harnessdock, comparator) {
+function row(dimension, direct, harnessdock, comparator, sources = {}) {
   comparator();
   return {
     dimension,
-    directSource: "manual Pi JSONL client",
-    harnessdockSource: "Pi Driver receipt and native invocation capture",
+    directSource: sources.directSource ?? "manual Pi JSONL client",
+    harnessdockSource: sources.harnessdockSource ?? "Pi Driver receipt and native invocation capture",
     mode: "zero-model deterministic fake native",
     comparator: "executed independent behavioral comparison",
     result: "pass",
@@ -159,16 +162,15 @@ async function evidence() {
     const inventoryHarness = harness(current); const inventory = await inspect(current, inventoryHarness);
     const driverCatalog = controlRecord(current);
 
-    const directRead = await directTurn({ ...nativeInput(current, turnArgv(current, "11111111-1111-4111-8111-111111111111")), authority: "behavioral_read_only", task: "native parity task" });
+    const directRead = await directTurn({ ...nativeInput(current, turnArgv(current, "11111111-1111-4111-8111-111111111111")), task: "native parity task" });
     const readHarness = harness(current); const read = await completed(current, readHarness);
     const readRecord = sessionRecord(current, read.live.nativeSessionRef.locator.sessionId);
 
-    const directWrite = await directTurn({ ...nativeInput(current, turnArgv(current, "22222222-2222-4222-8222-222222222222")), authority: "behavioral_write", task: "native parity task" });
     const writeHarness = harness(current); const write = await completed(current, writeHarness, { authority: "behavioral_write", turnId: "driver-write" });
     const writeRecord = sessionRecord(current, write.live.nativeSessionRef.locator.sessionId);
 
     setConfig(current, { settleOnPrompt: false });
-    const directAbort = await directInterrupt({ ...nativeInput(current, turnArgv(current, "33333333-3333-4333-8333-333333333333")), authority: "behavioral_read_only", task: "interrupt task" });
+    const directAbort = await directInterrupt({ ...nativeInput(current, turnArgv(current, "33333333-3333-4333-8333-333333333333")), task: "interrupt task" });
     const interruptHarness = harness(current); const interrupted = await launch(current, interruptHarness, { task: "interrupt task", turnId: "driver-interrupt" });
     const interruptReceipt = await interrupted.live.requestInterrupt({ commandId: "interrupt-1", kind: "interrupt" });
     const interruptResult = await interrupted.live.result;
@@ -176,8 +178,8 @@ async function evidence() {
 
     setConfig(current);
     const directSession = "44444444-4444-4444-8444-444444444444";
-    await directTurn({ ...nativeInput(current, turnArgv(current, directSession)), authority: "behavioral_read_only", task: "first" });
-    const directContinuation = await directTurn({ ...nativeInput(current, turnArgv(current, directSession, true)), authority: "behavioral_read_only", task: "second" });
+    await directTurn({ ...nativeInput(current, turnArgv(current, directSession)), task: "first" });
+    const directContinuation = await directTurn({ ...nativeInput(current, turnArgv(current, directSession, true)), task: "second" });
     const firstHarness = harness(current); const first = await completed(current, firstHarness, { task: "first", turnId: "driver-t1" });
     const secondHarness = harness(current); const second = await completed(current, secondHarness, { task: "second", turnId: "driver-t2", nativeSessionRef: first.live.nativeSessionRef });
     const history = await secondHarness.driver.readAssistantHistory({ route: second.route, nativeSessionRef: first.live.nativeSessionRef }, { limit: 2, workspaceRoot: current.root });
@@ -202,14 +204,26 @@ async function evidence() {
       cache_read_input_tokens: read.result.metrics.provider_reported.cache_read_input_tokens,
       tool_call_count: read.result.metrics.plugin_observed.tool_call_count,
     };
-    const directLifecycle = [directCatalog.record, directRead.record, directWrite.record, directAbort.record, directContinuation.record].map((record) => record.closed);
+    const readControls = capturedRecords(current, readHarness).filter((record) => record.argv.includes("--offline"));
+    const writeControls = capturedRecords(current, writeHarness).filter((record) => record.argv.includes("--offline"));
+    const readAuthorityCapture = {
+      argv: argvShape(readRecord.argv), environment: sourceEnvironment(readRecord), configWitness: readRecord.configWitness,
+      turnCommands: commandShape(readRecord.commands).map((command) => command.type === "prompt" ? { ...command, message: normalizeAuthorityStatement(command.message) } : command),
+      controls: readControls.map((record) => ({ argv: argvShape(record.argv), environment: sourceEnvironment(record), configWitness: record.configWitness, commands: commandShape(record.commands) })),
+    };
+    const writeAuthorityCapture = {
+      argv: argvShape(writeRecord.argv), environment: sourceEnvironment(writeRecord), configWitness: writeRecord.configWitness,
+      turnCommands: commandShape(writeRecord.commands).map((command) => command.type === "prompt" ? { ...command, message: normalizeAuthorityStatement(command.message) } : command),
+      controls: writeControls.map((record) => ({ argv: argvShape(record.argv), environment: sourceEnvironment(record), configWitness: record.configWitness, commands: commandShape(record.commands) })),
+    };
+    const directLifecycle = [directCatalog.record, directRead.record, directAbort.record, directContinuation.record].map((record) => record.closed);
     const harnessLifecycle = [inventoryHarness, readHarness, writeHarness, interruptHarness, firstHarness, secondHarness, driftHarness]
       .flatMap((subject) => capturedRecords(current, subject)).map((record) => record.closed);
     const rows = [
       row("exact_model_per_model_effort_inventory", { models: directCatalog.models, effortsByModel: directCatalog.effortsByModel }, { models: inventory.routes.models, effortsByModel: inventory.routes.effortsByModel }, () => parityEqual("exact native catalog", { models: directCatalog.models, effortsByModel: directCatalog.effortsByModel }, { models: inventory.routes.models, effortsByModel: inventory.routes.effortsByModel })),
       row("argv_environment", { argv: argvShape(directRead.record.argv), environment: sourceEnvironment(directRead.record) }, { argv: argvShape(readRecord.argv), environment: sourceEnvironment(readRecord) }, () => { assert.equal(directRead.record.argv[3], current.sessionRoot); assert.equal(readRecord.argv[3], current.sessionRoot); assert.equal(directRead.record.environment.PI_CODING_AGENT_DIR, current.configRoot); assert.equal(readRecord.environment.PI_CODING_AGENT_DIR, current.configRoot); parityEqual("launch argv/environment", { argv: argvShape(directRead.record.argv), environment: sourceEnvironment(directRead.record) }, { argv: argvShape(readRecord.argv), environment: sourceEnvironment(readRecord) }); }),
       row("configuration_inheritance_witness", directCatalog.nativeConfiguration.configWitness, driverCatalog.configWitness, () => parityEqual("configuration witness", directCatalog.nativeConfiguration.configWitness, driverCatalog.configWitness)),
-      row("prompt_authority_native_input", { read: directRead.promptText, write: directWrite.promptText }, { read: promptRecord(readRecord).message, write: promptRecord(writeRecord).message }, () => parityEqual("authority prompt", { read: directRead.promptText, write: directWrite.promptText }, { read: promptRecord(readRecord).message, write: promptRecord(writeRecord).message })),
+      row("prompt_authority_native_input", readAuthorityCapture, writeAuthorityCapture, () => { parityEqual("read/write argv, environment, config, transport, and controls", readAuthorityCapture, writeAuthorityCapture); assert.notEqual(authorityStatement(promptRecord(readRecord).message), authorityStatement(promptRecord(writeRecord).message)); }, { directSource: "Pi Driver behavioral_read_only native capture", harnessdockSource: "Pi Driver behavioral_write native capture" }),
       row("ordered_events", eventTypes(directRead.events), eventTypes(readRecord), () => parityEqual("native event order", eventTypes(directRead.events), eventTypes(readRecord))),
       row("interrupt_request_behavior", { events: eventTypes(directAbort.events), accepted: directAbort.abort.success }, { events: eventTypes(interruptRecord), receipt: interruptReceipt, status: interruptResult.status }, () => { parityEqual("interrupt events", eventTypes(directAbort.events), eventTypes(interruptRecord)); assert.equal(directAbort.abort.success, true); assert.deepEqual(interruptReceipt, { commandId: "interrupt-1", requestState: "accepted", nativeTurnState: "active", settlement: "pending" }); assert.equal(interruptResult.status, "interrupted"); }),
       row("exact_session_continuation", { session: directSession, turnIds: nativeHistory(directContinuation.afterEntries.entries) }, { sameSession: second.live.nativeSessionRef.locator.sessionId === first.live.nativeSessionRef.locator.sessionId, distinctDriverTurns: second.live.nativeTurnRef.locator.turnId !== first.live.nativeTurnRef.locator.turnId, turnIds: history.messages.map((message) => message.messageId) }, () => { assert.equal(second.live.nativeSessionRef.locator.sessionId, first.live.nativeSessionRef.locator.sessionId); assert.notEqual(second.live.nativeTurnRef.locator.turnId, first.live.nativeTurnRef.locator.turnId); parityEqual("continuation native turn identities", nativeHistory(directContinuation.afterEntries.entries), history.messages.map((message) => message.messageId)); }),
@@ -229,6 +243,7 @@ async function evidence() {
       harness: "pi",
       driverVersion: inventoryHarness.driver.driverVersion,
       capabilitySchemaVersion: inventoryHarness.driver.describe().capabilitySchemaVersion,
+      unprovenRows: [{ dimension: "real_user_configuration_loading", reason: "deterministic fake-native config witness only; real Pi user configuration was not loaded" }],
       rows,
     };
   } finally {
@@ -250,6 +265,7 @@ describe("Pi direct-native differential parity", () => {
     assert.deepEqual(second, first, "repeated zero-model evidence must be byte-identical");
     assert.deepEqual(JSON.parse(fs.readFileSync(RECEIPT, "utf8")), first);
     assert.deepEqual(first.rows.map((entry) => entry.result), ["pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass", "not_applicable", "not_applicable"]);
+    assert.deepEqual(first.unprovenRows, [{ dimension: "real_user_configuration_loading", reason: "deterministic fake-native config witness only; real Pi user configuration was not loaded" }]);
   });
 
   it("rejects behavioral mutations rather than trusting receipt digests", async () => {
@@ -266,13 +282,13 @@ describe("Pi direct-native differential parity", () => {
       mustFail(() => parityEqual("config", direct.nativeConfiguration.configWitness, controlRecord(current).configWitness));
     });
     await sensitivity("events", async (current) => {
-      const direct = await directTurn({ ...nativeInput(current, turnArgv(current, "55555555-5555-4555-8555-555555555555")), authority: "behavioral_read_only", task: "events" });
+      const direct = await directTurn({ ...nativeInput(current, turnArgv(current, "55555555-5555-4555-8555-555555555555")), task: "events" });
       setConfig(current, { eventOrder: ["turn_started", "tool_call", "agent_settled", "message_end"] });
       const subject = harness(current); const output = await completed(current, subject, { task: "events" });
       mustFail(() => parityEqual("events", eventTypes(direct.events), eventTypes(sessionRecord(current, output.live.nativeSessionRef.locator.sessionId))));
     });
     await sensitivity("authority", async (current) => {
-      const direct = await directTurn({ ...nativeInput(current, turnArgv(current, "66666666-6666-4666-8666-666666666666")), authority: "behavioral_write", task: "authority" });
+      const direct = await directTurn({ ...nativeInput(current, turnArgv(current, "66666666-6666-4666-8666-666666666666")), task: "authority" });
       setConfig(current, { requiredArgv: "--native-write-authority", requiredPromptText: "native-only-authority" });
       const subject = harness(current);
       const failure = await assert.rejects(launch(current, subject, { authority: "behavioral_write", task: "authority" }));
@@ -280,8 +296,8 @@ describe("Pi direct-native differential parity", () => {
     });
     await sensitivity("continuation", async (current) => {
       const session = "77777777-7777-4777-8777-777777777777";
-      await directTurn({ ...nativeInput(current, turnArgv(current, session)), authority: "behavioral_read_only", task: "first" });
-      const direct = await directTurn({ ...nativeInput(current, turnArgv(current, session, true)), authority: "behavioral_read_only", task: "second" });
+      await directTurn({ ...nativeInput(current, turnArgv(current, session)), task: "first" });
+      const direct = await directTurn({ ...nativeInput(current, turnArgv(current, session, true)), task: "second" });
       const firstSubject = harness(current); const first = await completed(current, firstSubject, { task: "first", turnId: "t1" });
       setConfig(current, { reuseNativeTurnId: true });
       const secondSubject = harness(current); const second = await completed(current, secondSubject, { task: "second", turnId: "t2", nativeSessionRef: first.live.nativeSessionRef });
@@ -289,13 +305,13 @@ describe("Pi direct-native differential parity", () => {
       mustFail(() => parityEqual("continuation native identities", nativeHistory(direct.afterEntries.entries), history.messages.map((message) => message.messageId)));
     });
     await sensitivity("usage", async (current) => {
-      const direct = await directTurn({ ...nativeInput(current, turnArgv(current, "88888888-8888-4888-8888-888888888888")), authority: "behavioral_read_only", task: "usage" });
+      const direct = await directTurn({ ...nativeInput(current, turnArgv(current, "88888888-8888-4888-8888-888888888888")), task: "usage" });
       setConfig(current, { usageDelta: { toolCalls: 1, input: 1, output: 1, cacheRead: 0, cacheWrite: 0 } });
       const subject = harness(current); const output = await completed(current, subject, { task: "usage" });
       mustFail(() => parityEqual("usage", usageDelta(direct.beforeStats, direct.afterStats), { input_tokens: output.result.metrics.provider_reported.input_tokens, output_tokens: output.result.metrics.provider_reported.output_tokens, cache_creation_input_tokens: output.result.metrics.provider_reported.cache_creation_input_tokens, cache_read_input_tokens: output.result.metrics.provider_reported.cache_read_input_tokens, tool_call_count: output.result.metrics.plugin_observed.tool_call_count }));
     });
     await sensitivity("terminal", async (current) => {
-      const direct = await directTurn({ ...nativeInput(current, turnArgv(current, "99999999-9999-4999-8999-999999999999")), authority: "behavioral_read_only", task: "terminal" });
+      const direct = await directTurn({ ...nativeInput(current, turnArgv(current, "99999999-9999-4999-8999-999999999999")), task: "terminal" });
       setConfig(current, { terminalStopReason: "error" });
       const subject = harness(current); const output = await completed(current, subject, { task: "terminal" });
       mustFail(() => parityEqual("terminal", nativeTurnStop(direct.events), output.result.resultMetadata.stopReason));

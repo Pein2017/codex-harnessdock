@@ -3,6 +3,12 @@
   "harness": "pi",
   "driverVersion": "pi@2",
   "capabilitySchemaVersion": 3,
+  "unprovenRows": [
+    {
+      "dimension": "real_user_configuration_loading",
+      "reason": "deterministic fake-native config witness only; real Pi user configuration was not loaded"
+    }
+  ],
   "rows": [
     {
       "dimension": "exact_model_per_model_effort_inventory",
@@ -33,12 +39,12 @@
     },
     {
       "dimension": "prompt_authority_native_input",
-      "directSource": "manual Pi JSONL client",
-      "harnessdockSource": "Pi Driver receipt and native invocation capture",
+      "directSource": "Pi Driver behavioral_read_only native capture",
+      "harnessdockSource": "Pi Driver behavioral_write native capture",
       "mode": "zero-model deterministic fake native",
       "comparator": "executed independent behavioral comparison",
       "result": "pass",
-      "artifactDigest": "sha256:7b7a7ace6b3bb8430b2a2f5b7240135218824ffdc407fcac8cbe541e0443b4db"
+      "artifactDigest": "sha256:d7739414cb769de4cac13b1a93d6a0a347cbb847c1335d0848f9bcc31a4d21c2"
     },
     {
       "dimension": "ordered_events",
@@ -101,7 +107,7 @@
       "mode": "zero-model deterministic fake native",
       "comparator": "executed independent behavioral comparison",
       "result": "pass",
-      "artifactDigest": "sha256:720ac0fc2c777b02d0fc7646de0713c35867478f595b96d13c0343c1259c7ea9"
+      "artifactDigest": "sha256:cc6f5e5fd791d50e11f6babbb1044d8f4e1965aa83e804e33c487ad8d5674f6c"
     },
     {
       "dimension": "cross_process_turn_observation_or_reconciliation",

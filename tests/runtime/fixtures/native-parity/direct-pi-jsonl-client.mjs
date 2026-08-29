@@ -61,20 +61,7 @@ function recordFor(stateDir, pid) {
   return record;
 }
 
-function prompt(authority, task) {
-  const authorityLine = authority === "behavioral_write"
-    ? "Task-scoped writes are permitted only when needed for the stated task."
-    : "Read only. Do not change files, processes, configuration, or external state.";
-  return [
-    "HarnessDock route contract:",
-    `- ${authorityLine}`,
-    "- Work as one leaf Agent. Do not delegate, spawn another agent, or start another harness.",
-    "- Return one final assistant message to the Codex lead.",
-    "",
-    "Task:",
-    task,
-  ].join("\n");
-}
+function prompt(task) { return `Direct Pi task:\n${task}`; }
 
 export async function directInventory(input) {
   const client = open(input);
@@ -92,7 +79,7 @@ export async function directInventory(input) {
   return { models, effortsByModel, nativeConfiguration, record: recordFor(input.env.PI_NATIVE_PARITY_STATE_DIR, pid) };
 }
 
-export async function directTurn({ authority, task, ...input }) {
+export async function directTurn({ task, ...input }) {
   const client = open(input);
   const state = (await client.request("get_state")).data;
   const beforeEntries = (await client.request("get_entries")).data;
@@ -101,7 +88,7 @@ export async function directTurn({ authority, task, ...input }) {
   await client.request("set_auto_compaction", { enabled: true });
   await client.request("set_steering_mode", { mode: "one-at-a-time" });
   await client.request("set_follow_up_mode", { mode: "one-at-a-time" });
-  const promptText = prompt(authority, task);
+  const promptText = prompt(task);
   await client.request("prompt", { message: promptText });
   await client.waitForSettled();
   const afterEntries = (await client.request("get_entries", { since: beforeEntries.leafId })).data;
@@ -111,10 +98,10 @@ export async function directTurn({ authority, task, ...input }) {
   return { state, beforeEntries, beforeStats, promptText, events: client.events, afterEntries, afterStats, record: recordFor(input.env.PI_NATIVE_PARITY_STATE_DIR, pid) };
 }
 
-export async function directInterrupt({ authority, task, ...input }) {
+export async function directInterrupt({ task, ...input }) {
   const client = open(input);
   await client.request("get_state");
-  const promptText = prompt(authority, task);
+  const promptText = prompt(task);
   await client.request("prompt", { message: promptText });
   const abort = await client.request("abort");
   await client.waitForSettled();
