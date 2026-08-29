@@ -496,7 +496,16 @@ describe("Agent durable launch boundary", () => {
 
     assert.deepEqual(result, {
       agent_name: "/root/boundary",
+      harness: "claude-code",
+      route_maturity: "experimental",
       model: "claude-sonnet-5",
+      reasoning_effort: "high",
+      delegation_mode: "leaf",
+      authority: "behavioral_read_only",
+      phase: null,
+      started_at: null,
+      last_activity_at: null,
+      elapsed_seconds: null,
       status: "working",
     });
     assert.deepEqual(events, ["ready:start", "ready:end", "reserve", "attach", "launch"]);

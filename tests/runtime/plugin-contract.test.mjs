@@ -235,7 +235,7 @@ describe("native plugin contract", () => {
       path.join(root, "plugins", "codex-harnessdock", "skills", "spawn-agent", "SKILL.md"),
       "utf8",
     );
-    assert.match(text, /On success:[\s\S]*exactly `agent_name`, `model`, and `status`/i);
+    assert.match(text, /On success:[\s\S]*returned Agent Card[\s\S]*`agent_name`, `model`, and `status`/i);
     assert.match(text, /never worktree paths[\s\S]*final Harness text[\s\S]*JSON[\s\S]*internal IDs/i);
     assert.match(text, /operator diagnostics[\s\S]*actionable[\s\S]*failure\/recovery detail/i);
     assert.match(text, /actionable\s+failure\/recovery detail/i);

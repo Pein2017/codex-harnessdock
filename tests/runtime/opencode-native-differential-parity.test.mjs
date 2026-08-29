@@ -92,6 +92,26 @@ function nativePromptResponse(directory) {
 
 async function startServer(directory, prompt = nativePromptResponse(directory)) {
   const server = createFakeOpencodeServer({
+    health: { status: 200, body: { healthy: true, version: "1.18.23" } },
+    config: { status: 200, body: { default_agent: "codex-explorer" } },
+    agents: {
+      status: 200,
+      body: [{
+        name: "codex-explorer", mode: "primary", native: false,
+        permission: [
+          { permission: "*", pattern: "*", action: "deny" },
+          { permission: "read", pattern: "*", action: "allow" },
+          { permission: "read", pattern: "*.env", action: "deny" },
+          { permission: "read", pattern: "*.env.*", action: "deny" },
+          { permission: "list", pattern: "*", action: "allow" },
+          { permission: "glob", pattern: "*", action: "allow" },
+          { permission: "grep", pattern: "*", action: "allow" },
+          { permission: "lsp", pattern: "*", action: "allow" },
+          { permission: "external_directory", pattern: "*", action: "deny" },
+          { permission: "doom_loop", pattern: "*", action: "allow" },
+        ],
+      }],
+    },
     provider: providerCatalog(),
     prompt,
   });
@@ -114,17 +134,37 @@ function driverRoutes(inspection) {
     .sort((left, right) => left.model.localeCompare(right.model));
 }
 
-function normalizedHarnessRequests(requests) {
-  return requests.map((request) => {
+function splitHarnessRequestEvidence(requests) {
+  let providerChecks = 0;
+  const nativeRequests = [];
+  const policyRequests = [];
+  let sessionPermission = null;
+  for (const request of requests) {
+    if (request.method === "GET") {
+      if (request.path === "/provider" && providerChecks < 2) {
+        providerChecks += 1;
+      } else {
+        if (request.path === "/provider") providerChecks += 1;
+        policyRequests.push({ method: request.method, path: request.path, query: request.query, headers: {
+          authorization: request.hasAuthorizationHeader ? "present" : "absent",
+          contentType: request.contentType ?? "absent",
+        } });
+        continue;
+      }
+    }
     const prompt = request.method === "POST" && request.path !== "/session";
     const body = request.body == null ? null : structuredClone(request.body);
+    if (request.path === "/session" && body != null) {
+      sessionPermission = body.permission ?? null;
+      delete body.permission;
+    }
     if (prompt) {
       // Match the direct baseline on every native transport field while
       // allowing only HarnessDock's bounded prompt-envelope delta.
       body.messageID = "{ephemeral-message-id}";
       body.parts = body.parts.map((part) => ({ ...part, text: "{allowed-prompt-delta}" }));
     }
-    return {
+    nativeRequests.push({
       method: request.method,
       path: prompt ? "/session/{ephemeral-session-id}/message" : request.path,
       query: request.query,
@@ -133,8 +173,12 @@ function normalizedHarnessRequests(requests) {
         contentType: request.contentType ?? "absent",
       },
       body,
-    };
-  });
+    });
+  }
+  return {
+    requestTransport: { origin: "loopback", requests: nativeRequests },
+    unattendedPolicy: { requests: policyRequests, sessionPermission },
+  };
 }
 
 async function runHarnessDockTurn({ server, url, directory, authority = NATIVE_INPUT.authority }) {
@@ -169,9 +213,10 @@ async function runHarnessDockTurn({ server, url, directory, authority = NATIVE_I
   const requests = server.requests.slice(before);
   const session = requests.find((request) => request.path === "/session");
   const prompt = requests.find((request) => request.path.endsWith("/message"));
+  const requestEvidence = splitHarnessRequestEvidence(requests);
   return {
     inventory: driverRoutes(inspection),
-    requestTransport: { origin: "loopback", requests: normalizedHarnessRequests(requests) },
+    ...requestEvidence,
     executionDirectory: {
       witness: terminal.finalMessage === NATIVE_INPUT.configurationWitness ? "loaded" : "missing",
       propagated: typeof session?.query?.directory === "string" && typeof prompt?.query?.directory === "string"
@@ -179,7 +224,7 @@ async function runHarnessDockTurn({ server, url, directory, authority = NATIVE_I
         : "absent",
     },
     events: {
-      requestOrder: requestOrder(requests),
+      requestOrder: requestOrder(requestEvidence.requestTransport.requests),
       partTypes: nativePartTypes,
       toolCallCount: terminal.metrics.plugin_observed.tool_call_count,
     },
@@ -222,11 +267,39 @@ function compareEvidence(direct, harness) {
   });
 }
 
+function assertUnattendedPolicyDelta(policy) {
+  assert.deepEqual(
+    policy.sessionPermission,
+    [
+      { permission: "*", pattern: "*", action: "allow" },
+      { permission: "question", pattern: "*", action: "deny" },
+      { permission: "plan_exit", pattern: "*", action: "deny" },
+      { permission: "task", pattern: "*", action: "deny" },
+    ],
+    "the harness-only session permission delta must be the reviewed unattended policy",
+  );
+  assert.deepEqual(
+    policy.requests.map((request) => `${request.method} ${request.path}`),
+    [
+      "GET /global/health", "GET /config", "GET /agent",
+      "GET /global/health", "GET /config", "GET /agent",
+      "GET /global/health", "GET /provider", "GET /config", "GET /agent",
+    ],
+    "the harness-only admission delta must recheck health, route, default Agent, and unattended policy before POST",
+  );
+  return { dimension: "closed_harnessdock_unattended_policy_delta", result: "pass" };
+}
+
 function assertDriverAuthorityParity(readOnly, write) {
   assert.deepEqual(
     readOnly.requestTransport,
     write.requestTransport,
     "read-only and write authority must preserve every non-prompt native request field"
+  );
+  assert.deepEqual(
+    readOnly.unattendedPolicy,
+    write.unattendedPolicy,
+    "read-only and write authority must preserve the same unattended policy/configuration bytes",
   );
   assert.equal(readOnly.authorityEvidence.route, "behavioral_read_only");
   assert.equal(readOnly.authorityEvidence.receipt, "behavioral_read_only");
@@ -282,7 +355,7 @@ async function runHarnessDockRouteDrift({ server, url, directory }) {
     (error) => error?.code === "route_not_admitted"
   );
   const requests = server.requests.slice(before);
-  return { routeDrift: "route_not_admitted", events: requestOrder(requests) };
+  return { routeDrift: "route_not_admitted", events: requestOrder(splitHarnessRequestEvidence(requests).requestTransport.requests) };
 }
 
 function assertComparatorSensitivity(direct, harness) {
@@ -316,6 +389,12 @@ function assertAuthoritySensitivity(readOnly, write) {
     () => assertDriverAuthorityParity(readOnly, changed),
     undefined,
     "an authority-dependent native body field must fail the authority comparator"
+  );
+  changed.unattendedPolicy.sessionPermission[0].action = "deny";
+  assert.throws(
+    () => assertDriverAuthorityParity(readOnly, changed),
+    undefined,
+    "an unattended-policy mutation must fail the non-prompt comparator",
   );
 }
 
@@ -366,6 +445,7 @@ describe("OpenCode native raw-HTTP differential parity", () => {
     const writeHarness = await runHarnessDockTurn({ server, url, directory, authority: "behavioral_write" });
     assert.deepEqual(compareEvidence(writeDirect, writeHarness), comparedRows, "the direct native baseline remains stable beside the write-authority Driver turn");
     const authorityRow = assertDriverAuthorityParity(harness, writeHarness);
+    const policyRow = assertUnattendedPolicyDelta(harness.unattendedPolicy);
     assertComparatorSensitivity(direct, harness);
     assertAuthoritySensitivity(harness, writeHarness);
     await assertNativeResponseSensitivity(directory);
@@ -381,7 +461,7 @@ describe("OpenCode native raw-HTTP differential parity", () => {
     const driftRow = compareRouteDrift(directDrift, harnessDrift);
 
     const receipt = renderReceipt({
-      provenRows: [...comparedRows, authorityRow, driftRow],
+      provenRows: [...comparedRows, authorityRow, policyRow, driftRow],
       notApplicableRows: capabilityNotApplicableRows(harness.capabilities),
       unprovenRows: [
         { dimension: "native_configuration_inheritance", result: "unproven", reason: "not_observed_by_fake_transport" },

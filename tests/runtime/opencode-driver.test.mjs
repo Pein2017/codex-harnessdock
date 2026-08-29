@@ -561,7 +561,7 @@ describe("opencode driver: session and turn lineage", () => {
     const session = requests.findIndex((request) => request.method === "POST" && request.path === "/session");
     assert.ok(session > 0);
     assert.deepEqual(requests[session - 1], {
-      method: "GET", path: "/agent", hasAuthorizationHeader: false, query: { directory: WORKSPACE_ROOT },
+      method: "GET", path: "/agent", hasAuthorizationHeader: false, contentType: null, query: { directory: WORKSPACE_ROOT },
     });
   });
 

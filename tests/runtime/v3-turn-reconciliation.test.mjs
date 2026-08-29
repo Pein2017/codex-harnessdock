@@ -435,6 +435,7 @@ describe("version-three worker loss: before native submission (scenario 1)", () 
       assignedMessageIds: reservation.assignedMessages.map((message) => message.messageId),
       preparedInput: PROMPT,
       turnOptions: null,
+      inspectionEvidence: { generation: "unavailable", capabilities: route.capabilities },
     });
     const before = store.readAgent(agent.agentId);
 

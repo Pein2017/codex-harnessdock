@@ -1713,10 +1713,15 @@ class InternalAgentRuntime {
       sessionName: job.request?.sessionName ?? null,
       onProgress,
     });
+    const executionRoute = agent.route;
+    const inspectionEvidence = {
+      generation: "unavailable",
+      capabilities: executionRoute.capabilities,
+    };
     const taskInput = String(job.request?.prompt ?? "");
-    const turnOptions = agent.route.effort == null ? null : { effort: agent.route.effort };
+    const turnOptions = executionRoute.effort == null ? null : { effort: executionRoute.effort };
     const preparedTurn = driver.prepareTurn({
-      route: agent.route,
+      route: executionRoute,
       taskInput,
       turnOptions,
       turnId: job.id,
@@ -1728,7 +1733,7 @@ class InternalAgentRuntime {
         : {
             version: NATIVE_REFERENCE_ENVELOPE_VERSION,
             harnessId: agent.nativeSessionRef.harnessId,
-            driverVersion: agent.route.driverVersion,
+            driverVersion: executionRoute.driverVersion,
             instanceKey: agent.nativeSessionRef.instanceKey,
             locatorVersion: CLAUDE_LOCATOR_VERSION,
             locator: { sessionId: agent.nativeSessionRef.nativeSessionId },
@@ -1738,7 +1743,7 @@ class InternalAgentRuntime {
       : validateNativeReferenceEnvelope(storedNativeSessionRef, {
           driver,
           kind: "session",
-          route: agent.route,
+          route: executionRoute,
         });
     let claim = readLaunchClaim(identity);
     try {
@@ -1758,40 +1763,41 @@ class InternalAgentRuntime {
         lifecycleOwner: "version_one_supervisor",
         controlRoot,
         executionRoot,
-        route: agent.route,
+        route: executionRoute,
         expectedLeases: [
           expectedAdmission,
-          ...(agent.route.authority === "behavioral_write"
+          ...(executionRoute.authority === "behavioral_write"
             ? [{ kind: "writer", workspaceRoot: executionRoot }]
             : []),
         ],
         assignedMessageIds: job.assignedMessageIds,
         preparedInput: taskInput,
         turnOptions: preparedTurn.turnOptions ?? turnOptions,
+        inspectionEvidence,
       });
       const leases = [nativeSessionRef == null
         ? acquireIntendedInstanceLease({
             ...identity,
             attemptId,
-            route: agent.route,
-            harnessId: agent.route.harnessId,
-            instanceKey: agent.route.instanceKey,
+            route: executionRoute,
+            harnessId: executionRoute.harnessId,
+            instanceKey: executionRoute.instanceKey,
             capacityClass: `${V3_TURN_EVIDENCE_CLASS}:${job.id}`,
             capacityLimit: 1,
           })
         : acquireIntendedNativeSessionLease({
             ...identity,
             attemptId,
-            route: agent.route,
-            harnessId: agent.route.harnessId,
-            instanceKey: agent.route.instanceKey,
+            route: executionRoute,
+            harnessId: executionRoute.harnessId,
+            instanceKey: executionRoute.instanceKey,
             nativeSessionId: nativeSessionRef.locator.sessionId,
           })];
-      if (agent.route.authority === "behavioral_write") {
+      if (executionRoute.authority === "behavioral_write") {
         leases.push(acquireIntendedWorkspaceWriterLease({
           ...identity,
           attemptId,
-          route: agent.route,
+          route: executionRoute,
           workspaceRoot: executionRoot,
         }));
       }
@@ -1807,7 +1813,7 @@ class InternalAgentRuntime {
         ...identity,
         attemptId,
         lifecycleOwner: "version_one_supervisor",
-        route: agent.route,
+        route: executionRoute,
         driver,
         preparedTurn,
         preparedInput: taskInput,
@@ -1855,7 +1861,7 @@ class InternalAgentRuntime {
     try {
       turn = validateNormalizedTerminalResult(await launched.liveTurn.result, {
         driver,
-        route: agent.route,
+        route: executionRoute,
       });
     } catch (error) {
       try { await launched.liveTurn.dispose(); } catch {}

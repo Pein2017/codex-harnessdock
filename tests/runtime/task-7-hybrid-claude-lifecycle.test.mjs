@@ -173,8 +173,11 @@ describe("Task 7 hybrid — a new Claude spawn writes a version-three Agent", ()
     // The route's instance key is the redacted identity, never the raw path.
     assert.match(agent.route.instanceKey, /^claude-config-[0-9a-f]{16}$/);
     assert.equal(JSON.stringify(agent).includes(runtime.jobs.env.CLAUDE_CONFIG_DIR), false);
-    // Spawn exposes only the bounded three-field receipt.
-    assert.deepEqual(Object.keys(receipt).sort(), ["agent_name", "model", "status"]);
+    // Spawn exposes the bounded public Agent Card, including its frozen route facts.
+    assert.deepEqual(Object.keys(receipt).sort(), [
+      "agent_name", "authority", "delegation_mode", "elapsed_seconds", "harness",
+      "last_activity_at", "model", "phase", "reasoning_effort", "route_maturity", "started_at", "status",
+    ]);
     assert.equal(receipt.model, "claude-sonnet-5");
   });
 

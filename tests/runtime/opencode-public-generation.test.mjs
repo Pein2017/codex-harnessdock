@@ -306,6 +306,13 @@ describe("public generation: list_harnesses observes without selecting", () => {
     assert.deepEqual(opencode.instances[0], {
       instance: opencodeExplorerInstanceKey(url), readiness: "blocked", detail: "interactive_policy",
       live_validated: false, maturity: "experimental", capacity: null, routes: null,
+      capability_provenance: {
+        interaction: "checkout_declared", activeInput: "checkout_declared", continuation: "checkout_declared",
+        history: "checkout_declared", interruptRequest: "checkout_declared", automaticRecovery: "checkout_declared",
+        authorityEnforcement: "checkout_declared", leafEnforcement: "checkout_declared",
+        nativeOrchestration: "checkout_declared", turnObservation: "checkout_declared",
+      },
+      inspection_generation: "unavailable",
     });
     assert.doesNotMatch(JSON.stringify(opencode), /doom_loop|ask|build|1\.18\.23/i);
   });

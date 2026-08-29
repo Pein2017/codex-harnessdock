@@ -33,6 +33,10 @@
       "result": "pass"
     },
     {
+      "dimension": "closed_harnessdock_unattended_policy_delta",
+      "result": "pass"
+    },
+    {
       "dimension": "route_drift",
       "result": "pass"
     }
@@ -81,5 +85,5 @@
       "reason": "test_owned_server_only"
     }
   ],
-  "digest": "sha256:87a31c2368ae95fd71487d219eda5a76886585d6c372aa49253e135b2105883a"
+  "digest": "sha256:124329040594720e2d7437b6d1ee08d9fb805152db9eec5b8f3908348744209b"
 }

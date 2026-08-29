@@ -216,7 +216,11 @@ describe("Task 9.1 — one complete OpenCode turn through MCP, runtime, and the 
     });
     assert.equal(spawned.agent_name, "/root/composed_turn");
     assert.equal(spawned.model, OPENCODE_EXPLORER_MODEL);
-    assert.deepEqual(Object.keys(spawned).sort(), ["agent_name", "model", "status"]);
+    assert.deepEqual(Object.keys(spawned).sort(), [
+      "agent_name", "authority", "capability_provenance", "delegation_mode", "elapsed_seconds",
+      "harness", "inspection_generation", "last_activity_at", "model", "phase", "reasoning_effort",
+      "route_maturity", "started_at", "status",
+    ]);
 
     // The durable record, read the way an internal reconciler reads it. The
     // public surface deliberately exposes no Agent or job identity.

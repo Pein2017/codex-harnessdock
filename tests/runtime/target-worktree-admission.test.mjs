@@ -233,6 +233,13 @@ exec ${JSON.stringify(realGit)} "$@"
           liveValidated: true,
           maturity: "experimental",
           detailCode: "ready",
+          capabilityProvenance: {
+            interaction: "checkout_declared", activeInput: "checkout_declared", continuation: "checkout_declared",
+            history: "checkout_declared", interruptRequest: "checkout_declared", turnObservation: "checkout_declared",
+            automaticRecovery: "checkout_declared", authorityEnforcement: "checkout_declared",
+            leafEnforcement: "checkout_declared", nativeOrchestration: "checkout_declared",
+          },
+          inspectionGeneration: "unavailable",
           routes: {
             models: ["openai-codex/gpt-5.6-luna"],
             topologies: ["leaf"],
@@ -336,6 +343,7 @@ exec ${JSON.stringify(realGit)} "$@"
         assignedMessageIds,
         preparedInput: "write the bounded fixture",
         turnOptions: null,
+        inspectionEvidence: { generation: "unavailable", capabilities: route.capabilities },
       });
       const result = await runVersionThreeWorkerLoop({
         ...identity,

@@ -53,5 +53,5 @@ effective teammate model, effort, and cost are unknown. At most three active
 teammates and six creations are behavioral limits, not containment.
 Transport never auto-reconnects: an explicit follow-up forms a fresh native team; `Workflow` remains disabled.
 
-On success: exactly `agent_name`, `model`, and `status`; never worktree paths,
+On success: use the returned Agent Card with `agent_name`, `model`, and `status`; never worktree paths,
 final Harness text, JSON, or internal IDs. Operator diagnostics hold actionable failure/recovery detail.
