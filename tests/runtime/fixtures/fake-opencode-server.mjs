@@ -19,6 +19,7 @@ import http from "node:http";
 
 const ROUTES = {
   "/global/health": "health",
+  "/config": "config",
   "/agent": "agents",
   "/provider": "provider",
   "/experimental/capabilities": "capabilities",
@@ -63,6 +64,7 @@ export function fakeTextPart(text, overrides = {}) {
 export function createFakeOpencodeServer(scenario = {}) {
   const state = {
     health: scenario.health ?? { status: 200, body: { healthy: true, version: "1.18.18" } },
+    config: scenario.config ?? { status: 200, body: {} },
     agents: scenario.agents ?? { status: 200, body: [{ name: "codex-explorer", mode: "primary", native: false }] },
     provider: scenario.provider ?? { status: 200, body: { all: [], connected: [], default: {} } },
     capabilities: scenario.capabilities ?? { status: 200, body: { backgroundSubagents: false } },

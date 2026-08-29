@@ -33,7 +33,9 @@ import {
   boundPositiveInteger,
   createFixedOriginFetch,
   createOpencodeDiscoveryClient,
+  createOpencodeSession,
   discoverOpencodeCapabilities,
+  discoverOpencodeDefaultAgent,
   discoverOpencodeHealth,
   discoverOpencodeProfile,
   discoverOpencodeProviderCatalog,
@@ -514,6 +516,19 @@ describe("opencode-client: provider-catalog response ceiling", () => {
   });
 });
 
+describe("opencode-client: bounded interaction witness", () => {
+  it("projects only the default Agent from GET /config", async () => {
+    const { url, server } = await startServer({
+      config: { status: 200, body: { default_agent: "build", secret: "must-not-leave-client" } },
+    });
+    const result = await discoverOpencodeDefaultAgent(
+      createOpencodeDiscoveryClient({ env: { OPENCODE_SERVER_URL: url } })
+    );
+    assert.deepEqual(result, { ok: true, defaultAgent: "build" });
+    assert.deepEqual(server.requests.map(({ method, path }) => ({ method, path })), [{ method: "GET", path: "/config" }]);
+  });
+});
+
 /**
  * Task 5 gives session creation and the blocking prompt their own client. The
  * point of a second client rather than a widened first one is that the discovery
@@ -522,6 +537,33 @@ describe("opencode-client: provider-catalog response ceiling", () => {
  * ever be asked for is refused before the network.
  */
 describe("opencode-client: turn-scoped admission gate", () => {
+  it("creates sessions with the exact maximum-permission zero-wait rules", async () => {
+    const { url, server } = await startServer({});
+    const handle = createOpencodeTurnClient({ env: { OPENCODE_SERVER_URL: url } });
+
+    const result = await createOpencodeSession(handle, {
+      providerId: PROVIDER_ID,
+      modelId: MODEL_ID,
+      variant: "low",
+      directory: "/opt/operator-owned/workspace",
+    });
+
+    assert.deepEqual(result, { ok: true, sessionId: "ses_fake_1" });
+    assert.equal(server.requests.length, 1);
+    assert.equal(server.requests[0].method, "POST");
+    assert.equal(server.requests[0].path, "/session");
+    assert.deepEqual(server.requests[0].body, {
+      model: { id: MODEL_ID, providerID: PROVIDER_ID, variant: "low" },
+      permission: [
+        { permission: "*", pattern: "*", action: "allow" },
+        { permission: "question", pattern: "*", action: "deny" },
+        { permission: "plan_exit", pattern: "*", action: "deny" },
+        { permission: "task", pattern: "*", action: "deny" },
+      ],
+    });
+    assert.equal(Object.hasOwn(server.requests[0].body, "agent"), false);
+  });
+
   it("admits exactly the two pinned mutating requests", () => {
     assert.equal(isAdmittedOpencodeTurnRequest("POST", "/session"), true);
     assert.equal(isAdmittedOpencodeTurnRequest("POST", "/session/ses_abc/message"), true);

@@ -15,11 +15,20 @@ import { resolveOpencodeIdleTtlSeconds, resolveRuntimeEnvironment } from "./envi
 import { resolveExpectedPluginDataRoot } from "./paths.mjs";
 import { getProcessIdentity, isProcessAlive, terminateProcessTree, validateProcessIdentity } from "./process-control.mjs";
 
-const RECEIPT_VERSION = 2;
+const RECEIPT_VERSION = 3;
 const LOCK_TIMEOUT_MS = 5_000;
 const STARTUP_TIMEOUT_MS = 10_000;
 const RETRY_DELAY_MS = 20;
 const REAP_TIMEOUT_MS = 5_000;
+const MANAGED_CHILD_PERMISSION = '{"*":"allow"}';
+const POLICY_GENERATION = "opencode-max-permission-zero-wait-v1";
+
+function sha256(value) {
+  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+const POLICY_GENERATION_DIGEST = sha256([POLICY_GENERATION, MANAGED_CHILD_PERMISSION]);
+const CHILD_ENVIRONMENT_IDENTITY = sha256([["OPENCODE_PERMISSION", MANAGED_CHILD_PERMISSION]]);
 
 function taggedError(code, message) {
   return Object.assign(new Error(message), { code });
@@ -98,12 +107,16 @@ function readReceipt(file) {
   try {
     const value = JSON.parse(fs.readFileSync(file, "utf8"));
     if (
-      ![1, RECEIPT_VERSION].includes(value?.version) ||
+      ![1, 2, RECEIPT_VERSION].includes(value?.version) ||
       !Number.isSafeInteger(value?.pid) || value.pid < 1 ||
       typeof value.identity !== "string" || !value.identity ||
       typeof value.commandFingerprint !== "string" || !/^[a-f0-9]{64}$/.test(value.commandFingerprint)
     ) return null;
-    if (value.version === RECEIPT_VERSION && (timestamp(value.startedAt) == null || timestamp(value.lastActivityAt) == null)) return null;
+    if (value.version === RECEIPT_VERSION && (
+      timestamp(value.startedAt) == null || timestamp(value.lastActivityAt) == null ||
+      !/^[a-f0-9]{64}$/.test(value.policyGenerationDigest ?? "") ||
+      !/^[a-f0-9]{64}$/.test(value.childEnvironmentIdentity ?? "")
+    )) return null;
     return value;
   } catch {
     return null;
@@ -164,9 +177,13 @@ function endpointArguments(env) {
   return ["serve", "--hostname", "127.0.0.1", "--port", origin.port];
 }
 
-function commandFingerprint(env, executableCheck) {
-  const executable = configuredExecutable(env, executableCheck);
-  return createHash("sha256").update(JSON.stringify([executable, endpointArguments(env)])).digest("hex");
+function commandFingerprint(env) {
+  const executable = String(env?.OPENCODE_EXECUTABLE ?? "").trim();
+  return sha256([executable, endpointArguments(env), POLICY_GENERATION_DIGEST, CHILD_ENVIRONMENT_IDENTITY]);
+}
+
+function managedChildEnvironment(env) {
+  return { ...env, OPENCODE_PERMISSION: MANAGED_CHILD_PERMISSION };
 }
 
 /** Linux-only evidence for an established peer on the fixed loopback port. */
@@ -236,9 +253,9 @@ export function createOpencodeServiceManager(options = {}) {
     executableCheck: options.executableCheck ?? ((file) => {
       try { return fs.statSync(file).isFile() && fs.accessSync(file, fs.constants.X_OK) === undefined; } catch { return false; }
     }),
-    start: options.start ?? ((executable, args) => nodeSpawn(executable, args, {
+    start: options.start ?? ((executable, args, childEnv) => nodeSpawn(executable, args, {
       cwd: options.cwd,
-      env,
+      env: childEnv,
       detached: true,
       stdio: "ignore",
       shell: false,
@@ -276,8 +293,11 @@ export function createOpencodeServiceManager(options = {}) {
 
   function managedReceiptMatches(receipt) {
     return receipt &&
+      receipt.version === RECEIPT_VERSION &&
+      receipt.policyGenerationDigest === POLICY_GENERATION_DIGEST &&
+      receipt.childEnvironmentIdentity === CHILD_ENVIRONMENT_IDENTITY &&
       deps.isAlive(receipt.pid) && deps.validateIdentity(receipt.pid, receipt.identity) &&
-      receipt.commandFingerprint === commandFingerprint(env, deps.executableCheck);
+      receipt.commandFingerprint === commandFingerprint(env);
   }
 
   async function acquireTurnLease(identity) {
@@ -363,20 +383,19 @@ export function createOpencodeServiceManager(options = {}) {
   async function inspect() {
     if (await probe() !== "healthy") return { status: "unavailable" };
     const receipt = readReceipt(receiptFile);
-    const managed = receipt && deps.isAlive(receipt.pid) && deps.validateIdentity(receipt.pid, receipt.identity);
-    return { status: managed ? "managed" : "reused" };
+    return { status: managedReceiptMatches(receipt) ? "managed" : "reused" };
   }
 
   async function ensure() {
     const initial = await probe();
-    if (initial === "healthy") return { status: "reused" };
+    if (initial === "healthy") return { status: managedReceiptMatches(readReceipt(receiptFile)) ? "managed" : "reused" };
     if (initial === "incompatible") throw taggedError("endpoint_incompatible", "The fixed OpenCode endpoint is occupied by an incompatible service.");
 
     ensureDirectory(directory);
     const lock = await acquireLock(directory, deps);
     try {
       const settled = await probe();
-      if (settled === "healthy") return { status: "reused" };
+      if (settled === "healthy") return { status: managedReceiptMatches(readReceipt(receiptFile)) ? "managed" : "reused" };
       if (settled === "incompatible") throw taggedError("endpoint_incompatible", "The fixed OpenCode endpoint is occupied by an incompatible service.");
 
       const stale = readReceipt(receiptFile);
@@ -387,7 +406,7 @@ export function createOpencodeServiceManager(options = {}) {
 
       const executable = configuredExecutable(env, deps.executableCheck);
       const args = endpointArguments(env);
-      const child = deps.start(executable, args);
+      const child = deps.start(executable, args, managedChildEnvironment(env));
       if (!Number.isSafeInteger(child?.pid) || child.pid < 1) {
         throw taggedError("startup_failed", "The OpenCode service process did not expose an exact child identity.");
       }
@@ -421,7 +440,9 @@ export function createOpencodeServiceManager(options = {}) {
               version: RECEIPT_VERSION,
               pid: child.pid,
               identity,
-              commandFingerprint: createHash("sha256").update(JSON.stringify([executable, args])).digest("hex"),
+              commandFingerprint: commandFingerprint(env),
+              policyGenerationDigest: POLICY_GENERATION_DIGEST,
+              childEnvironmentIdentity: CHILD_ENVIRONMENT_IDENTITY,
               startedAt: new Date(deps.now()).toISOString(),
               lastActivityAt: new Date(deps.now()).toISOString(),
             });

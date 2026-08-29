@@ -85,6 +85,7 @@ function compliantRuleset() {
     { permission: "grep", pattern: "*", action: "allow" },
     { permission: "lsp", pattern: "*", action: "allow" },
     { permission: "external_directory", pattern: "*", action: "deny" },
+    { permission: "doom_loop", pattern: "*", action: "allow" },
   ];
 }
 
@@ -133,6 +134,8 @@ function readyProvider() {
 
 async function startFake(scenario = {}) {
   const server = createFakeOpencodeServer({
+    health: { status: 200, body: { healthy: true, version: "1.18.23" } },
+    config: { status: 200, body: { default_agent: OPENCODE_EXPLORER_PROFILE_NAME } },
     agents: readyAgents(),
     provider: readyProvider(),
     ...scenario,
@@ -308,11 +311,11 @@ describe("opencode driver: readiness and route admission", () => {
     assert.equal(inspection.instanceKey, opencodeExplorerInstanceKey(url));
     assert.deepEqual(postRequests(server), []);
     assert.equal(server.requests.every((request) => request.method === "GET"), true);
-    assert.deepEqual(server.requests.map((request) => request.path), ["/provider"]);
+    assert.deepEqual(server.requests.map((request) => request.path), ["/global/health", "/provider", "/config", "/agent"]);
     assert.equal(server.requests.find((request) => request.path === "/provider")?.query.directory, WORKSPACE_ROOT);
   });
 
-  it("admits bounded dormant native routes without starting a Server", async () => {
+  it("does not advertise dormant CLI routes when the connected Server is absent", async () => {
     let discovered = 0;
     const driver = driverFor("http://127.0.0.1:4998", {
       nativeDiscovery: async () => {
@@ -323,11 +326,11 @@ describe("opencode driver: readiness and route admission", () => {
     const [inspection] = await driver.inspectInstances(
       createDriverScope({ driver, purpose: "inspect", env: { OPENCODE_SERVER_URL: "http://127.0.0.1:4998" }, workspaceRoot: WORKSPACE_ROOT })
     );
-    assert.equal(discovered, 1);
-    assert.equal(inspection.readiness, "ready");
+    assert.equal(discovered, 0);
+    assert.equal(inspection.readiness, "unavailable");
     assert.equal(inspection.liveValidated, false);
-    assert.equal(inspection.detailCode, "dormant_native_config");
-    assert.equal(driver.validateRoute(routeRequest(), inspection).model, OPENCODE_EXPLORER_MODEL);
+    assert.equal(inspection.detailCode, "service_unreachable");
+    assert.throws(() => driver.validateRoute(routeRequest(), inspection));
   });
 
   it("blocks a scope that names another configured Server without any request", async () => {
@@ -441,16 +444,66 @@ describe("opencode driver: prepared turn and pre-session gate", () => {
     assert.deepEqual(postRequests(server), []);
   });
 
-  it("does not read agent policy during the pre-session gate", async () => {
+  it("rejects an Agent policy drift during the pre-session gate", async () => {
     const { server, url } = await startFake();
     const driver = driverFor(url);
     const { preparedTurn, scope } = await acceptedTurn(driver, url);
-    // The operator widens the profile between route admission and launch.
+    // The operator changes the native exception between route admission and launch.
     server.state.agents = readyAgents({
-      permission: [...compliantRuleset(), { permission: "edit", pattern: "*", action: "allow" }],
+      permission: [...compliantRuleset().slice(0, -1), { permission: "doom_loop", pattern: "*", action: "ask" }],
     });
-    await driver.revalidatePreparedTurn(preparedTurn, scope);
+    await assert.rejects(
+      () => driver.revalidatePreparedTurn(preparedTurn, scope),
+      (error) => error.code === "interactive_policy" && !/doom_loop|ask/i.test(error.message)
+    );
     assert.deepEqual(postRequests(server), []);
+  });
+
+  it("fails closed on a version, default-Agent, doom-loop, or duo-workflow witness failure", async () => {
+    const cases = [
+      { health: { status: 200, body: { healthy: true, version: "1.18.22" } } },
+      { config: { status: 200, body: { default_agent: "missing" } } },
+      { agents: readyAgents({ permission: [...compliantRuleset().slice(0, -1), { permission: "doom_loop", pattern: "*", action: "ask" }] }) },
+      {
+        provider: {
+          status: 200,
+          body: { all: [{ id: "gitlab", models: { "duo-workflow-test": { id: "duo-workflow-test", providerID: "gitlab", variants: { high: {} } } } }], connected: ["gitlab"], default: {} },
+        },
+      },
+    ];
+    for (const scenario of cases) {
+      const { server, url } = await startFake(scenario);
+      const driver = driverFor(url);
+      const [inspection] = await driver.inspectInstances(
+        createDriverScope({ driver, purpose: "inspect", env: { OPENCODE_SERVER_URL: url } })
+      );
+      assert.equal(inspection.readiness, "blocked");
+      assert.equal(inspection.detailCode, "interactive_policy");
+      assert.deepEqual(postRequests(server), []);
+    }
+  });
+
+  it("uses only the visible primary build Agent when default_agent is absent", async () => {
+    const { url } = await startFake({
+      config: { status: 200, body: {} },
+      agents: readyAgents({ name: "build" }),
+    });
+    const driver = driverFor(url);
+    const [inspection] = await driver.inspectInstances(
+      createDriverScope({ driver, purpose: "inspect", env: { OPENCODE_SERVER_URL: url } })
+    );
+    assert.equal(inspection.readiness, "ready");
+  });
+
+  it("does not treat an ordinary native ask as blocking under the session wildcard", async () => {
+    const { url } = await startFake({
+      agents: readyAgents({ permission: [...compliantRuleset(), { permission: "edit", pattern: "*", action: "ask" }] }),
+    });
+    const driver = driverFor(url);
+    const [inspection] = await driver.inspectInstances(
+      createDriverScope({ driver, purpose: "inspect", env: { OPENCODE_SERVER_URL: url } })
+    );
+    assert.equal(inspection.readiness, "ready");
   });
 
   it("fails the gate closed when the scope names another Server", async () => {
@@ -480,6 +533,34 @@ describe("opencode driver: prepared turn and pre-session gate", () => {
 // ---------------------------------------------------------------------------
 
 describe("opencode driver: session and turn lineage", () => {
+  it("uses the final GET /agent witness immediately before session creation", async () => {
+    const { server, url } = await startFake();
+    const driver = driverFor(url);
+    const { live } = await launch(driver, url);
+    await live.result;
+    const requests = server.requests;
+    const session = requests.findIndex((request) => request.method === "POST" && request.path === "/session");
+    assert.ok(session > 0);
+    assert.deepEqual(requests[session - 1], {
+      method: "GET", path: "/agent", hasAuthorizationHeader: false, query: { directory: WORKSPACE_ROOT },
+    });
+  });
+
+  it("blocks final policy drift before POST /session and releases the local claim", async () => {
+    const { server, url } = await startFake();
+    const driver = driverFor(url);
+    const accepted = await acceptedTurn(driver, url);
+    const launchContext = await driver.revalidatePreparedTurn(accepted.preparedTurn, accepted.scope);
+    server.state.agents = readyAgents({
+      permission: [...compliantRuleset().slice(0, -1), { permission: "doom_loop", pattern: "*", action: "deny" }],
+    });
+    const before = postRequests(server).length;
+    const rejected = await settled(driver.startTurn({ scope: accepted.scope, preparedTurn: accepted.preparedTurn, launchContext }));
+    assert.equal(rejected.ok, false);
+    assert.equal(rejected.error.opencodeCode, "interactive_policy");
+    assert.equal(postRequests(server).length, before);
+    assert.equal(opencodeHeldCapacity(opencodeExplorerInstanceKey(url)), 0);
+  });
   it("keeps both behavioral authorities on the identical native configuration", async () => {
     const { server, url } = await startFake();
     const driver = driverFor(url);
@@ -513,14 +594,19 @@ describe("opencode driver: session and turn lineage", () => {
     const posts = postRequests(server);
     assert.equal(posts.length, 2);
     assert.equal(posts[0].path, "/session");
-    assert.deepEqual(Object.keys(posts[0].body).sort(), ["model"]);
+    assert.deepEqual(Object.keys(posts[0].body).sort(), ["model", "permission"]);
     assert.deepEqual(posts[0].body.model, {
       id: OPENCODE_EXPLORER_MODEL_ID,
       providerID: OPENCODE_EXPLORER_PROVIDER_ID,
       variant: "high",
     });
     assert.equal(Object.hasOwn(posts[0].body, "agent"), false);
-    assert.equal(Object.hasOwn(posts[0].body, "permission"), false, "never sends a per-session permission ruleset");
+    assert.deepEqual(posts[0].body.permission, [
+      { permission: "*", pattern: "*", action: "allow" },
+      { permission: "question", pattern: "*", action: "deny" },
+      { permission: "plan_exit", pattern: "*", action: "deny" },
+      { permission: "task", pattern: "*", action: "deny" },
+    ]);
     assert.equal(Object.hasOwn(posts[0].body, "title"), false, "never sends prompt-derived session metadata");
     assert.equal(posts[0].query.directory, WORKSPACE_ROOT);
 

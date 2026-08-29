@@ -52,6 +52,47 @@ describe("OpenCode shared service manager", () => {
     assert.equal(fs.existsSync(path.join(runtimeRoot, "opencode-service", "receipt.json")), false);
   });
 
+  it("binds managed-child maximum permission without claiming an unattested attachment", async () => {
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-opencode-policy-"));
+    cleanups.push(runtimeRoot);
+    let healthy = false;
+    let childEnv;
+    const manager = createOpencodeServiceManager({
+      env: {
+        OPENCODE_SERVER_URL: "http://127.0.0.1:4096",
+        OPENCODE_EXECUTABLE: "/opt/opencode",
+        OPENCODE_PERMISSION: "operator-override",
+        OPENCODE_UNRELATED_SECRET: "must-not-appear-in-receipt",
+      },
+      runtimeRoot,
+      probe: async () => ({ kind: healthy ? "healthy" : "absent" }),
+      executableCheck: () => true,
+      start: (_executable, _args, value) => {
+        childEnv = value;
+        healthy = true;
+        return { pid: 91, unref() {} };
+      },
+      getIdentity: () => "identity-91",
+      isAlive: () => true,
+      validateIdentity: () => true,
+    });
+    const inherited = process.env.OPENCODE_PERMISSION;
+
+    assert.deepEqual(await manager.ensure(), { status: "managed" });
+    assert.equal(childEnv.OPENCODE_PERMISSION, '{"*":"allow"}');
+    assert.equal(process.env.OPENCODE_PERMISSION, inherited);
+    const receiptFile = path.join(runtimeRoot, "opencode-service", "receipt.json");
+    const receipt = JSON.parse(fs.readFileSync(receiptFile, "utf8"));
+    assert.match(receipt.policyGenerationDigest, /^[a-f0-9]{64}$/);
+    assert.match(receipt.childEnvironmentIdentity, /^[a-f0-9]{64}$/);
+    assert.equal(JSON.stringify(receipt).includes("must-not-appear-in-receipt"), false);
+    assert.deepEqual(await manager.inspect(), { status: "managed" });
+
+    receipt.policyGenerationDigest = "0".repeat(64);
+    fs.writeFileSync(receiptFile, JSON.stringify(receipt));
+    assert.deepEqual(await manager.inspect(), { status: "reused" });
+  });
+
   it("keeps managed ownership outside disposable runtime isolation homes", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-opencode-service-owner-"));
     cleanups.push(root);
@@ -122,7 +163,7 @@ describe("OpenCode shared service manager", () => {
     });
     const before = fs.readFileSync(receipt, "utf8");
     const status = await managed.inspect();
-    assert.deepEqual(status, { status: "managed" });
+    assert.deepEqual(status, { status: "reused" });
     assert.equal(fs.readFileSync(receipt, "utf8"), before);
     assert.equal(JSON.stringify(status).includes("secret"), false);
     assert.deepEqual(state(), { starts: 0, killed: 0 });

@@ -620,6 +620,7 @@ export const INSTANCE_READINESS_VALUES = Object.freeze(["ready", "unavailable", 
 export const INSTANCE_DETAIL_CODES = Object.freeze([
   "ready",
   "not_configured",
+  "interactive_policy",
   "executable_missing",
   "service_unreachable",
   "dormant_native_config",

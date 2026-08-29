@@ -72,6 +72,9 @@ import {
   createOpencodeDiscoveryClient,
   createOpencodeSession,
   createOpencodeTurnClient,
+  discoverOpencodeAgentPolicy,
+  discoverOpencodeDefaultAgent,
+  discoverOpencodeHealth,
   discoverOpencodeProviderRoutes,
   isLoopbackOpencodeUrl,
   submitOpencodePrompt,
@@ -89,11 +92,11 @@ import {
 import { plainRecordSnapshot } from "./plain-record.mjs";
 import { terminalMetricsFromEvidence } from "./terminal-metrics.mjs";
 import { createOpencodeServiceManager } from "./opencode-service-manager.mjs";
-import { discoverDormantOpencodeRoutes } from "./opencode-native-discovery.mjs";
 
 export const OPENCODE_DRIVER_VERSION = "opencode@1";
 export const OPENCODE_DRIVER_TITLE = "OpenCode native routes (experimental)";
 export const OPENCODE_HARNESS_ID = "opencode";
+export const OPENCODE_INTERACTION_VERSION = "1.18.23";
 
 class OpencodeRouteError extends Error {
   constructor(code, message) {
@@ -165,6 +168,7 @@ export const OPENCODE_PRE_TRANSPORT_CODES = Object.freeze([
   "foreign_route",
   "instance_not_configured",
   "instance_not_ready",
+  "interactive_policy",
   "prompt_rejected",
   "session_identity_reused",
   "session_not_created",
@@ -361,9 +365,7 @@ function requiredText(value, code, detail) {
  * One OpenCode Explorer Driver bound to one fixed configuration.
  *
  * @param {{env?: NodeJS.ProcessEnv, cwd?: string, envFile?: string,
- *   acceptanceTimeoutMs?: number, turnTimeoutMs?: number,
- *   serviceManager?: {ensure: () => Promise<object>, acquireTurnLease?: (identity: object) => Promise<object>, releaseTurnLease?: (lease: object) => Promise<boolean>},
- *   nativeDiscovery?: (options: object) => Promise<object>}} [options]
+ *   acceptanceTimeoutMs?: number, turnTimeoutMs?: number, serviceManager?: any}} [options]
  */
 export function createOpencodeDriver(options = {}) {
   const fixedEnv = options.env ?? process.env;
@@ -384,7 +386,6 @@ export function createOpencodeDriver(options = {}) {
     cwd: options.cwd,
     envFile: options.envFile,
   });
-  const nativeDiscovery = options.nativeDiscovery ?? discoverDormantOpencodeRoutes;
 
   function sessionReference(sessionId) {
     return {
@@ -440,25 +441,55 @@ export function createOpencodeDriver(options = {}) {
     return fields;
   }
 
-  async function inspectNative(scope, allowDormant = true) {
+  function hasTerminalDoomLoopAllow(agent) {
+    const terminal = [...agent.ruleset].reverse().find((rule) => rule.permission === "doom_loop");
+    return terminal?.pattern === "*" && terminal.action === "allow";
+  }
+
+  function isAuthFailure(result) {
+    return result?.ok === false && result?.code === "auth_failed";
+  }
+
+  async function inspectNative(scope) {
     const declared = scope?.env?.OPENCODE_SERVER_URL;
     if (declared && opencodeInstanceKey(declared) !== fixedInstanceKey) {
       return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: "blocked", liveValidated: false, maturity: "experimental", detailCode: "not_configured", routes: null };
     }
     try {
       const handle = createOpencodeDiscoveryClient({ ...clientOptions, env: fixedEnv, directory: scope?.workspaceRoot });
-      const discovered = await discoverOpencodeProviderRoutes(handle, { signal: scope?.signal });
-      if (!discovered.ok) {
-        const blocked = "code" in discovered && discovered.code === "auth_failed";
-        if (allowDormant && !blocked) {
-          const dormant = await nativeDiscovery({ env: fixedEnv, cwd: options.cwd, signal: scope?.signal });
-          if (dormant?.ok) {
-            return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: "ready", liveValidated: false, maturity: "experimental", detailCode: "dormant_native_config", routes: nativeRouteFacts(dormant.routes) };
-          }
-        }
-        return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: blocked ? "blocked" : "unavailable", liveValidated: false, maturity: "experimental", detailCode: blocked ? "not_authenticated" : "service_unreachable", routes: null };
+      const health = await discoverOpencodeHealth(handle, { signal: scope?.signal });
+      const discovered = health.ok && health.healthy
+        ? await discoverOpencodeProviderRoutes(handle, { signal: scope?.signal })
+        : null;
+      const config = discovered?.ok
+        ? await discoverOpencodeDefaultAgent(handle, { signal: scope?.signal })
+        : null;
+      const defaultAgent = config?.ok ? config.defaultAgent ?? "build" : null;
+      const policy = defaultAgent
+        ? await discoverOpencodeAgentPolicy(handle, { name: defaultAgent, signal: scope?.signal })
+        : null;
+      const admitted = health.ok && health.healthy && health.version === OPENCODE_INTERACTION_VERSION &&
+        discovered?.ok && config?.ok && policy?.ok && policy.present && policy.agent &&
+        policy.agent.mode === "primary" && !policy.agent.hidden && hasTerminalDoomLoopAllow(policy.agent);
+      if (!admitted) {
+        const unavailable = !health.ok || !health.healthy || !discovered?.ok;
+        const notAuthenticated = isAuthFailure(health) || isAuthFailure(discovered);
+        return {
+          harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey,
+          readiness: unavailable ? (notAuthenticated ? "blocked" : "unavailable") : "blocked",
+          liveValidated: false, maturity: "experimental",
+          detailCode: unavailable ? (notAuthenticated ? "not_authenticated" : "service_unreachable") : "interactive_policy",
+          routes: null,
+        };
       }
-      return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: "ready", liveValidated: true, maturity: "experimental", detailCode: "ready", routes: nativeRouteFacts(discovered.routes) };
+      const routes = discovered.routes.filter(({ model }) => {
+        const { providerId, modelId } = opencodeModelParts(model);
+        return providerId !== "gitlab" || !modelId.startsWith("duo-workflow-");
+      });
+      if (routes.length === 0) {
+        return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: "blocked", liveValidated: false, maturity: "experimental", detailCode: "interactive_policy", routes: null };
+      }
+      return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: "ready", liveValidated: true, maturity: "experimental", detailCode: "ready", routes: nativeRouteFacts(routes) };
     } catch {
       return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: "unavailable", liveValidated: false, maturity: "experimental", detailCode: "service_unreachable", routes: null };
     }
@@ -799,8 +830,14 @@ export function createOpencodeDriver(options = {}) {
         );
       }
       await serviceManager.ensure();
-      const inspection = await inspectNative(scope, false);
+      const inspection = await inspectNative(scope);
       if (inspection.readiness !== "ready") {
+        if (inspection.detailCode === "interactive_policy") {
+          throw new OpencodeRouteError(
+            "interactive_policy",
+            "The OpenCode interaction policy cannot be witnessed before session creation."
+          );
+        }
         throw new OpencodeRouteError(
           "instance_not_ready",
           `The OpenCode instance is ${inspection.readiness} (${inspection.detailCode}); ` +
@@ -918,6 +955,10 @@ export function createOpencodeDriver(options = {}) {
       let userMessageId;
       try {
         const admittedModel = opencodeModelParts(route.model);
+        const finalWitness = await inspectNative(scope);
+        if (finalWitness.readiness !== "ready" || !finalWitness.routes?.effortsByModel?.[route.model]?.includes(route.effort)) {
+          throw new OpencodeRouteError("interactive_policy", "The OpenCode interaction policy cannot be witnessed immediately before session creation.");
+        }
         const turnClient = createOpencodeTurnClient(clientOptions);
         const workspaceRoot = input?.launchContext?.workspaceRoot ?? scope?.workspaceRoot ?? null;
         const created = await createOpencodeSession(turnClient, {

@@ -65,6 +65,7 @@ function compliantRuleset() {
     { permission: "grep", pattern: "*", action: "allow" },
     { permission: "lsp", pattern: "*", action: "allow" },
     { permission: "external_directory", pattern: "*", action: "deny" },
+    { permission: "doom_loop", pattern: "*", action: "allow" },
   ];
 }
 
@@ -103,6 +104,8 @@ function providerBody(overrides = {}) {
 
 async function startFake(scenario = {}) {
   const server = createFakeOpencodeServer({
+    health: { status: 200, body: { healthy: true, version: "1.18.23" } },
+    config: { status: 200, body: { default_agent: OPENCODE_EXPLORER_PROFILE_NAME } },
     agents: { status: 200, body: explorerAgentBody() },
     provider: { status: 200, body: providerBody() },
     ...scenario,

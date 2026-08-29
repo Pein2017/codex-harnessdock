@@ -369,6 +369,30 @@ export async function discoverOpencodeHealth(handle, options = {}) {
 }
 
 /**
+ * Read the only configuration fact interaction admission needs.  The full
+ * configuration may carry operator-owned paths and secrets, so it never
+ * leaves this client boundary.
+ */
+export async function discoverOpencodeDefaultAgent(handle, options = {}) {
+  const entry = requireHandleEntry(handle);
+  const timeoutMs = boundPositiveInteger(options.timeoutMs, entry.discoveryCeilingMs);
+  const deadlineSignal = composeDeadlineSignal(timeoutMs, options.signal);
+  try {
+    const result = await entry.sdkClient.config.get({}, { signal: deadlineSignal });
+    if (result.error !== undefined || !result.data || typeof result.data !== "object") {
+      return { ok: false, ...classifyDiscoveryFailure(result.error, result.response) };
+    }
+    const defaultAgent = result.data.default_agent;
+    if (defaultAgent !== undefined && defaultAgent !== null && !isBoundedString(defaultAgent)) {
+      return { ok: false, code: "malformed_response", retryable: false };
+    }
+    return { ok: true, defaultAgent: defaultAgent ?? null };
+  } catch (error) {
+    return { ok: false, ...classifyDiscoveryFailure(error, undefined) };
+  }
+}
+
+/**
  * @param {OpencodeDiscoveryHandleType} handle
  * @param {{signal?: AbortSignal, timeoutMs?: number}} [options]
  */
@@ -836,10 +860,10 @@ function boundedDirectory(directory) {
 /**
  * Create one fresh native session for one Agent.
  *
- * The body states only the reviewed profile and the exact admitted model. It
- * never carries a per-session `permission` ruleset (that would be a dynamic
- * policy selector the route forbids), a title derived from the caller's task
- * (prompt text does not belong in session metadata), or a parent session.
+ * The body states the exact admitted model and fixed maximum-permission,
+ * zero-wait rules. It never accepts caller-provided permission rules, a title
+ * derived from the caller's task (prompt text does not belong in session
+ * metadata), or a parent session.
  *
  * @param {OpencodeTurnHandleType} handle
  * @param {{agent?: string, providerId: string, modelId: string, variant?: string, directory?: string,
@@ -863,6 +887,12 @@ export async function createOpencodeSession(handle, options) {
       {
         ...(agent == null ? {} : { agent }),
         model: { id: modelId, providerID: providerId, ...(variant == null ? {} : { variant }) },
+        permission: [
+          { permission: "*", pattern: "*", action: "allow" },
+          { permission: "question", pattern: "*", action: "deny" },
+          { permission: "plan_exit", pattern: "*", action: "deny" },
+          { permission: "task", pattern: "*", action: "deny" },
+        ],
         ...(directory === undefined ? {} : { directory }),
       },
       { signal: deadlineSignal }

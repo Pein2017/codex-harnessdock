@@ -65,12 +65,15 @@ function compliantRuleset() {
     { permission: "grep", pattern: "*", action: "allow" },
     { permission: "lsp", pattern: "*", action: "allow" },
     { permission: "external_directory", pattern: "*", action: "deny" },
+    { permission: "doom_loop", pattern: "*", action: "allow" },
   ];
 }
 
-async function startReadyFake() {
+async function startReadyFake(scenario = {}) {
   const providers = [...new Set(OPENCODE_EXPLORER_MODEL_ROUTES.map((route) => route.providerId))];
   const server = createFakeOpencodeServer({
+    health: { status: 200, body: { healthy: true, version: "1.18.23" } },
+    config: { status: 200, body: { default_agent: OPENCODE_EXPLORER_PROFILE_NAME } },
     agents: {
       status: 200,
       body: [
@@ -99,6 +102,7 @@ async function startReadyFake() {
         default: {},
       },
     },
+    ...scenario,
   });
   const url = await server.listen();
   cleanups.push(() => server.close());
@@ -283,6 +287,24 @@ describe("public generation: list_harnesses observes without selecting", () => {
     for (const text of collectStrings(listing)) {
       assert.equal(text.startsWith("/"), false, `disclosed an absolute path: ${text}`);
     }
+  });
+
+  it("projects an interaction witness failure without policy detail", async () => {
+    const { url } = await startReadyFake({
+      agents: {
+        status: 200,
+        body: [{
+          name: OPENCODE_EXPLORER_PROFILE_NAME, mode: "primary", native: false,
+          permission: [{ permission: "doom_loop", pattern: "*", action: "ask" }], options: {},
+        }],
+      },
+    });
+    const opencode = harnessOf(await runtimeFor(url).list_harnesses({}), OPENCODE_HARNESS_ID);
+    assert.deepEqual(opencode.instances[0], {
+      instance: opencodeExplorerInstanceKey(url), readiness: "blocked", detail: "interactive_policy",
+      live_validated: false, maturity: "experimental", capacity: null, routes: null,
+    });
+    assert.doesNotMatch(JSON.stringify(opencode), /doom_loop|ask|build|1\.18\.23/i);
   });
 
   it("keeps one unavailable Harness from hiding the other", async () => {
