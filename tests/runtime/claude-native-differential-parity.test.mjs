@@ -37,35 +37,40 @@ const CONTROL_RECOVERY_INPUT = "continue the exact native session without replay
 const MODEL = "claude-sonnet-5";
 const EFFORT = "high";
 const SESSION = "native-session-s";
-const DENIED_TOOLS = [
-  "Workflow", "ListAgents", "ListPeers", "ScheduleWakeup", "CronCreate", "CronDelete",
-  "CronList", "CronUpdate", "RemoteTrigger", "PushNotification", "SendUserMessage",
-  "SendUserFile", "SendFile", "EnterWorktree", "ExitWorktree", "Agent", "SendMessage",
-];
-const DIRECT_AUTHORITY_PROMPT = [
-  "You are a bounded Claude Agent delegated by Codex.",
-  "Stay within the task, workspace, and authority; Codex owns user-facing synthesis and acceptance.",
-  "Return one self-contained final result with needed evidence and conclusions.",
-  "If blocked on a lead/user decision, end with the exact question and evidence; this session can continue.",
-  "Act as a leaf: do not delegate or use Agent/Workflow.",
-  "Read/review only: full CLI access avoids prompts but grants no mutation authority.",
-  "Do not mutate task, workspace, repository, or external state except Claude native Auto Memory or local-memory maintenance.",
-  "This is behavioral authority, not a filesystem sandbox.",
-].join(" ");
 
 const PROVEN_ROWS = [
-  "argv_environment",
+  "baseline_argv_environment",
   "benign_config_inheritance_witness",
-  "prompt_authority_native_input",
+  "task_native_input",
+  "closed_harnessdock_policy_delta",
+  "write_authority_delta",
   "ordered_stream_tool_events",
   "interrupt_behavior",
-  "exact_resume_same_session_distinct_new_turn",
-  "exact_session_transport_recovery_without_duplicate_input",
   "terminal_classification",
   "route_drift",
   "provider_native_usage_source_fields",
   "process_lifecycle_cleanup",
 ];
+const UNPROVEN_ROWS = [
+  {
+    row: "exact_resume_same_session_fresh_process_mechanics",
+    reason: "the fake protocol exposes no provider-native persistent turn key; a distinct child PID is not native turn identity",
+  },
+  {
+    row: "exact_session_transport_recovery_without_duplicate_input",
+    reason: "same session and non-duplicated input lack a provider-defined accepted-turn or recovery binding",
+  },
+];
+const NOT_APPLICABLE = {
+  oldTurnObservation: "turnObservation is unavailable in the current Claude route capability snapshot",
+};
+const HOLD = {
+  dimension: "exact_dynamic_claude_model_effort_inventory",
+  result: "HOLD",
+  reason: "zero-prompt native controls do not establish the exact selectable full model and effort catalog",
+  fallbackUsed: false,
+  staticCatalogUsed: false,
+};
 
 after(() => {
   if (PRIOR_RUNTIME_HOME == null) delete process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
@@ -80,8 +85,6 @@ function directArgs(resumeSessionId = null) {
     "--model", MODEL, "--effort", EFFORT,
   ];
   if (resumeSessionId) args.push("--resume", resumeSessionId);
-  for (const tool of DENIED_TOOLS) args.push("--disallowedTools", tool);
-  args.push("--append-system-prompt", DIRECT_AUTHORITY_PROMPT, "--dangerously-skip-permissions");
   return args;
 }
 
@@ -189,6 +192,7 @@ function pidExited(pid) {
 async function launchDriver(test, {
   scenario,
   taskInput,
+  authority = "behavioral_read_only",
   nativeSessionRef = undefined,
   preparedTurnOptions = null,
   scopeTurnOptions = preparedTurnOptions,
@@ -222,7 +226,7 @@ async function launchDriver(test, {
     harnessId: CLAUDE_CODE_HARNESS_ID,
     model: MODEL,
     topology: "leaf",
-    authority: "behavioral_read_only",
+    authority,
     effort: EFFORT,
   }, inspections).route;
   const turnId = test.nextTurnId();
@@ -301,11 +305,77 @@ function completedHarness(result, record, stream, test) {
   };
 }
 
+function splitHarnessPolicyArgs(argv) {
+  const baseline = [];
+  const delta = { appendSystemPrompt: null, disallowedTools: [], dangerouslySkipPermissions: false };
+  for (let index = 0; index < argv.length; index += 1) {
+    const value = argv[index];
+    if (value === "--append-system-prompt") {
+      assert.equal(delta.appendSystemPrompt, null, "one HarnessDock authority prompt");
+      delta.appendSystemPrompt = argv[index + 1] ?? null;
+      index += 1;
+    } else if (value === "--disallowedTools") {
+      delta.disallowedTools.push(argv[index + 1] ?? null);
+      index += 1;
+    } else if (value === "--dangerously-skip-permissions") {
+      assert.equal(delta.dangerouslySkipPermissions, false, "one HarnessDock permission flag");
+      delta.dangerouslySkipPermissions = true;
+    } else {
+      baseline.push(value);
+    }
+  }
+  return { baseline, delta };
+}
+
+function assertNativeBaseline(args) {
+  for (const policyFlag of ["--append-system-prompt", "--disallowedTools", "--dangerously-skip-permissions"]) {
+    assert.equal(args.includes(policyFlag), false, `direct native baseline excludes ${policyFlag}`);
+  }
+}
+
+function assertClosedPolicyDelta(control, harness) {
+  const { baseline, delta } = splitHarnessPolicyArgs(harness.argv);
+  assert.deepEqual(control.argv, baseline, "native baseline argv plus only the closed HarnessDock delta");
+  assert.deepEqual(
+    control.environment,
+    { ...harness.environment, IS_SANDBOX: null },
+    "only IS_SANDBOX differs from the native baseline environment",
+  );
+  assert.equal(typeof delta.appendSystemPrompt, "string", "bounded authority prompt exists");
+  assert.ok(delta.appendSystemPrompt.length > 0 && delta.appendSystemPrompt.length <= 4096);
+  assert.ok(delta.disallowedTools.length > 0 && delta.disallowedTools.length <= 64);
+  assert.equal(delta.disallowedTools.every((tool) => typeof tool === "string" && tool.length > 0), true);
+  assert.equal(delta.dangerouslySkipPermissions, true);
+  return delta;
+}
+
+function maskAuthorityPrompt(argv) {
+  const masked = [...argv];
+  const index = masked.indexOf("--append-system-prompt");
+  assert.notEqual(index, -1, "HarnessDock authority prompt exists");
+  assert.equal(masked.indexOf("--append-system-prompt", index + 1), -1, "one authority prompt");
+  masked[index + 1] = "<AUTHORITY_PROMPT>";
+  return masked;
+}
+
+function assertWriteAuthorityDelta(readHarness, writeHarness) {
+  const readPolicy = splitHarnessPolicyArgs(readHarness.argv);
+  const writePolicy = splitHarnessPolicyArgs(writeHarness.argv);
+  assert.deepEqual(maskAuthorityPrompt(readHarness.argv), maskAuthorityPrompt(writeHarness.argv));
+  assert.deepEqual(readPolicy.baseline, writePolicy.baseline, "native transport argv");
+  assert.deepEqual(readPolicy.delta.disallowedTools, writePolicy.delta.disallowedTools, "tool-denial bytes");
+  assert.equal(readPolicy.delta.dangerouslySkipPermissions, writePolicy.delta.dangerouslySkipPermissions);
+  assert.notEqual(readPolicy.delta.appendSystemPrompt, writePolicy.delta.appendSystemPrompt, "authority prompt text");
+  assert.deepEqual(readHarness.environment, writeHarness.environment, "native environment");
+  assert.deepEqual(readHarness.configWitness, writeHarness.configWitness, "inherited config witness");
+  assert.deepEqual(readHarness.nativeInput, writeHarness.nativeInput, "native task input");
+}
+
 function assertCompletedParity(control, harness) {
-  assert.deepEqual(control.argv, harness.argv, "native argv");
-  assert.deepEqual(control.environment, harness.environment, "allowlisted native environment");
+  assertNativeBaseline(control.argv);
+  assertClosedPolicyDelta(control, harness);
   assert.deepEqual(control.configWitness, harness.configWitness, "benign config inheritance witness");
-  assert.deepEqual(control.nativeInput, harness.nativeInput, "task and authority native input");
+  assert.deepEqual(control.nativeInput, harness.nativeInput, "native task input");
   assert.deepEqual(control.eventProjection, harness.eventProjection, "ordered stream/tool projection");
   assert.deepEqual(control.terminal, harness.terminal, "terminal classification");
   assert.deepEqual(control.provider, harness.provider, "provider-native usage fields");
@@ -326,13 +396,9 @@ function renderReceipt(rows) {
     subject: "test-owned fake Claude CLI, direct Node control, and production Claude Driver v2/adapter",
     normalization: { ephemeralRoot: "<ROOT>", processPid: "<PID>" },
     provenRows: rows,
-    hold: {
-      dimension: "exact_dynamic_claude_model_effort_inventory",
-      result: "HOLD",
-      reason: "zero-prompt native controls do not establish the exact selectable full model and effort catalog",
-      fallbackUsed: false,
-      staticCatalogUsed: false,
-    },
+    hold: HOLD,
+    notApplicable: NOT_APPLICABLE,
+    unprovenRows: UNPROVEN_ROWS,
   }, null, 2)}\n`;
 }
 
@@ -347,7 +413,7 @@ describe("Claude native differential parity", () => {
       executable: FAKE_CLAUDE,
       args: directArgs(),
       cwd: test.workspace,
-      env: { ...test.env("normal"), IS_SANDBOX: "1" },
+      env: test.env("normal"),
       input: TASK_INPUT,
     });
     const control = completedControl(direct, turnLogs(test).at(-1), test);
@@ -359,8 +425,9 @@ describe("Claude native differential parity", () => {
     const harness = completedHarness(result, harnessLog, launched.stream, test);
     assertCompletedParity(control, harness);
     assert.equal(result.driverVersion, "claude-code@3");
-    assert.equal(result.continuation.mode, "exact_resume");
     assert.equal(harness.cleanup.childExited, true);
+    assertRejectsMutation("copied-policy oracle", () =>
+      assertNativeBaseline([...control.argv, "--disallowedTools", "baseline"]));
 
     // Each normal-row comparator must reject a behavioral change, rather than
     // accepting a static fixture hash.
@@ -377,6 +444,23 @@ describe("Claude native differential parity", () => {
       assertRejectsMutation(label, () => assertCompletedParity(control, mutated));
     }
 
+    // `write` may change the authority prompt only. The actual native argv,
+    // environment, config witness, transport, and denial bytes must otherwise
+    // remain identical to the read turn without duplicating policy text here.
+    test.clearLog();
+    const writeLaunched = await launchDriver(test, {
+      scenario: "normal",
+      taskInput: TASK_INPUT,
+      authority: "behavioral_write",
+    });
+    const writeResult = await writeLaunched.wrapper.result;
+    settleDriverJob(test, writeLaunched, writeResult);
+    const writeHarness = completedHarness(writeResult, turnLogs(test).at(-1), writeLaunched.stream, test);
+    assertWriteAuthorityDelta(harness, writeHarness);
+    const writeMutation = clone(writeHarness);
+    writeMutation.argv[writeMutation.argv.indexOf("--disallowedTools") + 1] = "changed-denial";
+    assertRejectsMutation("write tool-denial delta", () => assertWriteAuthorityDelta(harness, writeMutation));
+
     // The native control accepts an altered effort argv, while the production
     // Driver refuses a scope/prepared-route disagreement before any fake
     // native child can receive a prompt. This is route-drift evidence, not a
@@ -386,7 +470,7 @@ describe("Claude native differential parity", () => {
       executable: FAKE_CLAUDE,
       args: directArgsWithEffort("low"),
       cwd: test.workspace,
-      env: { ...test.env("normal"), IS_SANDBOX: "1" },
+      env: test.env("normal"),
       input: TASK_INPUT,
     });
     const controlRouteDrift = {
@@ -420,28 +504,28 @@ describe("Claude native differential parity", () => {
     routeMutation.nativeAttempted = true;
     assertRejectsMutation("route drift", () => assertRouteDrift(controlRouteDrift, routeMutation));
 
-    // A direct two-process continuation and a fresh Driver process both retain
-    // S while assigning a distinct native T2 (the actual second child PID).
+    // This observes same-session/fresh-process mechanics only. A child PID is
+    // not a provider-native turn key, so this remains explicitly unproven.
     test.clearLog();
     const directFirst = await runDirectClaude({
       executable: FAKE_CLAUDE,
       args: directArgs(),
       cwd: test.workspace,
-      env: { ...test.env("normal"), IS_SANDBOX: "1" },
+      env: test.env("normal"),
       input: TASK_INPUT,
     });
     const directSecond = await runDirectClaude({
       executable: FAKE_CLAUDE,
       args: directArgs(directFirst.sessionId),
       cwd: test.workspace,
-      env: { ...test.env("normal"), IS_SANDBOX: "1" },
+      env: test.env("normal"),
       input: FOLLOW_UP_INPUT,
     });
     const directContinuationLogs = turnLogs(test);
     const controlContinuation = {
       session: [directFirst.sessionId, directSecond.sessionId],
       resume: directContinuationLogs[1].resume,
-      distinctNewTurn: directFirst.pid !== directSecond.pid,
+      freshProcess: directFirst.pid !== directSecond.pid,
     };
     test.clearLog();
     const driverFirst = await launchDriver(test, { scenario: "normal", taskInput: TASK_INPUT });
@@ -462,30 +546,34 @@ describe("Claude native differential parity", () => {
         driverSecondResult.continuation.nativeSessionRef.locator.sessionId,
       ],
       resume: driverContinuationLogs[1].resume,
-      distinctNewTurn: driverFirstLog.pid !== driverContinuationLogs[1].pid,
+      freshProcess: driverFirstLog.pid !== driverContinuationLogs[1].pid,
     };
-    assert.deepEqual(controlContinuation, harnessContinuation, "exact-session continuation");
+    assert.deepEqual(controlContinuation, harnessContinuation, "same-session/fresh-process mechanics");
     const continuationMutation = clone(harnessContinuation);
     continuationMutation.session[1] = "wrong-session";
     assertRejectsMutation("session/new-turn identity", () =>
-      assert.deepEqual(controlContinuation, continuationMutation, "exact-session continuation"));
+      assert.deepEqual(controlContinuation, continuationMutation, "same-session/fresh-process mechanics"));
+    const processMutation = clone(harnessContinuation);
+    processMutation.freshProcess = false;
+    assertRejectsMutation("fresh-process is not turn identity", () =>
+      assert.deepEqual(controlContinuation, processMutation, "same-session/fresh-process mechanics"));
 
-    // The same recovery protocol gets one original user input, then resumes S
-    // with a different recovery input. The Driver path is the production
-    // supervisor and adapter, not a fake runTurnSession result.
+    // The protocol demonstrates input-count mechanics only. It has no
+    // provider-defined accepted-turn/recovery binding, so receipt status is
+    // unproven even though the Driver path is production supervisor/adapter.
     test.clearLog();
     const directRecoveryFirst = await runDirectClaude({
       executable: FAKE_CLAUDE,
       args: directArgs(),
       cwd: test.workspace,
-      env: { ...test.env("recover"), IS_SANDBOX: "1" },
+      env: test.env("recover"),
       input: TASK_INPUT,
     });
     const directRecoverySecond = await runDirectClaude({
       executable: FAKE_CLAUDE,
       args: directArgs(directRecoveryFirst.sessionId),
       cwd: test.workspace,
-      env: { ...test.env("recover"), IS_SANDBOX: "1" },
+      env: test.env("recover"),
       input: CONTROL_RECOVERY_INPUT,
     });
     const directRecoveryLogs = turnLogs(test);
@@ -520,7 +608,7 @@ describe("Claude native differential parity", () => {
       executable: FAKE_CLAUDE,
       args: directArgs(),
       cwd: test.workspace,
-      env: { ...test.env("interrupt"), IS_SANDBOX: "1" },
+      env: test.env("interrupt"),
       input: TASK_INPUT,
       interrupt: true,
     });
@@ -549,7 +637,7 @@ describe("Claude native differential parity", () => {
       executable: FAKE_CLAUDE,
       args: directArgs(),
       cwd: test.workspace,
-      env: { ...test.env("usage"), IS_SANDBOX: "1" },
+      env: test.env("usage"),
       input: TASK_INPUT,
     });
     const controlUsage = {
@@ -574,7 +662,7 @@ describe("Claude native differential parity", () => {
       executable: FAKE_CLAUDE,
       args: directArgs(SESSION),
       cwd: test.workspace,
-      env: { ...test.env("drift"), IS_SANDBOX: "1" },
+      env: test.env("drift"),
       input: FOLLOW_UP_INPUT,
     });
     const controlDrift = { expected: SESSION, observed: directDrift.sessionId, disposition: "refused" };

@@ -6,13 +6,13 @@
     "processPid": "<PID>"
   },
   "provenRows": [
-    "argv_environment",
+    "baseline_argv_environment",
     "benign_config_inheritance_witness",
-    "prompt_authority_native_input",
+    "task_native_input",
+    "closed_harnessdock_policy_delta",
+    "write_authority_delta",
     "ordered_stream_tool_events",
     "interrupt_behavior",
-    "exact_resume_same_session_distinct_new_turn",
-    "exact_session_transport_recovery_without_duplicate_input",
     "terminal_classification",
     "route_drift",
     "provider_native_usage_source_fields",
@@ -24,5 +24,18 @@
     "reason": "zero-prompt native controls do not establish the exact selectable full model and effort catalog",
     "fallbackUsed": false,
     "staticCatalogUsed": false
-  }
+  },
+  "notApplicable": {
+    "oldTurnObservation": "turnObservation is unavailable in the current Claude route capability snapshot"
+  },
+  "unprovenRows": [
+    {
+      "row": "exact_resume_same_session_fresh_process_mechanics",
+      "reason": "the fake protocol exposes no provider-native persistent turn key; a distinct child PID is not native turn identity"
+    },
+    {
+      "row": "exact_session_transport_recovery_without_duplicate_input",
+      "reason": "same session and non-duplicated input lack a provider-defined accepted-turn or recovery binding"
+    }
+  ]
 }
