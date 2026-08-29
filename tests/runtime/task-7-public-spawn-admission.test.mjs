@@ -46,6 +46,7 @@ import {
   markNativeSubmissionStarted,
   readLaunchClaim,
   recordLaunchAcceptanceRejected,
+  recordLaunchAcceptanceUnknown,
 } from "../../runtime/launch-claim.mjs";
 import { rollbackPreparedVersionThreeTurn } from "../../runtime/v3-worker-entry.mjs";
 import {
@@ -893,6 +894,49 @@ describe("Task 7 — each Harness states exactly one execution lifecycle", () =>
     });
     assert.equal(claim.submissionState, "started");
     assert.equal(claim.acceptance, "acceptance_unknown");
+  });
+
+  it("does not roll back a worker during bounded slow pre-submission readiness", async () => {
+    const { url } = await startReadyFake();
+    const { runtime } = setup(url);
+    let killed = false;
+    let acceptanceTimer = null;
+    runtime.jobs.launchDependencies.spawn = (_command, args) => {
+      const jobId = args[args.indexOf("--job-id") + 1];
+      const child = new EventEmitter();
+      child.pid = 424245;
+      child.exitCode = null;
+      child.signalCode = null;
+      child.kill = () => {
+        killed = true;
+        if (acceptanceTimer) clearTimeout(acceptanceTimer);
+        return true;
+      };
+      child.unref = () => {};
+      process.nextTick(() => {
+        child.emit("spawn");
+        acceptanceTimer = setTimeout(() => {
+          const agent = runtime.versionThreeStore().resolveTarget("/root/slow_pre_submission");
+          const identity = {
+            ownerRootId: runtime.ownerRootId,
+            agentId: agent.agentId,
+            jobId,
+          };
+          const claim = readLaunchClaim(identity);
+          markNativeSubmissionStarted({ ...identity, attemptId: claim.attemptId });
+          recordLaunchAcceptanceUnknown({
+            ...identity,
+            attemptId: claim.attemptId,
+            sanitizedDetail: "bounded_slow_pre_submission_readiness",
+          });
+        }, 5_250);
+      });
+      return child;
+    };
+
+    const receipt = await runtime.spawnAgent(explorerRequest({ task_name: "slow_pre_submission" }));
+    assert.equal(receipt.status, "working");
+    assert.equal(killed, false);
   });
 
   it("starts two public Explorer Agents concurrently without an instance capacity ceiling", async () => {

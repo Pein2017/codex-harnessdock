@@ -133,7 +133,11 @@ const HANDOFF_DISPOSITIONS = new Set([
 ]);
 const CHILD_SPAWN_WAIT_MS = 1_000;
 const CHILD_EXIT_WAIT_MS = 1_000;
-const V3_SUBMISSION_HANDOFF_WAIT_MS = 5_000;
+// A cold OpenCode route may spend up to 35 seconds in bounded, pre-submission
+// service health, ownership, startup, and route revalidation. Keep the parent
+// alive beyond that closed envelope so it cannot roll back the worker while
+// the worker is still proving that no native turn has been submitted.
+const V3_SUBMISSION_HANDOFF_WAIT_MS = 45_000;
 const V3_TURN_EVIDENCE_CLASS = "v3-public-turn";
 /** Version-2 durable Harness evidence on every job this runtime prepares. */
 export const HARNESS_JOB_STATE_VERSION = 2;
