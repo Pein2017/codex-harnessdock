@@ -448,13 +448,13 @@
       "localEvidence": [
         {
           "label": "opencode-native-differential-parity.receipt.json#provenRows/exact_model_effort_inventory",
-          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
+          "digest": "sha256:a68d963ec4c66723fccf537b3d9548c8118be5e4101f4b66bd36517faa01a592"
         }
       ],
       "mode": "zero-model deterministic native comparison",
       "comparator": "exact native model and effort inventory comparison",
       "result": "pass",
-      "contentDigest": "sha256:95aff4d0798afbb4646fc14fd5dc1c22591d36d5a9caff01ce3f5b4c375969f7"
+      "contentDigest": "sha256:e1cd973ff02481e8df0bc57a4fa37c020095c22b949fdfb9ae8e4dfeef355058"
     },
     {
       "harness": "opencode",
@@ -464,13 +464,13 @@
       "localEvidence": [
         {
           "label": "opencode-native-differential-parity.receipt.json#provenRows/request_transport_environment",
-          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
+          "digest": "sha256:a68d963ec4c66723fccf537b3d9548c8118be5e4101f4b66bd36517faa01a592"
         }
       ],
       "mode": "zero-model deterministic native comparison",
       "comparator": "exact normalized native request transport comparison",
       "result": "pass",
-      "contentDigest": "sha256:e06d10a70783a14ea9cb548e92a53acc22c2c830053a25e7447f827a32000ad6"
+      "contentDigest": "sha256:45d02c01fdf0972a7fe7df8abe598ca7bf2ea22d9c1267ec2badc4f1d1786cca"
     },
     {
       "harness": "opencode",
@@ -480,13 +480,13 @@
       "localEvidence": [
         {
           "label": "opencode-native-differential-parity.receipt.json#provenRows/native_configuration_inheritance",
-          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
+          "digest": "sha256:a68d963ec4c66723fccf537b3d9548c8118be5e4101f4b66bd36517faa01a592"
         }
       ],
       "mode": "zero-model deterministic native comparison",
       "comparator": "independent native config and resolved Agent witness comparison",
       "result": "pass",
-      "contentDigest": "sha256:0840896b4b8f0420f0111c7ac8e90dcff50659f058db6792bbad0d93677a555e"
+      "contentDigest": "sha256:0508ad070be8f59a6dde512302489096f917a30848faf3115fe1e384f4597733"
     },
     {
       "harness": "opencode",
@@ -496,13 +496,13 @@
       "localEvidence": [
         {
           "label": "opencode-native-differential-parity.receipt.json#provenRows/driver_authority_non_prompt_invariance",
-          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
+          "digest": "sha256:a68d963ec4c66723fccf537b3d9548c8118be5e4101f4b66bd36517faa01a592"
         }
       ],
       "mode": "zero-model deterministic native comparison",
       "comparator": "authority-only non-prompt request comparison",
       "result": "pass",
-      "contentDigest": "sha256:2d057973d4920a95a0e26d9acb0a45c2c8b67399f10eb3c5ca89f6d0d38ac0d5"
+      "contentDigest": "sha256:605bc10e7eda06422a8a3cd8dcc9834a46e08903cd20560eaad9282b80c213e7"
     },
     {
       "harness": "opencode",
@@ -512,13 +512,13 @@
       "localEvidence": [
         {
           "label": "opencode-native-differential-parity.receipt.json#provenRows/ordered_request_event_tool_observations",
-          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
+          "digest": "sha256:a68d963ec4c66723fccf537b3d9548c8118be5e4101f4b66bd36517faa01a592"
         }
       ],
       "mode": "zero-model deterministic native comparison",
       "comparator": "ordered native request event and tool comparison",
       "result": "pass",
-      "contentDigest": "sha256:a99841a6bf4a99fa7bb4d9af49432fa6667ffafcb1ce3db5eede5ceeb2fecb71"
+      "contentDigest": "sha256:ba2cef7fd8a16b94830a7a8de784bc3fc3d9e6fa523f58a39216f0f60c596402"
     },
     {
       "harness": "opencode",
@@ -528,7 +528,7 @@
       "localEvidence": [
         {
           "label": "opencode-native-differential-parity.receipt.json#notApplicableRows/interrupt",
-          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
+          "digest": "sha256:a68d963ec4c66723fccf537b3d9548c8118be5e4101f4b66bd36517faa01a592"
         }
       ],
       "mode": "capability-derived",
@@ -538,7 +538,7 @@
         "capability": "interruptRequest",
         "observed": "unsupported"
       },
-      "contentDigest": "sha256:74661a0cc1ded48c1691bc6134254d94b41f497c00ed0c513a6ad55f97b9348e"
+      "contentDigest": "sha256:2eab5dcce5d4dc9ae2ba4ca42c6ef6ec7a2009e95f483927c7545411e969705a"
     },
     {
       "harness": "opencode",
@@ -548,7 +548,7 @@
       "localEvidence": [
         {
           "label": "opencode-native-differential-parity.receipt.json#notApplicableRows/exact_session_continuation",
-          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
+          "digest": "sha256:a68d963ec4c66723fccf537b3d9548c8118be5e4101f4b66bd36517faa01a592"
         }
       ],
       "mode": "capability-derived",
@@ -558,7 +558,7 @@
         "capability": "continuation",
         "observed": "fresh_only"
       },
-      "contentDigest": "sha256:f10df49b5175e06bf07e44fcc8a3c85582cc0ba112686f23f82a030d1063c40d"
+      "contentDigest": "sha256:7157e08a8be784de8b4154a5e0e64900b1efff1f1c8568291cdf7923bc1d9e71"
     },
     {
       "harness": "opencode",
@@ -568,7 +568,7 @@
       "localEvidence": [
         {
           "label": "opencode-native-differential-parity.receipt.json#notApplicableRows/cross_process_turn_observation_or_reconciliation",
-          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
+          "digest": "sha256:a68d963ec4c66723fccf537b3d9548c8118be5e4101f4b66bd36517faa01a592"
         }
       ],
       "mode": "capability-derived",
@@ -578,7 +578,7 @@
         "capability": "turnObservation",
         "observed": "unavailable"
       },
-      "contentDigest": "sha256:d5dd1083faa253da2c60eda4dfeffaed8328e27c2111ef4fc5b548552c7d98e0"
+      "contentDigest": "sha256:14d56ac3cb120e295aa643f6cc8da40934956d624322721057ae2c56056e1d0e"
     },
     {
       "harness": "opencode",
@@ -588,7 +588,7 @@
       "localEvidence": [
         {
           "label": "opencode-native-differential-parity.receipt.json#notApplicableRows/automatic_recovery_exact_session_transport",
-          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
+          "digest": "sha256:a68d963ec4c66723fccf537b3d9548c8118be5e4101f4b66bd36517faa01a592"
         }
       ],
       "mode": "capability-derived",
@@ -598,7 +598,7 @@
         "capability": "automaticRecovery",
         "observed": "none"
       },
-      "contentDigest": "sha256:237bfdb0de1aa6721b5c1bd9fe20529f4496a818a4ab9af17834af03b2e6f4b4"
+      "contentDigest": "sha256:abb1fc0ce44e37e1c4044be3ac58e677815057098d2fb0187932a560245356ff"
     },
     {
       "harness": "opencode",
@@ -608,13 +608,13 @@
       "localEvidence": [
         {
           "label": "opencode-native-differential-parity.receipt.json#provenRows/terminal_classification",
-          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
+          "digest": "sha256:a68d963ec4c66723fccf537b3d9548c8118be5e4101f4b66bd36517faa01a592"
         }
       ],
       "mode": "zero-model deterministic native comparison",
       "comparator": "closed native terminal comparison",
       "result": "pass",
-      "contentDigest": "sha256:99c5f2c55e9cfd96fbc698ffa7e848dcc510eeac61fca8cf50a70386468b5cad"
+      "contentDigest": "sha256:cbeccf58ed82f0fa39b0b794237964c71b92a025299b023126913a38c508651d"
     },
     {
       "harness": "opencode",
@@ -624,13 +624,13 @@
       "localEvidence": [
         {
           "label": "opencode-native-differential-parity.receipt.json#provenRows/route_drift",
-          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
+          "digest": "sha256:a68d963ec4c66723fccf537b3d9548c8118be5e4101f4b66bd36517faa01a592"
         }
       ],
       "mode": "zero-model deterministic native comparison",
       "comparator": "fresh native route drift refusal",
       "result": "pass",
-      "contentDigest": "sha256:dd8d2cb4ed50abea645ec31ff3257731c21da1e238ef7e1833ed70f979499107"
+      "contentDigest": "sha256:578f1024074046366c077fa18ce5f20d33ac6c76ee1321b52241d8546976e7d9"
     },
     {
       "harness": "opencode",
@@ -640,13 +640,13 @@
       "localEvidence": [
         {
           "label": "opencode-native-differential-parity.receipt.json#provenRows/provider_native_usage_source_fields",
-          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
+          "digest": "sha256:a68d963ec4c66723fccf537b3d9548c8118be5e4101f4b66bd36517faa01a592"
         }
       ],
       "mode": "zero-model deterministic native comparison",
       "comparator": "provider-native usage source comparison",
       "result": "pass",
-      "contentDigest": "sha256:4f0db3b176aae145fe37680b0d0b891b1c9316c93e85fe40d1804c4af4bf54c1"
+      "contentDigest": "sha256:c76bec371f5fdf9f83b26762f45df19e186d66b55f11c3bf21354353e9926b2f"
     },
     {
       "harness": "opencode",
@@ -655,15 +655,19 @@
       "dimension": "process_lifecycle",
       "localEvidence": [
         {
+          "label": "opencode-native-differential-parity.receipt.json#provenRows/direct_executable_process_lifecycle_comparison",
+          "digest": "sha256:a68d963ec4c66723fccf537b3d9548c8118be5e4101f4b66bd36517faa01a592"
+        },
+        {
           "label": "opencode-native-differential-parity.receipt.json#provenRows/managed_service_process_lifecycle",
-          "digest": "sha256:23fffaad893b9196afb2c8beb989f1acc55eefcb74ab7ada4f45f737402c50ed"
+          "digest": "sha256:a68d963ec4c66723fccf537b3d9548c8118be5e4101f4b66bd36517faa01a592"
         }
       ],
       "mode": "zero-model deterministic native comparison",
-      "comparator": "direct executable and managed Service lifecycle comparison",
+      "comparator": "direct executable comparison and managed Service guard suite",
       "result": "pass",
-      "contentDigest": "sha256:11b97e4fb494307d6b1195966ccaab96a20078666cc81438ef3de4a53d4b70d0"
+      "contentDigest": "sha256:13153593c8e415c682c363794bb77ba3a00c475efcf4f687ff0283edaa25db8c"
     }
   ],
-  "digest": "sha256:a6eae0af322d255f4e3df789f34cd29e7d817327a25cb5b590de00d090a82035"
+  "digest": "sha256:c2758f0d1f702a455bf0ffa3edf0d1fe2fa2c615203a3e0d486bdf989e1ecc88"
 }

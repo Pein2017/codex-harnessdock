@@ -209,7 +209,14 @@ export function composeNativeHarnessDifferentialParity({ claudeReceipt, piReceip
   opencodePass("terminal_classification", "terminal_classification", "closed native terminal comparison");
   opencodePass("route_drift", "route_drift", "fresh native route drift refusal");
   opencodePass("native_usage_provenance", "provider_native_usage_source_fields", "provider-native usage source comparison");
-  opencodePass("process_lifecycle", "managed_service_process_lifecycle", "direct executable and managed Service lifecycle comparison");
+  {
+    const direct = provenEvidence(opencodeReceipt, opencodeFile, opencode.proven, "process_lifecycle", "direct_executable_process_lifecycle_comparison");
+    const managed = provenEvidence(opencodeReceipt, opencodeFile, opencode.proven, "process_lifecycle", "managed_service_process_lifecycle");
+    cells.push(cell({
+      harness: "opencode", dimension: "process_lifecycle", evidence: [direct, managed],
+      mode: "zero-model deterministic native comparison", comparator: "direct executable comparison and managed Service guard suite", result: "pass",
+    }));
+  }
   if (cells.length !== NATIVE_HARNESS_IDS.length * NATIVE_HARNESS_DIFFERENTIAL_DIMENSIONS.length) fail("did not compose every global matrix cell");
   return sealNativeHarnessDifferentialParityReceipt({ schema: NATIVE_HARNESS_DIFFERENTIAL_PARITY_SCHEMA, cells });
 }

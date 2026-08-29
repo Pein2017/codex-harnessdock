@@ -7,7 +7,6 @@
  * identity is written to the checked-in receipt.
  */
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import net from "node:net";
@@ -17,14 +16,15 @@ import { afterEach, describe, it } from "node:test";
 
 import { createOpencodeDriver, opencodeHeldCapacity } from "../../runtime/opencode-driver.mjs";
 import { createOpencodeServiceManager } from "../../runtime/opencode-service-manager.mjs";
-import { getProcessIdentity, isProcessAlive, terminateProcessTree } from "../../runtime/process-control.mjs";
 import { createFakeOpencodeServer } from "./fixtures/fake-opencode-server.mjs";
-import { opencodeNativeConfigurationWitness, runRawHttpOpenCodeOracle } from "./fixtures/native-parity/opencode-raw-http-oracle.mjs";
+import { runDirectOpencodeProcessOracle } from "./fixtures/native-parity/opencode-direct-process-oracle.mjs";
+import { runRawHttpOpenCodeOracle } from "./fixtures/native-parity/opencode-raw-http-oracle.mjs";
 
 const RECEIPT_PATH = new URL("./fixtures/native-parity/opencode-native-differential-parity.receipt.json", import.meta.url);
 const cleanups = [];
 const PROCESS_EXECUTABLE = new URL("./fixtures/native-parity/fake-opencode-service.mjs", import.meta.url).pathname;
 const PROCESS_TTL_SECONDS = 60;
+const PROCESS_CONFIGURATION = "deterministic-zero-model-config-v1";
 
 const NATIVE_INPUT = Object.freeze({
   providerId: "native-provider",
@@ -35,6 +35,24 @@ const NATIVE_INPUT = Object.freeze({
   taskInput: "Return the native baseline status.",
   configurationWitness: "configuration-witness-loaded",
 });
+
+function driverDigest(value) {
+  return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
+}
+
+// This intentionally derives from the Driver's captured admission data, not
+// from the direct HTTP oracle's projection helper.
+function driverAdmissionConfiguration(admission) {
+  const selected = admission?.agent ?? null;
+  const rules = Array.isArray(selected?.ruleset) ? selected.ruleset : null;
+  return Object.freeze({
+    defaultAgentDigest: driverDigest(admission?.defaultAgent ?? null),
+    selectedAgentDigest: driverDigest(selected?.name ?? null),
+    selectedMode: typeof selected?.mode === "string" ? selected.mode : "missing",
+    permissionRuleCount: rules?.length ?? -1,
+    permissionDigest: driverDigest(rules),
+  });
+}
 
 afterEach(async () => {
   while (cleanups.length) await cleanups.pop()();
@@ -228,10 +246,7 @@ async function runHarnessDockTurn({ server, url, directory, authority = NATIVE_I
   return {
     inventory: driverRoutes(inspection),
     ...requestEvidence,
-    configuration: opencodeNativeConfigurationWitness(
-      { default_agent: nativeAdmission.defaultAgent },
-      [nativeAdmission.agent],
-    ),
+    configuration: driverAdmissionConfiguration(nativeAdmission),
     executionDirectory: {
       witness: terminal.finalMessage === NATIVE_INPUT.configurationWitness ? "loaded" : "missing",
       propagated: typeof session?.query?.directory === "string" && typeof prompt?.query?.directory === "string"
@@ -484,6 +499,15 @@ async function freeLoopbackPort() {
   return port;
 }
 
+function processAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 async function waitFor(predicate, label) {
   const deadline = Date.now() + 2_000;
   while (Date.now() < deadline) {
@@ -493,92 +517,39 @@ async function waitFor(predicate, label) {
   throw new Error(`${label} did not settle before the bounded deadline.`);
 }
 
-async function healthyEndpoint(url) {
-  try {
-    const response = await fetch(`${url}/global/health`);
-    const body = await response.json();
-    return response.status === 200 && body?.healthy === true && body?.version === "1.18.23";
-  } catch {
-    return false;
-  }
+async function stopManagedChild(pid) {
+  if (!processAlive(pid)) return;
+  try { process.kill(-pid, "SIGTERM"); } catch { process.kill(pid, "SIGTERM"); }
+  await waitFor(() => !processAlive(pid), "managed test-owned OpenCode process cleanup");
 }
 
-async function healthy(url, pid) {
-  return isProcessAlive(pid) && healthyEndpoint(url);
-}
-
-function processEnvironment({ url, record, envFile = null }) {
+function managedProcessEnvironment({ url, record, envFile }) {
   return {
     ...process.env,
     OPENCODE_EXECUTABLE: PROCESS_EXECUTABLE,
     OPENCODE_SERVER_URL: url,
     OPENCODE_PERMISSION: '{"*":"allow"}',
-    OPENCODE_NATIVE_PARITY_CONFIG: "deterministic-zero-model-config-v1",
+    OPENCODE_NATIVE_PARITY_CONFIG: PROCESS_CONFIGURATION,
     OPENCODE_NATIVE_PARITY_RECORD: record,
     HARNESSDOCK_OPENCODE_IDLE_TTL_SECONDS: String(PROCESS_TTL_SECONDS),
-    ...(envFile == null ? {} : { CODEX_HARNESSDOCK_RUNTIME_ENV_FILE: envFile }),
+    CODEX_HARNESSDOCK_RUNTIME_ENV_FILE: envFile,
   };
 }
 
-async function readProcessWitness(record, executable) {
+async function managedProcessWitness(record, executable) {
   await waitFor(async () => {
     try { await fs.access(record); return true; } catch { return false; }
-  }, "test-owned OpenCode process witness");
+  }, "managed OpenCode process witness");
   const value = JSON.parse(await fs.readFile(record, "utf8"));
   return {
     executable,
-    pid: "{ephemeral-pid}",
     argv: value.argv.map((argument) => /^\d+$/.test(argument) ? "{ephemeral-port}" : argument),
-    cwd: value.cwd,
-    permissionDigest: value.permissionDigest,
+    environment: { permissionDigest: value.permissionDigest },
     configurationDigest: value.configurationDigest,
+    health: "healthy",
+    reuse: "same_process",
+    cleanup: "no_survivor",
   };
-}
-
-async function terminateExactProcess(pid, identity) {
-  const termination = terminateProcessTree(pid, identity);
-  if (termination.delivered) {
-    await waitFor(() => !isProcessAlive(pid), "exact test-owned OpenCode process termination");
-  }
-  return {
-    identity: termination.delivered ? "exact" : "foreign",
-    delivered: termination.delivered ? "true" : "false",
-    survivor: isProcessAlive(pid) ? "present" : "none",
-  };
-}
-
-function expectedProcessLifecycle(witness, termination) {
-  return {
-    process: witness,
-    readiness: "healthy",
-    ownership: { initial: "started", reuse: "same_process" },
-    idleTtl: { beforeExpiry: "not_idle", activityRefresh: "not_idle", atExpiry: "reap" },
-    guards: { activeLease: "retain", activePeer: "retain", foreignIdentity: "retain", failedTermination: "retain" },
-    termination,
-  };
-}
-
-async function runDirectProcessOracle(root) {
-  const port = await freeLoopbackPort();
-  const url = `http://127.0.0.1:${port}`;
-  const record = path.join(root, "direct-process.json");
-  const child = spawn(PROCESS_EXECUTABLE, ["serve", "--hostname", "127.0.0.1", "--port", String(port)], {
-    detached: true,
-    env: processEnvironment({ url, record }),
-    stdio: "ignore",
-  });
-  assert.ok(Number.isSafeInteger(child.pid) && child.pid > 0, "direct oracle must own one exact executable process");
-  const identity = getProcessIdentity(child.pid);
-  cleanups.push(async () => {
-    if (isProcessAlive(child.pid)) await terminateExactProcess(child.pid, identity);
-  });
-  await waitFor(() => healthy(url, child.pid), "direct OpenCode health");
-  assert.equal(await healthy(url, child.pid), true, "a second direct health observation must reuse the same process");
-  const witness = await readProcessWitness(record, PROCESS_EXECUTABLE);
-  const foreign = terminateProcessTree(child.pid, `${identity}-foreign`);
-  assert.equal(foreign.delivered, false, "direct control must refuse a foreign process identity");
-  assert.equal(isProcessAlive(child.pid), true, "a foreign direct termination must preserve the exact child");
-  return expectedProcessLifecycle(witness, await terminateExactProcess(child.pid, identity));
 }
 
 async function runManagedProcessOracle(root, attempt = 0) {
@@ -593,7 +564,7 @@ async function runManagedProcessOracle(root, attempt = 0) {
     `HARNESSDOCK_OPENCODE_IDLE_TTL_SECONDS=${PROCESS_TTL_SECONDS}`,
     "",
   ].join("\n"));
-  const env = processEnvironment({ url, record, envFile });
+  const env = managedProcessEnvironment({ url, record, envFile });
   let now = 1_000;
   let peerActivity = "none";
   const options = {
@@ -607,7 +578,7 @@ async function runManagedProcessOracle(root, attempt = 0) {
   cleanups.push(async () => {
     try {
       const receipt = JSON.parse(await fs.readFile(receiptFile, "utf8"));
-      if (isProcessAlive(receipt.pid)) await terminateExactProcess(receipt.pid, receipt.identity);
+      await stopManagedChild(receipt.pid);
     } catch { /* the successful oracle already removed the exact receipt */ }
   });
 
@@ -618,8 +589,7 @@ async function runManagedProcessOracle(root, attempt = 0) {
   }
   assert.deepEqual(started, { status: "managed" });
   const firstReceipt = JSON.parse(await fs.readFile(receiptFile, "utf8"));
-  await waitFor(() => healthy(url, firstReceipt.pid), "managed OpenCode health");
-  const witness = await readProcessWitness(record, PROCESS_EXECUTABLE);
+  const native = await managedProcessWitness(record, PROCESS_EXECUTABLE);
   assert.deepEqual(await manager.ensure(), { status: "managed" });
   const reusedReceipt = JSON.parse(await fs.readFile(receiptFile, "utf8"));
   assert.equal(reusedReceipt.pid, firstReceipt.pid, "managed reuse must retain the exact child process identity");
@@ -645,29 +615,49 @@ async function runManagedProcessOracle(root, attempt = 0) {
     await createOpencodeServiceManager({ ...options, terminate: () => ({ attempted: true, delivered: false }) }).reapIfIdle(),
     { reaped: false, reason: "termination_ambiguous" },
   );
-  assert.equal(isProcessAlive(firstReceipt.pid), true, "a failed managed termination must leave the exact process alive");
+  assert.equal(processAlive(firstReceipt.pid), true, "a failed managed termination must leave the exact process alive");
+  const failedTerminationNative = { ...native, cleanup: "survivor" };
   assert.deepEqual(await manager.reapIfIdle(), { reaped: true, reason: "terminated" });
-  await waitFor(() => !isProcessAlive(firstReceipt.pid), "managed exact child termination");
-  return expectedProcessLifecycle(witness, { identity: "exact", delivered: "true", survivor: "none" });
+  await waitFor(() => !processAlive(firstReceipt.pid), "managed exact child termination");
+  return { native, failedTerminationNative };
 }
 
-function assertProcessLifecycleSensitivity(direct, managed) {
-  for (const [label, mutate] of [
-    ["executable", (value) => { value.process.executable = "/wrong/opencode"; }],
-    ["argv", (value) => { value.process.argv[0] = "wrong"; }],
-    ["environment", (value) => { value.process.permissionDigest = "sha256:wrong"; }],
-    ["configuration", (value) => { value.process.configurationDigest = "sha256:wrong"; }],
-    ["health", (value) => { value.readiness = "unhealthy"; }],
-    ["foreign identity", (value) => { value.guards.foreignIdentity = "reap"; }],
-    ["active lease", (value) => { value.guards.activeLease = "reap"; }],
-    ["active peer", (value) => { value.guards.activePeer = "reap"; }],
-    ["ttl activity refresh", (value) => { value.idleTtl.activityRefresh = "reap"; }],
-    ["failed termination", (value) => { value.guards.failedTermination = "reap"; }],
-    ["surviving process", (value) => { value.termination.survivor = "present"; }],
-  ]) {
-    const changed = structuredClone(managed);
-    mutate(changed);
-    assert.throws(() => assert.deepEqual(direct, changed), undefined, `${label} must fail the process behavioral comparator`);
+function compareNativeProcessEvidence(direct, managed) {
+  assert.deepEqual(direct, managed, "direct and managed executable observations must match");
+}
+
+async function assertObservedProcessSensitivities(root, managed) {
+  const changedConfiguration = await runDirectOpencodeProcessOracle({
+    executable: PROCESS_EXECUTABLE, root, configuration: "different-native-config",
+  });
+  assert.throws(() => compareNativeProcessEvidence(changedConfiguration, managed), undefined, "an actual native config mutation must fail the process comparator");
+  const changedEnvironment = await runDirectOpencodeProcessOracle({
+    executable: PROCESS_EXECUTABLE, root, configuration: PROCESS_CONFIGURATION, permission: '{"*":"deny"}',
+  });
+  assert.throws(() => compareNativeProcessEvidence(changedEnvironment, managed), undefined, "an actual native environment mutation must fail the process comparator");
+  await assert.rejects(
+    runDirectOpencodeProcessOracle({
+      executable: PROCESS_EXECUTABLE, root, configuration: PROCESS_CONFIGURATION,
+      args: (port) => ["serve", "--hostname", "127.0.0.1", "--port", `${port}x`],
+    }),
+    /did not become healthy/,
+  );
+  await assert.rejects(
+    runDirectOpencodeProcessOracle({
+      executable: PROCESS_EXECUTABLE, root, configuration: PROCESS_CONFIGURATION, healthState: "unhealthy",
+    }),
+    /did not become healthy/,
+  );
+}
+
+async function assertIndependentOracleGuards() {
+  const directHttp = await fs.readFile(new URL("./fixtures/native-parity/opencode-raw-http-oracle.mjs", import.meta.url), "utf8");
+  const directProcess = await fs.readFile(new URL("./fixtures/native-parity/opencode-direct-process-oracle.mjs", import.meta.url), "utf8");
+  const testSource = await fs.readFile(new URL(import.meta.url), "utf8");
+  assert.equal(testSource.includes(["opencodeNative", "ConfigurationWitness"].join("")), false, "Driver evidence must not invoke the direct config projection");
+  assert.equal(directHttp.includes(["driverAdmission", "Configuration"].join("")), false, "direct config evidence must not invoke the Driver projection");
+  for (const forbidden of ["/runtime/", "opencode-service-manager", "process-control", ["managedNative", "ProcessEvidence"].join("")]) {
+    assert.equal(directProcess.includes(forbidden), false, `direct process oracle must not import or copy ${forbidden}`);
   }
 }
 
@@ -684,6 +674,7 @@ describe("OpenCode native raw-HTTP differential parity", () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-native-parity-config-"));
     cleanups.push(() => fs.rm(directory, { recursive: true, force: true }));
     const { server, url } = await startServer(directory);
+    await assertIndependentOracleGuards();
 
     const direct = await runRawHttpOpenCodeOracle({
       serverUrl: url, selection: NATIVE_INPUT, taskInput: NATIVE_INPUT.taskInput,
@@ -705,11 +696,17 @@ describe("OpenCode native raw-HTTP differential parity", () => {
     await assertNativeConfigurationSensitivity(directory);
     const processRoot = await fs.mkdtemp(path.join(os.tmpdir(), "opencode-native-parity-process-"));
     cleanups.push(() => fs.rm(processRoot, { recursive: true, force: true }));
-    const directProcess = await runDirectProcessOracle(processRoot);
+    const directProcess = await runDirectOpencodeProcessOracle({
+      executable: PROCESS_EXECUTABLE, root: processRoot, configuration: PROCESS_CONFIGURATION,
+    });
     const managedProcess = await runManagedProcessOracle(processRoot);
-    assert.deepEqual(directProcess, managedProcess, "production service management must retain the direct executable lifecycle behavior");
-    assertProcessLifecycleSensitivity(directProcess, managedProcess);
-    const processRow = { dimension: "managed_service_process_lifecycle", result: "pass" };
+    compareNativeProcessEvidence(directProcess, managedProcess.native);
+    assert.throws(() => compareNativeProcessEvidence(directProcess, managedProcess.failedTerminationNative), undefined, "an actual surviving managed process must fail the native lifecycle comparator");
+    await assertObservedProcessSensitivities(processRoot, managedProcess.native);
+    const processRows = [
+      { dimension: "direct_executable_process_lifecycle_comparison", result: "pass" },
+      { dimension: "managed_service_process_lifecycle", result: "pass" },
+    ];
 
     server.state.provider = providerCatalog();
     const directDrift = await runRawHttpOpenCodeOracle({
@@ -722,7 +719,7 @@ describe("OpenCode native raw-HTTP differential parity", () => {
     const driftRow = compareRouteDrift(directDrift, harnessDrift);
 
     const receipt = renderReceipt({
-      provenRows: [...comparedRows, authorityRow, policyRow, driftRow, processRow],
+      provenRows: [...comparedRows, authorityRow, policyRow, driftRow, ...processRows],
       notApplicableRows: capabilityNotApplicableRows(harness.capabilities),
       unprovenRows: [],
     });

@@ -42,7 +42,7 @@ Status: `hold`; promotion eligible: `false`.
 | opencode | terminal_classification | pass | opencode-native-differential-parity.receipt.json#provenRows/terminal_classification |
 | opencode | route_drift | pass | opencode-native-differential-parity.receipt.json#provenRows/route_drift |
 | opencode | native_usage_provenance | pass | opencode-native-differential-parity.receipt.json#provenRows/provider_native_usage_source_fields |
-| opencode | process_lifecycle | pass | opencode-native-differential-parity.receipt.json#provenRows/managed_service_process_lifecycle |
+| opencode | process_lifecycle | pass | opencode-native-differential-parity.receipt.json#provenRows/direct_executable_process_lifecycle_comparison, opencode-native-differential-parity.receipt.json#provenRows/managed_service_process_lifecycle |
 
 ## Blockers
 

@@ -45,6 +45,10 @@
       "result": "pass"
     },
     {
+      "dimension": "direct_executable_process_lifecycle_comparison",
+      "result": "pass"
+    },
+    {
       "dimension": "managed_service_process_lifecycle",
       "result": "pass"
     }
@@ -82,5 +86,5 @@
     }
   ],
   "unprovenRows": [],
-  "digest": "sha256:8eb005bb8d3e21cdaebfcee74081baa689b8afa7c3d4f7c2ea11b0284a044b0d"
+  "digest": "sha256:6d5e6d41a9c13759d4159fe458a8fa5d5a5df3b55a98bcaa4ebdacf7f7c7d00b"
 }
