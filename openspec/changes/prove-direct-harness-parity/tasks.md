@@ -18,5 +18,5 @@
 ## 4. Deterministic acceptance and optional live boundary
 
 - [x] 4.1 Sensitivity-check independent-oracle ownership, route/config mutation, event reordering, authority-dependent native input, same-session/wrong-new-turn continuation, wrong-old-turn or ambiguous no-prompt observation, duplicate-input/replayed or unbound automatic recovery, usage-source mismatch, and process cleanup. Each decision-bearing row must fail under its mutation and pass again only after restoration.
-- [x] 4.2 Run the matrix-focused suite, relevant existing Driver suites, `npm run check`, and `openspec validate prove-direct-harness-parity --strict`; require zero surviving test-owned processes and source-specific sanitized deterministic receipts.
+- [ ] 4.2 Run the matrix-focused suite, relevant existing Driver suites, `npm run check`, and `openspec validate prove-direct-harness-parity --strict`; require zero surviving test-owned processes and source-specific sanitized deterministic receipts.
 - [ ] 4.3 Keep any live witness separately authorized: after 4.2, run at most one minimal low-effort turn per freshly advertised Harness, stop without retry/fallback on auth, quota, route, or protocol failure, and store only a sanitized source-bound receipt. Its result gates only its stated live claim, never the deterministic plumbing result.

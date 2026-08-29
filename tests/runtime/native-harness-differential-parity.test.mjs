@@ -119,6 +119,9 @@ describe("native Harness differential parity", () => {
     for (const entry of receipt.cells) {
       assert.equal(entry.driverVersion, descriptions[entry.harness].driverVersion);
       assert.equal(entry.capabilitySchemaVersion, descriptions[entry.harness].capabilitySchemaVersion);
+      assert.match(entry.directSource, /^[A-Za-z0-9][A-Za-z0-9 ._:@#/,;()\-]*$/);
+      assert.match(entry.harnessdockSource, /^[A-Za-z0-9][A-Za-z0-9 ._:@#/,;()\-]*$/);
+      assert.match(entry.artifactDigest, /^sha256:[0-9a-f]{64}$/);
     }
     const capabilities = {
       "claude-code": claudeRouteCapabilities("leaf"),
@@ -138,6 +141,13 @@ describe("native Harness differential parity", () => {
       (value) => { value.cells.find((row) => row.harness === "claude-code" && row.dimension === "exact_model_effort_inventory").result = "pass"; },
       (value) => { value.cells.find((row) => row.harness === "claude-code" && row.dimension === "exact_model_effort_inventory").result = "not_applicable"; value.cells.find((row) => row.harness === "claude-code" && row.dimension === "exact_model_effort_inventory").notApplicableBasis = { capability: "inventory", observed: "unavailable" }; delete value.cells.find((row) => row.harness === "claude-code" && row.dimension === "exact_model_effort_inventory").blockerReason; },
       (value) => { const row = value.cells.find((entry) => entry.harness === "opencode" && entry.dimension === "native_configuration_inheritance"); row.result = "fail"; row.blockerReason = "forged config gap"; },
+      (value) => { delete value.cells[0].directSource; },
+      (value) => { value.cells[0].directSource = "different source"; },
+      (value) => { value.cells[0].directSource = "https://unsafe.example"; },
+      (value) => { delete value.cells[0].harnessdockSource; },
+      (value) => { value.cells[0].harnessdockSource = "different source"; },
+      (value) => { value.cells[0].harnessdockSource = "https://unsafe.example"; },
+      (value) => { value.cells[0].artifactDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"; },
     ];
     for (const mutate of mutations) {
       const changed = structuredClone(baseline);
@@ -150,6 +160,11 @@ describe("native Harness differential parity", () => {
     const baseline = composeNativeHarnessDifferentialParity(localReceipts());
     const mutations = [
       (value) => { value.cells[0].localEvidence[0].label = "claude-differential-receipt.json#other"; },
+      (value) => { delete value.cells[0].directSource; },
+      (value) => { value.cells[0].directSource = "https://unsafe.example"; },
+      (value) => { delete value.cells[0].harnessdockSource; },
+      (value) => { value.cells[0].harnessdockSource = "https://unsafe.example"; },
+      (value) => { value.cells[0].artifactDigest = "sha256:0000000000000000000000000000000000000000000000000000000000000000"; },
       (value) => { value.cells.pop(); },
       (value) => { value.cells[1] = structuredClone(value.cells[0]); },
       (value) => { value.cells[0].driverVersion = "different"; },

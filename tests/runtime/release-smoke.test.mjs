@@ -806,7 +806,7 @@ describe("release smoke", () => {
       writeStderr() {},
     });
     assert.equal(exitCode, 1);
-    assert.equal(suppliedReceipt.schema, "harnessdock.native-harness-differential-parity.v1");
+    assert.equal(suppliedReceipt.schema, "harnessdock.native-harness-differential-parity.v2");
     assert.deepEqual(JSON.parse(stdout.join("")), { status: "hold", promotionEligible: false });
   });
 

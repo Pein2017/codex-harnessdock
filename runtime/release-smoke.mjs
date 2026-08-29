@@ -529,7 +529,7 @@ export function assertNoLeakedConfiguration(value, context) {
   }
 }
 
-const DIFFERENTIAL_PARITY_SCHEMA = "harnessdock.native-harness-differential-parity.v1";
+const DIFFERENTIAL_PARITY_SCHEMA = "harnessdock.native-harness-differential-parity.v2";
 const DIFFERENTIAL_PARITY_HARNESSES = Object.freeze(["claude-code", "pi", "opencode"]);
 const DIFFERENTIAL_PARITY_DIMENSIONS = Object.freeze([
   "exact_model_effort_inventory",
@@ -599,7 +599,7 @@ export function assessNativeHarnessDifferentialParity(receipt) {
     const needsBlocker = row.result === "fail" || row.result === "hold";
     const isNotApplicable = row.result === "not_applicable";
     parityKeys(row, [
-      "harness", "driverVersion", "capabilitySchemaVersion", "dimension", "localEvidence", "mode", "comparator", "result", "contentDigest",
+      "harness", "driverVersion", "capabilitySchemaVersion", "dimension", "localEvidence", "directSource", "harnessdockSource", "mode", "comparator", "result", "artifactDigest", "contentDigest",
       ...(needsBlocker ? ["blockerReason"] : []),
       ...(isNotApplicable ? ["notApplicableBasis"] : []),
     ], `cell ${index}`);
@@ -608,6 +608,8 @@ export function assessNativeHarnessDifferentialParity(receipt) {
     }
     parityText(row.driverVersion, `cell ${index} driverVersion`);
     if (row.capabilitySchemaVersion !== 3) throw new Error("Differential parity capability schema must be version 3.");
+    parityText(row.directSource, `cell ${index} direct source`);
+    parityText(row.harnessdockSource, `cell ${index} HarnessDock source`);
     parityText(row.mode, `cell ${index} mode`);
     parityText(row.comparator, `cell ${index} comparator`);
     if (!DIFFERENTIAL_PARITY_RESULTS.has(row.result)) throw new Error("Differential parity result is not closed.");
@@ -619,6 +621,9 @@ export function assessNativeHarnessDifferentialParity(receipt) {
       if (!DIFFERENTIAL_PARITY_REFERENCE.test(reference.label) || !DIFFERENTIAL_PARITY_DIGEST.test(reference.digest ?? "")) {
         throw new Error("Differential parity local evidence reference is malformed.");
       }
+    }
+    if (!DIFFERENTIAL_PARITY_DIGEST.test(row.artifactDigest ?? "")) {
+      throw new Error("Differential parity artifact digest is malformed.");
     }
     if (needsBlocker) parityText(row.blockerReason, `cell ${index} blocker reason`);
     if (isNotApplicable) {
