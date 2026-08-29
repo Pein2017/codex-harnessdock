@@ -7,7 +7,11 @@ The checkout SHALL provide a release smoke that verifies the enabled current Har
 - **WHEN** the operator runs default release smoke after local refresh or versioned release
 - **THEN** it exercises the installed snapshot, one-process MCP entry, dormant or live native route discovery, and MCP protocol successfully without model usage
 
-#### Scenario: OpenCode executable, diagnostic, or service is unavailable
+#### Scenario: OpenCode is not running
+- **WHEN** zero-cost smoke lists Harnesses and the fixed Server is absent
+- **THEN** it uses bounded dormant diagnostics without starting the Server or a model turn
+
+#### Scenario: OpenCode executable or service is unavailable
 - **WHEN** zero-model smoke cannot prove a compatible dormant or live OpenCode route
 - **THEN** it accepts the bounded unavailable OpenCode instance while still verifying the eight-tool contract and no model execution
 

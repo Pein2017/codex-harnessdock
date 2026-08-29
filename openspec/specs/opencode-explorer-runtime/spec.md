@@ -63,15 +63,19 @@ Readiness SHALL require a resolved `codex-explorer` profile whose effective conf
 - **THEN** the turn fails with bounded evidence and the Plugin grants no permission
 
 ### Requirement: Explorer prompt and result stay narrow and Harness-neutral
-The Driver SHALL construct each turn from one versioned stable authority/topology/return prefix, the caller's bounded task message, the canonical workspace identity, and fixed no-modification constraints. The prefix MAY ask for concise relevant paths, evidence, unknowns, and next checks but SHALL NOT impose task decomposition, methodology, cross-worker synthesis, or a universal repository JSON ontology. Success SHALL return exactly one matching nonempty bounded outer-assistant final text plus optional closed Driver metadata; malformed lineage, empty/oversized output, native tool/event history, or terminal UI output SHALL not be projected as success.
+The Driver SHALL construct each turn from one versioned stable authority/topology/return prefix of no more than 450 characters, the caller's bounded task message carried unchanged inside an unforgeable delimited block, and no task-specific policy not supplied by the caller. The prefix SHALL state behavioral authority, leaf/no-delegation topology, final-assistant-only delivery, bounded output, and honest unknown reporting. It SHALL NOT universally require file/line citations, impose task decomposition or methodology, request cross-worker synthesis, or define a repository JSON ontology. Success SHALL return exactly one matching nonempty bounded outer-assistant final text plus optional closed Driver metadata; malformed lineage, empty/oversized output, native tool/event history, or terminal UI output SHALL not be projected as success.
 
 #### Scenario: Valid Explorer result arrives
 - **WHEN** the exact matching assistant response contains one nonempty bounded final text
 - **THEN** the Driver projects it as the final Agent result without exposing native tool history
 
 #### Scenario: Caller needs a task-specific format
-- **WHEN** Codex includes that return request in the task message
-- **THEN** OpenCode may follow it, but the shared runtime does not parse, repair, or promote that format into a global contract
+- **WHEN** Codex includes that evidence or return request in the task message
+- **THEN** OpenCode may follow it, but the shared prefix does not impose it on unrelated tasks or parse it into a global contract
+
+#### Scenario: Caller task contains an envelope delimiter
+- **WHEN** the caller text could close or forge the stable task block
+- **THEN** the Driver refuses it before submission rather than escaping, rewriting, or weakening the envelope
 
 ### Requirement: Launch, session, and turn evidence are separate and replay-safe
 Before native submission, the supervisor SHALL persist a launch claim/attempt with the immutable route, input identity/digest, and leases. A new Plugin Agent SHALL create a fresh OpenCode session and persist a secret-free `NativeSessionRef` only after exact session binding is proven. Every prompt SHALL persist a separate `NativeTurnRef` only after the exact session/user-message/attempt/provider/model lineage proves native acceptance. A local error or lost worker that may have occurred after submission but before that proof SHALL produce unknown acceptance, retain capacity, publish no completion, and trigger no replay, fallback, replacement session, or automatic recovery.
@@ -145,3 +149,18 @@ Twenty-task reliability, one/two/four concurrency, idle/Server-crash recovery, s
 #### Scenario: Experimental release has three examples
 - **WHEN** the initial gate passes without the maturity benchmark
 - **THEN** the report labels missing measurements pending and does not convert them into assumed GO evidence
+
+### Requirement: Dormant OpenCode route discovery remains native and spawn-time exact
+When the fixed Server is absent, HarnessDock SHALL discover candidate OpenCode model identifiers and reasoning-effort variants from the configured executable under the operator's ordinary native configuration without a model request. The listing SHALL distinguish dormant configuration evidence from live Server validation. Immediately before native session creation, the Driver SHALL ensure the Server and require its current provider catalog to advertise the same exact model and effort; drift SHALL fail before prompt submission.
+
+#### Scenario: Server is dormant and native configuration is valid
+- **WHEN** native CLI diagnostics advertise exact configured model/effort variants and the corresponding credential provider
+- **THEN** `list_harnesses` reports those bounded routes as available on demand without starting the Server
+
+#### Scenario: Server catalog drifts from dormant discovery
+- **WHEN** the ensured Server does not advertise the selected exact model or effort
+- **THEN** spawn fails before session creation or model usage instead of substituting another route
+
+#### Scenario: Native plugins or MCP configuration change
+- **WHEN** the operator changes ordinary OpenCode configuration before the next discovery
+- **THEN** HarnessDock observes the executable's fresh native result without supplying `--pure`, an agent override, a model override, or a HarnessDock-owned config copy

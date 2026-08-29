@@ -15,6 +15,18 @@ Production Agent lifecycle MAY invoke the configured `opencode serve` command to
 - **WHEN** the bounded native diagnostic cannot prove an exact configured route
 - **THEN** dormant readiness fails closed without aliasing a model, inventing an effort, starting the Server, or calling a provider
 
+#### Scenario: CLI is absent but Server is reachable
+- **WHEN** the pinned SDK can validate the configured Server and route
+- **THEN** Driver readiness may succeed without a local `opencode` executable in the Plugin process environment
+
+#### Scenario: Managed service is started
+- **WHEN** the fixed Server is absent and the configured executable is valid
+- **THEN** the Plugin invokes only `opencode serve` with fixed loopback host and port arguments and validates readiness through the pinned client
+
+#### Scenario: Server is reachable without an executable
+- **WHEN** a compatible fixed-origin Server already exists but the configured executable is unavailable
+- **THEN** the Plugin may reuse the Server without invoking a CLI command
+
 ## ADDED Requirements
 
 ### Requirement: Managed OpenCode startup is demand-driven

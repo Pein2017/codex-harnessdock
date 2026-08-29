@@ -7,7 +7,7 @@ The Driver SHALL construct each turn from one versioned stable authority/topolog
 - **WHEN** the exact matching assistant response contains one nonempty bounded final text
 - **THEN** the Driver projects it as the final Agent result without exposing native tool history
 
-#### Scenario: Caller requests citations or a task-specific format
+#### Scenario: Caller needs a task-specific format
 - **WHEN** Codex includes that evidence or return request in the task message
 - **THEN** OpenCode may follow it, but the shared prefix does not impose it on unrelated tasks or parse it into a global contract
 
