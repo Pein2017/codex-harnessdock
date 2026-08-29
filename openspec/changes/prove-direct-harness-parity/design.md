@@ -9,6 +9,7 @@ See `proposal.md`, the new differential capability, and the three modified specs
 - Make direct native behavior the oracle for every parity claim that can change route safety, configuration inheritance, lifecycle, history, or usage interpretation.
 - Keep deterministic coverage zero-model and use capability-qualified `not_applicable` instead of false common-denominator parity.
 - Produce one sanitized, source-bound acceptance receipt for each released Driver generation.
+- Remove the implementation-order deadlock without treating unavailable external discovery as parity.
 
 **Non-Goals:**
 
@@ -21,6 +22,10 @@ See `proposal.md`, the new differential capability, and the three modified specs
 ### 1. Freeze one matrix schema and three native oracles
 
 The change owns a machine-readable matrix fixture plus a rendered acceptance receipt. Every row records Harness, Driver/capability schema version, dimension, direct source, HarnessDock source, deterministic/live/not-applicable mode, comparator, result, and sanitized artifact digest.
+
+`result` is closed: `pass` means the applicable row's independent comparison succeeded; `fail` means a regression counterexample; `hold` means an external prerequisite remains unavailable; and `not_applicable` means the accepted capability snapshot makes the operation unavailable. A deterministic test passes when it correctly detects and records its expected `hold`; final parity/release acceptance passes only when every required row is `pass` or justified `not_applicable`. Thus `hold` neither becomes parity nor makes zero-model regression tests red merely because their external prerequisite is unavailable.
+
+The accepted explicit-effort plus provenance-v3 base permits implementation of generic matrix infrastructure and supported Pi/OpenCode rows now. Claude Code 2.1.250 exact dynamic model/effort discovery is an evidence-backed `hold`: its exact-route inventory cell records a sanitized negative-control receipt and has no static catalog/config/authority/transport fallback. Deterministic Claude rows for which native evidence exists may proceed, but no final stack acceptance occurs until this exact discovery succeeds alongside universal exact-route evidence.
 
 - **Claude:** direct exact CLI/control invocation under the same allowlisted environment and `CLAUDE_CONFIG_DIR`; compare captured argv/env/config witness, control/model catalog, stream events, history, usage, and process outcome with the Driver path.
 - **Pi:** direct native RPC under the same `PI_CODING_AGENT_DIR`; compare commands, catalog/thinking levels, turn RPC/event/history/usage, and cleanup with `pi-driver`.
@@ -83,9 +88,9 @@ Driver-local capture seams remain test-only or bounded existing receipts. `runti
 
 ## Migration Plan
 
-1. Accept and implement the three prerequisite changes without installing an intermediate Plugin.
-2. Add the matrix schema, three independent fake-native fixture families, and sensitivity mutations; no live Harness call.
+1. Start on the accepted explicit-effort plus provenance-v3 base. Record the Claude Code 2.1.250 exact dynamic model/effort inventory as `hold` with its sanitized negative-control receipt; do not substitute static discovery.
+2. Add the matrix schema, three independent fake-native fixture families, and sensitivity mutations; no live Harness call. Implement supported Pi/OpenCode rows and Claude non-catalog/config/authority/transport rows wherever deterministic native evidence exists.
 3. Add fresh-process `exact_session_continuation` tests, separate no-prompt old-turn observation/reconciliation tests, and bounded no-duplicate-input automatic-recovery tests only for routes claiming `automaticRecovery=exact_session_transport`, plus explicit OpenCode capability-derived `not_applicable` evidence.
 4. Run focused matrices, process-leak checks, `npm run check`, strict OpenSpec validation, and one bounded final review of blocking parity counterexamples.
-5. If separately authorized, run at most one live low-effort witness per Harness and freeze sanitized receipts. Then perform the stack's single version/changelog/manifest refresh and local install/release verification under separate release authorization.
+5. If separately authorized, run at most one live low-effort witness per Harness and freeze sanitized receipts. A required `hold` still blocks final parity/release acceptance. Once every required row is `pass` or justified `not_applicable`, perform the stack's single version/changelog/manifest refresh and local install/release verification under separate release authorization.
 6. Rollback removes test seams/receipts and restores the prior source checkpoint; native config and durable Agent state are never mutated by this change.

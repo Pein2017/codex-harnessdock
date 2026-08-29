@@ -5,7 +5,15 @@ Defines independent evidence that HarnessDock preserves each supported Harness's
 ## ADDED Requirements
 
 ### Requirement: Every admitted Harness has a capability-qualified differential matrix
-The checkout SHALL define one direct-native versus HarnessDock matrix for each admitted Harness. It SHALL cover exact model and per-model effort inventory, launch argv/environment, native configuration inheritance, prompt delta, authority parity, event order, tool surface, interrupt, `exact_session_continuation`, `cross_process_turn_observation_or_reconciliation`, `automatic_recovery_exact_session_transport`, terminal classification, route drift, native usage provenance, and process lifecycle. A cell may be `not_applicable` only when the accepted capability snapshot makes the operation unavailable.
+The checkout SHALL define one direct-native versus HarnessDock matrix for each admitted Harness. It SHALL cover exact model and per-model effort inventory, launch argv/environment, native configuration inheritance, prompt delta, authority parity, event order, tool surface, interrupt, `exact_session_continuation`, `cross_process_turn_observation_or_reconciliation`, `automatic_recovery_exact_session_transport`, terminal classification, route drift, native usage provenance, and process lifecycle. Every cell SHALL record exactly one of `pass`, regression `fail`, prerequisite `hold`, or capability-derived `not_applicable`. A cell may be `not_applicable` only when the accepted capability snapshot makes the operation unavailable.
+
+#### Scenario: Expected external prerequisite HOLD is deterministically tested
+- **WHEN** a zero-model test correctly detects and records a required external prerequisite as `hold`
+- **THEN** that test passes, but final parity/release acceptance remains blocked until the required cell is `pass` or justified `not_applicable`
+
+#### Scenario: Claude Code 2.1.250 exact dynamic discovery is unavailable
+- **WHEN** Claude Code 2.1.250 cannot supply exact dynamic model/effort discovery
+- **THEN** its exact-route inventory cell is recorded as `hold` with a sanitized negative-control receipt; it SHALL NOT be reported as `pass`, `fail`, or capability-derived `not_applicable`, and no static catalog, configuration, authority, or transport fallback may satisfy it
 
 #### Scenario: OpenCode interrupt is unsupported
 - **WHEN** the OpenCode route snapshot states interrupt is unsupported
@@ -17,6 +25,13 @@ Each matrix row SHALL compare a native Harness output, invocation capture, histo
 #### Scenario: HarnessDock and direct fixtures share one expected constant
 - **WHEN** a test derives both sides from the same HarnessDock-owned model, prompt, event, or usage constant
 - **THEN** acceptance rejects the row as self-referential evidence
+
+### Requirement: Final parity acceptance closes required matrix cells
+Generic deterministic matrix infrastructure and rows backed by deterministic native evidence MAY be implemented while another required cell is `hold`. Final parity/release acceptance SHALL pass only when every required matrix cell is `pass` or justified `not_applicable`; `hold` is not parity and blocks that promotion.
+
+#### Scenario: Pi and OpenCode evidence is complete while Claude discovery is on hold
+- **WHEN** supported Pi/OpenCode dimensions and deterministic Claude non-catalog/config/authority/transport dimensions have evidence, but Claude exact dynamic model/effort discovery remains `hold`
+- **THEN** their deterministic rows may be implemented and tested, while final parity/release acceptance remains blocked
 
 ### Requirement: Exact native-session continuation survives a fresh process
 Every route claiming `exact_resume` SHALL have an `exact_session_continuation` row that captures stable native session `S` and accepted old turn `T1`, constructs a fresh Driver in another process, passes `S` with new continuation input, and proves the accepted new turn `T2` remains in `S` and is distinct from `T1`. The row SHALL NOT pass `T1` as the continuation target, require old-turn observation, or satisfy an automatic-recovery claim.
