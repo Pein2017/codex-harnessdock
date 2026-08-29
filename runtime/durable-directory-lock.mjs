@@ -75,7 +75,7 @@ export function recoverStaleDirectoryLock(lockFile, deps = {}) {
     const ownerAlive = Number.isSafeInteger(ownerPid) && ownerPid > 0 && aliveProbe(ownerPid);
     const ownerMatch = lockData.identity != null && identityProbe(ownerPid, lockData.identity);
     const transientProbeGrace = ownerAlive && Number.isFinite(ageMs) && ageMs <= LOCK_IDENTITY_FAILURE_GRACE_MS;
-    if (ownerMatch || transientProbeGrace) return false;
+    if ((ownerAlive && ownerMatch) || transientProbeGrace) return false;
   } catch { /* fall through to reclaim */ }
   try {
     // The whole point: only unlink the exact file that was inspected. A lock

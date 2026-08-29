@@ -54,6 +54,16 @@ describe("durable directory lock: stale recovery", () => {
     assert.ok(fs.existsSync(lockFile), "a matching live holder must keep its lock");
   });
 
+  it("reclaims an exact former holder that is no longer live", () => {
+    const lockFile = plantLock({ pid: holder.pid, identity: "matching-but-dead" });
+    const reclaimed = recoverStaleDirectoryLock(lockFile, {
+      isProcessAlive: () => false,
+      validateProcessIdentity: () => true,
+    });
+    assert.equal(reclaimed, true);
+    assert.equal(fs.existsSync(lockFile), false);
+  });
+
   it("leaves a live holder's lock alone while its identity probe may be transient", () => {
     // The exact production hazard: `validateProcessIdentity()` returns false
     // both for a foreign holder and for a momentary failure to read the
