@@ -58,7 +58,7 @@ export const HARNESSDOCK_MCP_EXPOSED_DESCRIPTION_CHAR_LIMIT = 4_500;
 export const HARNESSDOCK_MCP_HOST_PROJECTION_CHAR_RESERVE = 2_932;
 
 const exactTarget = z.string().trim().min(1).describe(
-  "Exact current-root Agent ID, /root/<task_name>, or normalized name."
+  "Exact root Agent"
 );
 const message = z.string().trim().min(1);
 const targetWorktree = z.string().refine(
@@ -71,26 +71,26 @@ const executionFields = {
 const TOOL_DEFINITIONS = Object.freeze({
   list_harnesses: {
     description:
-      "Experimental: list admitted Harness readiness and fresh exact model/effort routes; observe only.",
+      "Fresh exact model/effort routes.",
     inputSchema: z.object({}).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   spawn_agent: {
     description:
-      "Experimental: start one durable Agent asynchronously on an explicitly stated route. Harness, full model, effort, topology, and behavioral authority are required, freshly validated against native discovery, and frozen on the Agent; never default or alias a route.",
+      "Freshly validated against native discovery; async.",
     inputSchema: z.object({
       task_name: z.string().regex(/^[a-z0-9_]+$/),
       message,
       description: z.string().trim().min(1).optional(),
       harness: z.enum(/** @type {[string, ...string[]]} */ (HARNESS_IDS)).describe(
-        "Required Harness this Agent runs on. There is no default Harness."
+        "Required; no default."
       ),
-      model: boundedRouteText.describe("Required full model identifier; the selected Harness freshly validates it."),
+      model: boundedRouteText.describe("Full model."),
       topology: z.enum(/** @type {[string, ...string[]]} */ (TOPOLOGIES)).describe(
-        "Required topology: leaf runs the task itself; native_orchestrator is admitted only by a Harness whose route proves it."
+        "Required native-proven."
       ),
       write: z.boolean().describe(
-        "Required behavioral authority: false is read/review-only; true permits task-scoped writes. Process access is unchanged."
+        "false read; true writes; same access."
       ),
       target_worktree: targetWorktree.describe(
         "Absolute spawn-only worktree."
@@ -101,25 +101,25 @@ const TOOL_DEFINITIONS = Object.freeze({
   },
   send_message: {
     description:
-      "Experimental: deliver to a running Agent or queue for idle; never activate it.",
+      "Queue/deliver; no activation.",
     inputSchema: z.object({ target: exactTarget, message }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   followup_task: {
     description:
-      "Experimental: deliver work or activate one proven continuation; inherit its immutable route and effort.",
+      "Deliver; activate idle continuation.",
     inputSchema: z.object({ target: exactTarget, message }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
   wait_agent: {
     description:
-      "Experimental: join one current-root Agent turn or fixed all-settled target barrier; one target may opt into one progress update. Fixed one hour, no caller timeout. Completion returns full message/token; acknowledge once later. Fail closed.",
+      "Join/barrier; progress; fixed hour; completion token.",
     inputSchema: z.object({
       targets: z.array(exactTarget).min(1).max(8).optional().describe(
-        "Fixed exact current-root Agent turns to join; one target may observe progress and multiple targets form a completion-only barrier."
+        "1 progress; 2-8 barrier."
       ),
       wake_on_progress: z.boolean().optional().describe(
-        "Return the Agent turn's one eligible safe progress update before completion; ordinary joins omit."
+        "One safe progress."
       ),
       acknowledge_tokens: z.array(z.string().trim().min(1)).optional(),
     }).strict().superRefine((value, context) => {
@@ -142,19 +142,19 @@ const TOOL_DEFINITIONS = Object.freeze({
   },
   interrupt_agent: {
     description:
-      "Experimental: request only the current turn stop; preserve Agent identity and proven continuation.",
+      "Stop turn; keep Agent.",
     inputSchema: z.object({ target: exactTarget }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   },
   list_agents: {
     description:
-      "Experimental: list current-root logical Agent Cards, optionally by path prefix; observes state only.",
+      "Root Agent cards.",
     inputSchema: z.object({ path_prefix: z.string().trim().min(1).optional() }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   read_agent_messages: {
     description:
-      "Experimental: read complete recent outer-assistant text from proven native history without activation.",
+      "Assistant history; no activation.",
     inputSchema: z.object({
       target: exactTarget,
       before: z.string().trim().min(1).optional(),

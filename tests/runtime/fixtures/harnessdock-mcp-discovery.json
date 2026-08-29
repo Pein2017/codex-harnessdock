@@ -40,13 +40,13 @@
               "opencode",
               "pi"
             ],
-            "description": "Required Harness this Agent runs on. There is no default Harness."
+            "description": "Required; no default."
           },
           "model": {
             "type": "string",
             "minLength": 1,
             "maxLength": 256,
-            "description": "Required full model identifier; the selected Harness freshly validates it."
+            "description": "Full model."
           },
           "topology": {
             "type": "string",
@@ -54,11 +54,11 @@
               "leaf",
               "native_orchestrator"
             ],
-            "description": "Required topology: leaf runs the task itself; native_orchestrator is admitted only by a Harness whose route proves it."
+            "description": "Required native-proven."
           },
           "write": {
             "type": "boolean",
-            "description": "Required behavioral authority: false is read/review-only; true permits task-scoped writes. Process access is unchanged."
+            "description": "false read; true writes; same access."
           },
           "target_worktree": {
             "type": "string",
@@ -97,7 +97,7 @@
           "target": {
             "type": "string",
             "minLength": 1,
-            "description": "Exact current-root Agent ID, /root/<task_name>, or normalized name."
+            "description": "Exact root Agent"
           },
           "message": {
             "type": "string",
@@ -126,7 +126,7 @@
           "target": {
             "type": "string",
             "minLength": 1,
-            "description": "Exact current-root Agent ID, /root/<task_name>, or normalized name."
+            "description": "Exact root Agent"
           },
           "message": {
             "type": "string",
@@ -153,18 +153,18 @@
         "type": "object",
         "properties": {
           "targets": {
-            "description": "Fixed exact current-root Agent turns to join; one target may observe progress and multiple targets form a completion-only barrier.",
+            "description": "1 progress; 2-8 barrier.",
             "minItems": 1,
             "maxItems": 8,
             "type": "array",
             "items": {
               "type": "string",
               "minLength": 1,
-              "description": "Exact current-root Agent ID, /root/<task_name>, or normalized name."
+              "description": "Exact root Agent"
             }
           },
           "wake_on_progress": {
-            "description": "Return the Agent turn's one eligible safe progress update before completion; ordinary joins omit.",
+            "description": "One safe progress.",
             "type": "boolean"
           },
           "acknowledge_tokens": {
@@ -193,7 +193,7 @@
           "target": {
             "type": "string",
             "minLength": 1,
-            "description": "Exact current-root Agent ID, /root/<task_name>, or normalized name."
+            "description": "Exact root Agent"
           }
         },
         "required": [
@@ -237,7 +237,7 @@
           "target": {
             "type": "string",
             "minLength": 1,
-            "description": "Exact current-root Agent ID, /root/<task_name>, or normalized name."
+            "description": "Exact root Agent"
           },
           "before": {
             "type": "string",

@@ -32,6 +32,12 @@ const meta = {
   [CODEX_SANDBOX_META_KEY]: { sandboxCwd: pathToFileURL(root).href },
 };
 
+function descriptionCharacters(value) {
+  if (!value || typeof value !== "object") return 0;
+  return (typeof value.description === "string" ? value.description.length : 0)
+    + Object.values(value).reduce((total, nested) => total + descriptionCharacters(nested), 0);
+}
+
 function runtimeMethods(handler) {
   return Object.fromEntries(HARNESSDOCK_MCP_TOOL_NAMES.map((name) => [name, (input) => handler(name, input)]));
 }
@@ -80,10 +86,10 @@ describe("typed HarnessDock MCP server", () => {
     assert.deepEqual(spawn.inputSchema.properties.harness.enum, ["claude-code", "opencode", "pi"]);
     assert.deepEqual(spawn.inputSchema.properties.topology.enum, ["leaf", "native_orchestrator"]);
     assert.equal(spawn.inputSchema.properties.target_worktree.type, "string");
+    assert.match(spawn.description, /freshly validated against native discovery[\s\S]*async/i);
+    assert.match(spawn.inputSchema.properties.harness.description, /no default/i);
     assert.match(spawn.inputSchema.properties.target_worktree.description, /absolute[\s\S]*spawn-only[\s\S]*worktree/i);
-    assert.match(spawn.description, /explicitly stated route/i);
-    assert.match(spawn.description, /frozen on the Agent/i);
-    assert.match(spawn.inputSchema.properties.write.description, /Required behavioral authority[\s\S]*false[\s\S]*true permits[\s\S]*Process access is unchanged/i);
+    assert.match(spawn.inputSchema.properties.write.description, /false read[\s\S]*true writes[\s\S]*same access/i);
     const followup = listed.tools.find((tool) => tool.name === "followup_task");
     assert.equal(Object.hasOwn(followup.inputSchema.properties, "allowed_tools"), false);
     assert.deepEqual(Object.keys(followup.inputSchema.properties).sort(), ["message", "target"]);
@@ -96,12 +102,13 @@ describe("typed HarnessDock MCP server", () => {
     assert.equal(wait.inputSchema.properties.targets.maxItems, 8);
     assert.equal(Object.hasOwn(wait.inputSchema.properties, "wake_on_progress"), true);
     assert.equal(wait.inputSchema.required?.includes("wake_on_progress") ?? false, false);
-    assert.match(wait.description, /join one current-root Agent turn[\s\S]*all-settled target barrier/i);
-    assert.match(wait.description, /one target may opt into one progress update/i);
-    assert.match(wait.description, /fixed one hour[\s\S]*no caller timeout/i);
-    assert.match(wait.description, /full message\/token[\s\S]*acknowledge once later[\s\S]*fail closed/i);
+    assert.match(wait.description, /join\/barrier[\s\S]*progress[\s\S]*fixed hour[\s\S]*completion token/i);
+    assert.match(listed.tools.find((tool) => tool.name === "send_message").description, /no activation/i);
+    assert.match(listed.tools.find((tool) => tool.name === "followup_task").description, /activate idle continuation/i);
+    assert.match(listed.tools.find((tool) => tool.name === "interrupt_agent").description, /stop turn[\s\S]*keep Agent/i);
+    assert.match(listed.tools.find((tool) => tool.name === "read_agent_messages").description, /assistant history[\s\S]*no activation/i);
     const listAgentsTool = listed.tools.find((tool) => tool.name === "list_agents");
-    assert.match(listAgentsTool.description, /logical Agent Cards[\s\S]*observes state only/i);
+    assert.match(listAgentsTool.description, /Cards/i);
     const descriptionWords = listed.tools
       .map((tool) => tool.description.trim().split(/\s+/u).length)
       .reduce((total, words) => total + words, 0);
@@ -114,6 +121,12 @@ describe("typed HarnessDock MCP server", () => {
       mcpProjectedModelVisibleCharacters(listed.tools, `${client.getInstructions()}x`.repeat(20)) > HARNESSDOCK_MCP_EXPOSED_DESCRIPTION_CHAR_LIMIT,
       "the projected-guidance check must fail when host-repeated instructions grow",
     );
+    assert.ok(JSON.stringify(listed.tools).length <= 4_500, "serialized discovery catalog exceeds 4,500 characters");
+    assert.ok(descriptionCharacters(listed.tools) <= 800, "nested discovery descriptions exceed 800 characters");
+    const restoredVerboseCatalog = structuredClone(listed.tools);
+    restoredVerboseCatalog.find((tool) => tool.name === "spawn_agent").description =
+      "Experimental: start one durable Agent asynchronously on an explicitly stated route. Harness, full model, effort, topology, and behavioral authority are required, freshly validated against native discovery, and frozen on the Agent; never default or alias a route.";
+    assert.ok(JSON.stringify(restoredVerboseCatalog).length > 4_500, "catalog guard accepts restored verbose spawn guidance");
   });
 
   it("keeps shared server routing short and retains wait semantics in its owner Skill", async () => {

@@ -135,7 +135,7 @@ describe("HarnessDock Skill guidance neutrality", () => {
     assert.match(spawn, /with `task_name`, self-contained\s+`message`, and `harness`, `model`, `topology`, `write`/i);
     assert.match(spawn, /`harness`, `model`, `topology`, `write`/);
     assert.doesNotMatch(spawn, /delegation_mode/);
-    assert.match(spawn, /never pass\s+environment, session, or fork selectors/i);
+    assert.match(spawn, /never pass\s+cwd\/directory, env,\s+session, or fork selectors/i);
     for (const model of ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5"]) {
       assert.match(spawn, new RegExp(model));
     }
@@ -177,6 +177,9 @@ describe("HarnessDock Skill guidance neutrality", () => {
     assert.match(waitMetadata, /mcp__codex_harnessdock__wait_agent/i);
     assert.match(waitMetadata, /one to eight exact targets[\s\S]*all-settled barrier/i);
     assert.match(waitMetadata, /one-hour completion bound/i);
+    assert.match(waitMetadata, /wake_on_progress[\s\S]*exactly one target/i);
+    assert.match(waitMetadata, /two or more targets[\s\S]*completion-only barrier/i);
+    assert.doesNotMatch(waitMetadata, /Never combine targets with wake_on_progress/i);
     assert.match(waitMetadata, /wake_on_progress[\s\S]*one intentional intermediate observation/i);
     assert.match(waitMetadata, /quiet timeout[\s\S]*call wait_agent again directly/i);
   });
