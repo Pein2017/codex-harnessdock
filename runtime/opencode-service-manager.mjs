@@ -9,7 +9,7 @@ import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import { resolveOpencodeServerUrl, createOpencodeDiscoveryClient, discoverOpencodeHealth, discoverOpencodeProviderRoutes } from "./opencode-client.mjs";
+import { resolveOpencodeServerUrl, createOpencodeDiscoveryClient, discoverOpencodeHealth } from "./opencode-client.mjs";
 import { recoverStaleDirectoryLock, sameFileIdentity } from "./durable-directory-lock.mjs";
 import { resolveRuntimeEnvironment } from "./environment.mjs";
 import { resolvePluginRuntimeRoot } from "./paths.mjs";
@@ -17,7 +17,7 @@ import { getProcessIdentity, isProcessAlive, terminateProcessTree, validateProce
 
 const RECEIPT_VERSION = 1;
 const LOCK_TIMEOUT_MS = 5_000;
-const STARTUP_TIMEOUT_MS = 5_000;
+const STARTUP_TIMEOUT_MS = 10_000;
 const RETRY_DELAY_MS = 20;
 
 function taggedError(code, message) {
@@ -131,18 +131,15 @@ function endpointArguments(env) {
   return ["serve", "--hostname", "127.0.0.1", "--port", origin.port];
 }
 
-async function defaultProbe(env, cwd) {
+async function defaultProbe(env, cwd, options) {
   try {
     const handle = createOpencodeDiscoveryClient({ env, cwd });
-    const health = await discoverOpencodeHealth(handle);
+    const health = await discoverOpencodeHealth(handle, options);
     if (!health.ok || !health.healthy) {
       const code = "code" in health ? health.code : null;
       return { kind: ["network_error", "deadline_exceeded", "server_error"].includes(code) ? "absent" : "incompatible" };
     }
-    const result = await discoverOpencodeProviderRoutes(handle);
-    if (result.ok) return { kind: "healthy" };
-    const code = "code" in result ? result.code : null;
-    return { kind: ["network_error", "deadline_exceeded", "server_error"].includes(code) ? "absent" : "incompatible" };
+    return { kind: "healthy" };
   } catch {
     return { kind: "absent" };
   }
@@ -174,7 +171,7 @@ export function createOpencodeServiceManager(options = {}) {
   const env = options.env ?? resolveRuntimeEnvironment({ cwd: options.cwd, envFile: options.envFile }).env;
   const runtimeRoot = path.resolve(options.runtimeRoot ?? resolvePluginRuntimeRoot());
   const deps = {
-    probe: options.probe ?? ((value) => defaultProbe(value, options.cwd)),
+    probe: options.probe ?? ((value, probeOptions) => defaultProbe(value, options.cwd, probeOptions)),
     executableCheck: options.executableCheck ?? ((file) => {
       try { return fs.statSync(file).isFile() && fs.accessSync(file, fs.constants.X_OK) === undefined; } catch { return false; }
     }),
@@ -196,8 +193,8 @@ export function createOpencodeServiceManager(options = {}) {
   const directory = serviceDirectory(runtimeRoot);
   const receiptFile = path.join(directory, "receipt.json");
 
-  async function probe() {
-    const result = await deps.probe(env);
+  async function probe(probeOptions) {
+    const result = await deps.probe(env, probeOptions);
     return result?.kind === "healthy" ? "healthy" : result?.kind === "incompatible" ? "incompatible" : "absent";
   }
 
@@ -251,7 +248,7 @@ export function createOpencodeServiceManager(options = {}) {
           terminateChild();
           throw taggedError("startup_failed", "The exact OpenCode service child exited or errored before readiness.");
         }
-        const readiness = await probe();
+        const readiness = await probe({ timeoutMs: deadline - Date.now() });
         if (childObservation.failure()) {
           terminateChild();
           throw taggedError("startup_failed", "The exact OpenCode service child exited or errored before readiness.");

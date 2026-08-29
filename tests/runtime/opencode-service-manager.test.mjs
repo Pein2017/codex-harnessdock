@@ -131,6 +131,35 @@ describe("OpenCode shared service manager", () => {
     assert.equal(killed, 1);
   });
 
+  it("retries a first startup health deadline before terminating its exact child", async () => {
+    const { runtimeRoot } = fixture();
+    let starts = 0;
+    let terminated = 0;
+    let probesAfterStart = 0;
+    const manager = createOpencodeServiceManager({
+      env: { OPENCODE_SERVER_URL: "http://127.0.0.1:4096", OPENCODE_EXECUTABLE: "/opt/opencode" },
+      runtimeRoot,
+      probe: async () => {
+        if (starts === 0) return { kind: "absent" };
+        if (probesAfterStart++ === 0) {
+          await new Promise((resolve) => setTimeout(resolve, 5_100));
+          return { kind: "absent" };
+        }
+        return { kind: "healthy" };
+      },
+      executableCheck: () => true,
+      start: () => {
+        starts += 1;
+        return { pid: 20, unref() {}, kill() { terminated += 1; } };
+      },
+      getIdentity: () => "child-identity",
+      terminate: () => { terminated += 1; },
+      startupDelayMs: 1,
+    });
+    assert.deepEqual(await manager.ensure(), { status: "managed" });
+    assert.deepEqual({ starts, terminated, probesAfterStart }, { starts: 1, terminated: 0, probesAfterStart: 2 });
+  });
+
   it("contains an early child error as one bounded startup failure", async () => {
     const { runtimeRoot } = fixture();
     let terminated = 0;
