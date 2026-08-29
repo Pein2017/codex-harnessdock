@@ -21,6 +21,7 @@ import {
 } from "./claude-version-compatibility.mjs";
 import { resolveNativeTeamPolicy } from "./claude-native-team-policy.mjs";
 import { resolveRuntimeEnvironment } from "./environment.mjs";
+import { inspectConfiguredOpencodeService } from "./opencode-service-manager.mjs";
 import {
   inspectCompatibilityShells,
   inspectInstalledPluginParity,
@@ -497,6 +498,19 @@ export function diagnoseNativeRouteDiscovery(mcp) {
   );
 }
 
+export function diagnoseOpencodeServiceReadiness(service) {
+  const readiness = ["managed", "reused"].includes(service?.status) ? service.status : "unavailable";
+  return makeCheck(
+    "opencode-service",
+    readiness === "unavailable" ? "warn" : "pass",
+    readiness === "unavailable"
+      ? "OpenCode service readiness is unavailable; doctor did not start, stop, repair, or reconfigure it."
+      : `OpenCode service readiness is ${readiness}; doctor did not start, stop, repair, or reconfigure it.`,
+    { readiness },
+    readiness === "unavailable" ? "Start an eligible native OpenCode turn to reconcile the private service lifecycle." : null,
+  );
+}
+
 /**
  * Read-only projection of bounded native-team receipts.  These labels are
  * deliberately scoped: an observed clean deny set does not establish broader
@@ -835,6 +849,7 @@ export async function runDoctor(options = {}) {
         workspace: cwd,
         env: environment?.env ?? options.env ?? process.env,
         callListAgents: true,
+        ensureService: false,
       });
       checks.push(makeCheck(
         "mcp-tools",
@@ -862,6 +877,16 @@ export async function runDoctor(options = {}) {
       null,
       "Repair earlier failures, then rerun doctor.",
     ));
+  }
+
+  try {
+    const inspectService = options.inspectOpencodeService ?? inspectConfiguredOpencodeService;
+    checks.push(diagnoseOpencodeServiceReadiness(await inspectService({
+      cwd,
+      env: environment?.env ?? options.env ?? process.env,
+    })));
+  } catch {
+    checks.push(diagnoseOpencodeServiceReadiness({ status: "unavailable" }));
   }
 
   const requiredFailed = checks.some((check) => check.status === "fail");

@@ -625,6 +625,10 @@ export const INSTANCE_DETAIL_CODES = Object.freeze([
   "not_authenticated",
   "incompatible_version",
   "capacity_exhausted",
+  "configuration_missing",
+  "rpc_incompatible",
+  "rpc_timeout",
+  "protocol_error",
   "unknown",
 ]);
 

@@ -220,8 +220,10 @@ describe("Pi public generation v3 dispatch", () => {
       turnOptions: { effort: "high" },
     });
     // This reaches the production runWorker -> runDetachedVersionThreeTurn
-    // seam without stubbing it. The deliberately missing local Pi config makes
-    // the later fresh inspection fail before any native process is opened.
+    // seam without stubbing it. Remove the now-canonical fixed Pi directory
+    // only from this isolated runtime so fresh inspection fails before any
+    // native process is opened.
+    delete context.runtime.jobs.env.PI_CODING_AGENT_DIR;
     await assert.rejects(
       context.runtime.jobs.runWorker(agent.activeJobId, { agentId: agent.agentId, attemptId: launch.attemptId }),
       /Pi instance is not ready/

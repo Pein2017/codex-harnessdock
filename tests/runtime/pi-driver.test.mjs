@@ -86,7 +86,12 @@ async function started(options = {}) {
 describe("Pi Driver v2", () => {
   it("fails closed when bounded local Pi configuration is not available", async () => {
     const unavailable = createPiDriver({ _test: { sessionRoot: "/tmp/pi-driver-fixture", spawn: () => { throw new Error("missing"); } } });
-    assert.deepEqual((await unavailable.inspectInstances(createDriverScope({ driver: unavailable, purpose: "inspect", env: {} })))[0].readiness, "unknown");
+    const missing = (await unavailable.inspectInstances(createDriverScope({ driver: unavailable, purpose: "inspect", env: {} })))[0];
+    assert.deepEqual({ readiness: missing.readiness, detail: missing.detailCode }, { readiness: "unavailable", detail: "configuration_missing" });
+
+    const executable = createPiDriver({ env: { PI_CODING_AGENT_DIR: "/tmp/pi-config" }, _test: { sessionRoot: "/tmp/pi-driver-fixture", spawn: () => { throw Object.assign(new Error("missing"), { code: "ENOENT" }); } } });
+    const absent = (await executable.inspectInstances(createDriverScope({ driver: executable, purpose: "inspect", env: { PI_CODING_AGENT_DIR: "/tmp/pi-config" } })))[0];
+    assert.deepEqual({ readiness: absent.readiness, detail: absent.detailCode }, { readiness: "unavailable", detail: "executable_missing" });
   });
 
   it("proves zero-model host readiness, fixes configuration before prompt, and projects message_end", async () => {
@@ -143,7 +148,8 @@ describe("Pi Driver v2", () => {
     assert.equal(fakes[0].state.argv.some((part) => part === "--session" || part === "--session-id"), false);
 
     const malformed = fixture({ commands: [{ source: "extension" }, { source: "prompt_template" }] });
-    assert.equal((await malformed.driver.inspectInstances(createDriverScope({ driver: malformed.driver, purpose: "inspect", env: { PI_CODING_AGENT_DIR: "/tmp/pi-config" } })))[0].readiness, "unknown");
+    const invalid = (await malformed.driver.inspectInstances(createDriverScope({ driver: malformed.driver, purpose: "inspect", env: { PI_CODING_AGENT_DIR: "/tmp/pi-config" } })))[0];
+    assert.deepEqual({ readiness: invalid.readiness, detail: invalid.detailCode }, { readiness: "unavailable", detail: "protocol_error" });
   });
 
   it("refuses malformed full models, unsafe session paths/partials, and explicit effort absence", async () => {

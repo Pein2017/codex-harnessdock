@@ -21,6 +21,7 @@ import { ADMITTED_GENERATION_HARNESS_IDS } from "./harness-registry.mjs";
 import { HARNESSDOCK_MCP_API_GENERATION } from "./mcp-api.mjs";
 import { removeRuntimeLoaderMarker, resolveGitCommonDirectory } from "./promotion-gate.mjs";
 import { PACKAGE_VERSION } from "./version.mjs";
+import { ensureConfiguredOpencodeService } from "./opencode-service-manager.mjs";
 
 export const CODEX_SANDBOX_META_KEY = "codex/sandbox-state-meta";
 export const HARNESSDOCK_MCP_TOOL_NAMES = Object.freeze([
@@ -397,6 +398,11 @@ export function createCcMcpServer(options = {}) {
 }
 
 export async function runCcMcpServer() {
+  // Startup is the one mutating lifecycle boundary. An unavailable OpenCode
+  // instance remains listed as unavailable; it never prevents Claude or Pi.
+  if (process.env.CODEX_HARNESSDOCK_SKIP_OPENCODE_ENSURE !== "1") {
+    await ensureConfiguredOpencodeService({ envFile: FIXED_ENV_FILE, cwd: SOURCE_ROOT }).catch(() => {});
+  }
   const server = createCcMcpServer();
   const transport = new StdioServerTransport();
   transport.onerror = (error) => {

@@ -137,6 +137,30 @@ describe("runtime environment", () => {
     assert.equal(JSON.stringify(result.receipt).includes("AUTO_MEMORY"), false);
   });
 
+  it("takes Pi and OpenCode configuration from the selected data-only file, not shell inheritance", () => {
+    const { root } = fixture();
+    const envFile = path.join(root, "runtime.env");
+    fs.writeFileSync(envFile, [
+      "PI_CODING_AGENT_DIR=/selected/pi",
+      "OPENCODE_EXECUTABLE=/selected/opencode",
+      "OPENCODE_SERVER_URL=http://127.0.0.1:4096",
+      "",
+    ].join("\n"));
+    const result = resolveRuntimeEnvironment({
+      cwd: root,
+      envFile,
+      env: {
+        PI_CODING_AGENT_DIR: "/shell/pi",
+        OPENCODE_EXECUTABLE: "/shell/opencode",
+        OPENCODE_SERVER_URL: "http://127.0.0.1:4999",
+      },
+    });
+    assert.equal(result.env.PI_CODING_AGENT_DIR, "/selected/pi");
+    assert.equal(result.env.OPENCODE_EXECUTABLE, "/selected/opencode");
+    assert.equal(result.env.OPENCODE_SERVER_URL, "http://127.0.0.1:4096");
+    assert.equal(JSON.stringify(result.receipt).includes("/selected/opencode"), false);
+  });
+
   it("rejects OPENCODE_SERVER_USERNAME in a tracked env file", () => {
     const { root, codexHome } = fixture();
     const envFile = path.join(codexHome, ".env");

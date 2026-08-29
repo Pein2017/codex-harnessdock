@@ -88,6 +88,7 @@ import {
 } from "./opencode-usage.mjs";
 import { plainRecordSnapshot } from "./plain-record.mjs";
 import { terminalMetricsFromEvidence } from "./terminal-metrics.mjs";
+import { createOpencodeServiceManager } from "./opencode-service-manager.mjs";
 
 export const OPENCODE_DRIVER_VERSION = "opencode@1";
 export const OPENCODE_DRIVER_TITLE = "OpenCode native routes (experimental)";
@@ -141,7 +142,7 @@ function nativeRouteFacts(routes) {
  * environment by the client's own allowlist and never enter a Driver scope,
  * a receipt, or a reference.
  */
-export const OPENCODE_DRIVER_ENVIRONMENT_KEYS = Object.freeze(["OPENCODE_SERVER_URL"]);
+export const OPENCODE_DRIVER_ENVIRONMENT_KEYS = Object.freeze(["OPENCODE_EXECUTABLE", "OPENCODE_SERVER_URL"]);
 
 /** The locator schema version both native references carry. */
 export const OPENCODE_LOCATOR_VERSION = 1;
@@ -359,7 +360,8 @@ function requiredText(value, code, detail) {
  * One OpenCode Explorer Driver bound to one fixed configuration.
  *
  * @param {{env?: NodeJS.ProcessEnv, cwd?: string, envFile?: string,
- *   acceptanceTimeoutMs?: number, turnTimeoutMs?: number}} [options]
+ *   acceptanceTimeoutMs?: number, turnTimeoutMs?: number,
+ *   serviceManager?: {ensure: () => Promise<object>}}} [options]
  */
 export function createOpencodeDriver(options = {}) {
   const fixedEnv = options.env ?? process.env;
@@ -375,6 +377,11 @@ export function createOpencodeDriver(options = {}) {
   const fixedInstanceKey = opencodeInstanceKey(
     createOpencodeTurnClient(clientOptions).serverUrl
   );
+  const serviceManager = options.serviceManager ?? createOpencodeServiceManager({
+    env: fixedEnv,
+    cwd: options.cwd,
+    envFile: options.envFile,
+  });
 
   function sessionReference(sessionId) {
     return {
@@ -782,6 +789,7 @@ export function createOpencodeDriver(options = {}) {
           "The turn scope names a logical instance this Driver is not configured for."
         );
       }
+      await serviceManager.ensure();
       const inspection = await inspectNative(scope);
       if (inspection.readiness !== "ready") {
         throw new OpencodeRouteError(

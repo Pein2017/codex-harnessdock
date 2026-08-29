@@ -6,6 +6,16 @@
   current data root when the legacy root and cutover recovery boundary are
   both absent.
 
+## 0.23.0 - 2026-08-29
+
+- **BREAKING (operator-facing).** Manage or reuse one fixed-loopback OpenCode
+  Server during MCP bootstrap and immediately before an OpenCode spawn. The
+  checkout records only proven private child identity, never kills a reused or
+  foreign endpoint, and keeps doctor/listing read-only. Pi and OpenCode now
+  take their fixed executable/configuration through `config/runtime.env`; Pi
+  discovery reports closed redacted configuration, executable, timeout, RPC,
+  and protocol failures instead of `unknown`.
+
 ## 0.22.0 - 2026-08-28
 
 - Replace the fixed Pi and OpenCode model/effort constants with bounded,

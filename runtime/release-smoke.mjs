@@ -597,6 +597,7 @@ export async function probeInstalledMcp(options = {}) {
     env: {
       ...(options.env ?? process.env),
       CODEX_HARNESSDOCK_RUNTIME_HOME: runtimeHome,
+      ...(options.ensureService === false ? { CODEX_HARNESSDOCK_SKIP_OPENCODE_ENSURE: "1" } : {}),
     },
     stderr: "pipe",
   });

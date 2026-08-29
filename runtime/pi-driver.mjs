@@ -14,6 +14,9 @@ import { terminalMetricsFromEvidence } from "./terminal-metrics.mjs";
 
 export const PI_HARNESS_ID = "pi";
 export const PI_DRIVER_VERSION = "pi@2";
+export const PI_DISCOVERY_FAILURE_CODES = Object.freeze([
+  "configuration_missing", "executable_missing", "rpc_incompatible", "rpc_timeout", "protocol_error",
+]);
 const INSTANCE_KEY = "pi-local";
 const LOCATOR_VERSION = 1;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -174,6 +177,15 @@ function fixedPrompt(envelope) {
   ].join("\n");
 }
 
+function piDiscoveryFailure(error) {
+  const code = String(error?.code ?? "");
+  if (/PI_CODING_AGENT_DIR/.test(String(error?.message ?? ""))) return "configuration_missing";
+  if (code === "ENOENT" || code === "spawn_failed" || code === "process_error" || code === "process_exit" || code === "stdin_error") return "executable_missing";
+  if (code === "response_timeout") return "rpc_timeout";
+  if (["invalid_response", "response_too_large", "request_rejected"].includes(code)) return "rpc_incompatible";
+  return "protocol_error";
+}
+
 /** The Pi Driver. `_test` is private fixture-only process/probe injection. */
 export function createPiDriver(options = {}) {
   const fixedEnv = options.env ?? process.env;
@@ -195,7 +207,9 @@ export function createPiDriver(options = {}) {
     return output;
   }
   async function discover(scope) {
-    const configRoot = scope?.env?.PI_CODING_AGENT_DIR ?? fixedEnv.PI_CODING_AGENT_DIR;
+    const configRoot = scope?.env
+      ? scope.env.PI_CODING_AGENT_DIR
+      : fixedEnv.PI_CODING_AGENT_DIR;
     if (typeof configRoot !== "string" || !configRoot) throw new Error("Pi requires PI_CODING_AGENT_DIR through the bounded runtime environment.");
     const rpc = createPiRpcProcess({ argv: piRpcArgv({ provider: null, model: null, effort: null, sessionDir: sessionRoot, sessionId: null, resumeSessionId: null, control: true }), cwd: scope?.workspaceRoot ?? process.cwd(), env: { ...fixedEnv, PI_CODING_AGENT_DIR: configRoot }, ...(test ? { _test: test } : {}) });
     try {
@@ -256,8 +270,8 @@ export function createPiDriver(options = {}) {
         const facts = await discover(scope);
         const routes = inspectionRouteFacts(facts.models, facts.effortsByModel);
         return [{ harnessId: PI_HARNESS_ID, instanceKey: INSTANCE_KEY, readiness: "ready", liveValidated: true, maturity: "experimental", detailCode: "ready", routes: Object.freeze(routes) }];
-      } catch {
-        return [{ harnessId: PI_HARNESS_ID, instanceKey: INSTANCE_KEY, readiness: "unknown", liveValidated: true, maturity: "experimental", detailCode: "unknown", routes: null }];
+      } catch (error) {
+        return [{ harnessId: PI_HARNESS_ID, instanceKey: INSTANCE_KEY, readiness: "unavailable", liveValidated: true, maturity: "experimental", detailCode: piDiscoveryFailure(error), routes: null }];
       }
     },
     validateRoute(request, inspection) {

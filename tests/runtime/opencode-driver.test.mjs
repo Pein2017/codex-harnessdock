@@ -143,7 +143,11 @@ async function startFake(scenario = {}) {
 }
 
 function driverFor(url, options = {}) {
-  return createOpencodeDriver({ env: { OPENCODE_SERVER_URL: url }, ...options });
+  return createOpencodeDriver({
+    env: { OPENCODE_SERVER_URL: url },
+    serviceManager: { ensure: async () => ({ status: "reused" }) },
+    ...options,
+  });
 }
 
 function routeRequest(model = OPENCODE_EXPLORER_MODEL) {
@@ -285,6 +289,15 @@ describe("opencode driver: contract surface", () => {
 // ---------------------------------------------------------------------------
 
 describe("opencode driver: readiness and route admission", () => {
+  it("ensures before its immediate pre-spawn discovery", async () => {
+    const { url } = await startFake();
+    let ensures = 0;
+    const driver = driverFor(url, { serviceManager: { ensure: async () => { ensures += 1; } } });
+    const { preparedTurn, scope } = await acceptedTurn(driver, url);
+    await driver.revalidatePreparedTurn(preparedTurn, scope);
+    assert.equal(ensures, 1);
+  });
+
   it("reports one ready instance using GET-only discovery", async () => {
     const { server, url } = await startFake();
     const driver = driverFor(url);

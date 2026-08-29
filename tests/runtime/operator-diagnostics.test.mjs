@@ -6,6 +6,7 @@ import { afterEach, describe, it } from "node:test";
 
 import {
   diagnoseNativeRouteDiscovery,
+  diagnoseOpencodeServiceReadiness,
   diagnoseNativeTeamCompatibility,
   inspectBlockedLeases,
   inspectOperatorStorage,
@@ -343,6 +344,7 @@ describe("operator doctor", () => {
           },
         ],
       }),
+      inspectOpencodeService: async () => ({ status: "managed" }),
     });
 
     assert.equal(report.status, "pass");
@@ -369,6 +371,7 @@ describe("operator doctor", () => {
     assert.match(identity.summary, /explicitly adopted as authoritative/i);
     assert.equal(identity.details.operation, "adoption");
     assert.equal(identity.details.adoptedAt, "2026-08-28T12:00:00.000Z");
+    assert.deepEqual(report.checks.find((check) => check.id === "opencode-service").details, { readiness: "managed" });
     const compatibilityShells = report.checks.find((check) => check.id === "plugin-compatibility-shells");
     assert.equal(compatibilityShells.status, "pass");
     assert.equal(compatibilityShells.details.coverageState, "first_install");
@@ -573,6 +576,17 @@ describe("blocked instance/session/writer lease diagnostics (OpenSpec 4.4)", () 
 });
 
 describe("doctor native-route discovery", () => {
+  it("projects closed read-only OpenCode ownership states without configuration text", () => {
+    for (const readiness of ["managed", "reused"]) {
+      const check = diagnoseOpencodeServiceReadiness({ status: readiness, endpoint: "http://127.0.0.1:4096", executable: "/secret/opencode" });
+      assert.equal(check.id, "opencode-service");
+      assert.equal(check.status, "pass");
+      assert.deepEqual(check.details, { readiness });
+      assert.doesNotMatch(JSON.stringify(check), /127\.0\.0\.1|secret|opencode$/i);
+      assert.match(check.summary, /did not start, stop, repair, or reconfigure/i);
+    }
+  });
+
   it("reports bounded redacted route/effort facts with no model call", () => {
     const check = diagnoseNativeRouteDiscovery({
       nativeRoutes: [
