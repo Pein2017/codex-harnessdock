@@ -154,6 +154,16 @@ function productionWitnessDriver(runAttempt) {
 }
 
 describe("release smoke", () => {
+  it("projects a replaced fake native catalog without a turn or guidance identity", () => {
+    const guidance = fs.readFileSync(path.join(SOURCE_ROOT, "plugins", "codex-harnessdock", "skills", "spawn-agent", "SKILL.md"));
+    const record = (model, effort) => [{ harness: "fake", maturity: "experimental", instances: [{ instance: "redacted", readiness: "ready", live_validated: true, maturity: "experimental", routes: { models: [model], effortsByModel: { [model]: [effort] } } }] }];
+    const first = projectNativeRouteDiscovery(record("fake/provider-a", "opaque-effort-a"));
+    const second = projectNativeRouteDiscovery(record("fake/provider-b", "opaque-effort-b"));
+    assert.notDeepEqual(first, second);
+    assert.deepEqual(second[0].instances[0].effortsByModel, { "fake/provider-b": ["opaque-effort-b"] });
+    assert.equal(guidance.includes("fake/provider-b"), false);
+  });
+
   it("reports a supplied differential matrix as non-promotable without changing default smoke behavior", async () => {
     const fixture = matchingSnapshot();
     const differentialParityReceipt = JSON.parse(fs.readFileSync(

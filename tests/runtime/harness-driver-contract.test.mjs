@@ -209,6 +209,39 @@ describe("Harness Driver contract", () => {
     }, { harnessId: "fake-service" }), /requires current capability provenance and inspection generation/);
   });
 
+  it("rejects malformed ready route projections without rewriting native atoms", () => {
+    const provenance = routeCapabilities().provenance;
+    const base = {
+      harnessId: "fake-service",
+      instanceKey: "tenant-alpha",
+      readiness: "ready",
+      liveValidated: true,
+      maturity: "experimental",
+      detailCode: "ready",
+      capabilityProvenance: provenance,
+      inspectionGeneration: "unavailable",
+    };
+    const routes = {
+      models: ["first-model", "second-model"],
+      effortsByModel: { "first-model": ["unexpected-native-effort"], "second-model": ["other-native-effort"] },
+    };
+    const valid = validateInstanceInspection({ ...base, routes }, { harnessId: "fake-service" });
+    assert.deepEqual(valid.routes, routes);
+    for (const [name, malformed] of [
+      ["missing", { models: ["first-model", "second-model"], effortsByModel: { "first-model": ["high"] } }],
+      ["empty", { models: ["first-model"], effortsByModel: { "first-model": [] } }],
+      ["duplicate-model", { models: ["first-model", "first-model"], effortsByModel: { "first-model": ["high"] } }],
+      ["duplicate-effort", { models: ["first-model"], effortsByModel: { "first-model": ["high", "high"] } }],
+      ["orphan", { models: ["first-model"], effortsByModel: { "first-model": ["high"], "second-model": ["high"] } }],
+    ]) {
+      assert.throws(
+        () => validateInstanceInspection({ ...base, routes: malformed }, { harnessId: "fake-service" }),
+        /ready route|exact keys|duplicate/,
+        name,
+      );
+    }
+  });
+
   it("publishes one closed capability vocabulary and fails on anything outside it", () => {
     assert.deepEqual(HARNESS_CAPABILITY_NAMES, [
       "activeInput",
@@ -1374,7 +1407,7 @@ function scopeInput(driver, overrides = {}) {
 function routeRequest(overrides = {}) {
   return {
     harnessId: "fake-service",
-    model: "standard-tier",
+    model: `${overrides.harnessId ?? "fake-service"}-standard`,
     topology: "leaf",
     authority: "behavioral_read_only",
     effort: "high",
@@ -1554,7 +1587,7 @@ describe("Driver Contract v2 registry and scope", () => {
     const { driver: service, capabilities } = createFakeServiceDriver();
     const accepted = await acceptFakeServiceRoute(service);
     assert.equal(accepted.route.instanceKey, "tenant-alpha");
-    assert.equal(accepted.route.model, "standard-tier");
+    assert.equal(accepted.route.model, "fake-service-standard");
     assert.equal(accepted.route.topology, "leaf");
     assert.equal(accepted.route.authority, "behavioral_read_only");
     assert.equal(accepted.route.driverVersion, FAKE_SERVICE_DRIVER_VERSION);
@@ -1568,11 +1601,25 @@ describe("Driver Contract v2 registry and scope", () => {
       () => validateCanonicalRoute(incomplete, {
         driver: service,
         inspection: accepted.inspection,
-        request: { harnessId: service.harnessId, model: "standard-tier", topology: "leaf", authority: "behavioral_read_only" },
+        request: { harnessId: service.harnessId, model: "fake-service-standard", topology: "leaf", authority: "behavioral_read_only" },
       }),
       /must state one explicit effort/,
       "a direct internal canonical-route caller cannot mint an effortless route",
     );
+    for (const stale of [
+      { model: "fake-service-stale", effort: "high" },
+      { model: "fake-service-standard", effort: "stale-effort" },
+      { model: "fake-service-standard-alias", effort: "high" },
+    ]) {
+      assert.throws(
+        () => validateCanonicalRoute({ ...accepted.route, ...stale }, {
+          driver: service,
+          inspection: accepted.inspection,
+          request: { harnessId: service.harnessId, topology: "leaf", authority: "behavioral_read_only", ...stale },
+        }),
+        /must be freshly advertised/,
+      );
+    }
 
     for (const field of ["model", "topology", "authority"]) {
       const { [field]: _dropped, ...partial } = routeRequest();
@@ -1601,7 +1648,7 @@ describe("Driver Contract v2 registry and scope", () => {
     });
     await assert.rejects(
       () => acceptFakeServiceRoute(substituting.driver),
-      /canonical route model "premium-tier" does not match the requested "standard-tier"/,
+      /canonical route model "premium-tier" does not match the requested "fake-service-standard"/,
     );
     const effortSubstituting = createFakeServiceDriver({
       routeOverride: (route) => ({ ...route, effort: "low" }),

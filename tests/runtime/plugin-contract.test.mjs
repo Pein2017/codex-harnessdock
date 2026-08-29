@@ -284,6 +284,20 @@ describe("native plugin contract", () => {
     assert.doesNotMatch(text, /fork_turns|execution_profile/);
   });
 
+  it("does not need a guidance edit when a fake catalog replaces the admitted tuple", () => {
+    const file = path.join(root, "plugins", "codex-harnessdock", "skills", "spawn-agent", "SKILL.md");
+    const before = fs.readFileSync(file);
+    const catalog = { "fake/provider-a": ["opaque-effort-a"] };
+    const admits = (model, effort) => catalog[model]?.includes(effort) === true;
+    assert.equal(admits("fake/provider-a", "opaque-effort-a"), true);
+    delete catalog["fake/provider-a"];
+    catalog["fake/provider-b"] = ["opaque-effort-b"];
+    assert.equal(admits("fake/provider-a", "opaque-effort-a"), false);
+    assert.equal(admits("fake/provider-b", "opaque-effort-b"), true);
+    assert.deepEqual(fs.readFileSync(file), before);
+    assert.equal(before.includes("fake/provider-b"), false);
+  });
+
   it("documents follow-up write inheritance and explicit authority changes", () => {
     const text = fs.readFileSync(
       path.join(root, "plugins", "codex-harnessdock", "skills", "followup-task", "SKILL.md"),

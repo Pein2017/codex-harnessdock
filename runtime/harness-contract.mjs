@@ -761,6 +761,37 @@ export function validateInstanceInspection(inspection, driver) {
   if (canonicalRoutes != null && Buffer.byteLength(JSON.stringify(canonicalRoutes), "utf8") > MAX_INSTANCE_ROUTE_FACTS_BYTES) {
     throw new Error(`${label} route facts exceed their durable bound.`);
   }
+  if (inspection.readiness === "ready") {
+    if (canonicalRoutes == null) {
+      throw new Error(`${label} ready instance requires exact route facts.`);
+    }
+    const models = canonicalRoutes.models;
+    const effortsByModel = canonicalRoutes.effortsByModel;
+    if (!Array.isArray(models) || models.length === 0 || !models.every(isBoundedRouteText)) {
+      throw new Error(`${label} ready route facts require non-empty bounded models.`);
+    }
+    if (new Set(models).size !== models.length) {
+      throw new Error(`${label} ready route facts declare duplicate models.`);
+    }
+    if (!effortsByModel || typeof effortsByModel !== "object" || Array.isArray(effortsByModel)) {
+      throw new Error(`${label} ready route facts require per-model efforts.`);
+    }
+    const effortModels = Object.keys(effortsByModel);
+    if (effortModels.length !== models.length ||
+        effortModels.some((model) => !models.includes(model)) ||
+        models.some((model) => !Object.hasOwn(effortsByModel, model))) {
+      throw new Error(`${label} ready route models and per-model efforts must have exact keys.`);
+    }
+    for (const model of models) {
+      const efforts = effortsByModel[model];
+      if (!Array.isArray(efforts) || efforts.length === 0 || !efforts.every(isBoundedRouteAtom)) {
+        throw new Error(`${label} ready route ${JSON.stringify(model)} requires non-empty bounded exact efforts.`);
+      }
+      if (new Set(efforts).size !== efforts.length) {
+        throw new Error(`${label} ready route ${JSON.stringify(model)} declares duplicate efforts.`);
+      }
+    }
+  }
   for (const key of Object.keys(inspection)) {
     if (!["harnessId", "instanceKey", "readiness", "liveValidated", "maturity", "detailCode", "routes", "capabilityProvenance", "inspectionGeneration"].includes(key)) {
       throw new Error(`${label} declares an unknown field: ${key}.`);
@@ -872,6 +903,12 @@ export function validateCanonicalRoute(route, { driver, inspection, request }) {
   if (!isBoundedRouteAtom(route.effort)) {
     throw new Error(`${label} must record one effective native effort.`);
   }
+  const validatedInspection = validateInstanceInspection(inspection, driver);
+  if (validatedInspection.readiness !== "ready" ||
+      !validatedInspection.routes.models.includes(route.model) ||
+      !validatedInspection.routes.effortsByModel[route.model].includes(route.effort)) {
+    throw new Error(`${label} model and effort must be freshly advertised by the admitted instance.`);
+  }
   const capabilities = assertDriverRouteCoherence(driver, route.capabilities);
   assertAdmittedInteraction(capabilities, label);
   const canonical = Object.freeze({
@@ -884,7 +921,7 @@ export function validateCanonicalRoute(route, { driver, inspection, request }) {
     effort: route.effort,
     capabilities,
   });
-  inspectionEvidenceForRoute(canonical, inspection, driver);
+  inspectionEvidenceForRoute(canonical, validatedInspection, driver);
   return canonical;
 }
 

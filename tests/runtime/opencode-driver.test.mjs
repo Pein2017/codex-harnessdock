@@ -26,6 +26,7 @@ import {
   isDriverPreTransportRejection,
   validateCanonicalRoute,
   validateDriverV2,
+  validateInstanceInspection,
   validateLiveHarnessTurn,
   validateNormalizedTerminalResult,
   validatePreparedTurn,
@@ -379,6 +380,18 @@ describe("opencode driver: readiness and route admission", () => {
     ]) {
       assert.throws(() => driver.validateRoute(bad, inspection));
     }
+  });
+
+  it("rejects an orphaned OpenCode effort projection before any session request", async () => {
+    const { server, url } = await startFake();
+    const driver = driverFor(url);
+    const [inspection] = await driver.inspectInstances(
+      createDriverScope({ driver, purpose: "inspect", env: { OPENCODE_SERVER_URL: url }, workspaceRoot: WORKSPACE_ROOT })
+    );
+    const malformed = structuredClone(inspection);
+    malformed.routes.effortsByModel["foreign-model"] = ["high"];
+    assert.throws(() => validateInstanceInspection(malformed, driver), /exact keys/);
+    assert.deepEqual(postRequests(server), []);
   });
 
   it("binds a non-default admitted model through native submission and result lineage", async () => {

@@ -22,6 +22,22 @@ const readSkill = (name) => fs.readFileSync(path.join(skillRoot, name, "SKILL.md
 const readMetadata = (name) => fs.readFileSync(path.join(skillRoot, name, "agents/openai.yaml"), "utf8");
 
 describe("HarnessDock Skill guidance neutrality", () => {
+  it("keeps checked-in guidance unchanged while a fake route catalog replaces listing and admission", () => {
+    const guidance = skills.flatMap((name) => [readSkill(name), readMetadata(name)]);
+    const bytes = guidance.map((text) => Buffer.from(text));
+    const catalog = { "fake/provider-a": ["opaque-effort-a"] };
+    const list = () => Object.entries(catalog).map(([model, efforts]) => ({ model, efforts }));
+    const admits = (model, effort) => catalog[model]?.includes(effort) === true;
+    assert.equal(admits("fake/provider-a", "opaque-effort-a"), true);
+    catalog["fake/provider-b"] = ["opaque-effort-b"];
+    delete catalog["fake/provider-a"];
+    assert.deepEqual(list(), [{ model: "fake/provider-b", efforts: ["opaque-effort-b"] }]);
+    assert.equal(admits("fake/provider-a", "opaque-effort-a"), false);
+    assert.equal(admits("fake/provider-b", "opaque-effort-b"), true);
+    assert.deepEqual(guidance.map((text) => Buffer.from(text)), bytes);
+    assert.equal(guidance.join("\n").includes("fake/provider-b"), false);
+  });
+
   it("does not prescribe scheduler policy or a global team shape", () => {
     const forbiddenPolicy = [
       /Parent join policy/i,

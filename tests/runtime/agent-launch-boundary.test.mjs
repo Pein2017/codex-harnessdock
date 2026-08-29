@@ -31,6 +31,7 @@ function seamRouteInspection(runtime) {
       detailCode: "ready",
       routes: {
         models: ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5"],
+        effortsByModel: Object.fromEntries(["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5"].map((model) => [model, ["high"]])),
         topologies: ["leaf", "native_orchestrator"],
         interaction: "noninteractive_fixed_policy",
       },

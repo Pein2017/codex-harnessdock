@@ -8,7 +8,7 @@ import { describe, it } from "node:test";
 
 import { createPiDriver, PI_HARNESS_ID } from "../../runtime/pi-driver.mjs";
 import { createPiRpcProcess } from "../../runtime/pi-rpc-process.mjs";
-import { isDriverPreTransportRejection, validateLiveHarnessTurn, validateNormalizedTerminalResult, validatePreparedTurn } from "../../runtime/harness-contract.mjs";
+import { isDriverPreTransportRejection, validateInstanceInspection, validateLiveHarnessTurn, validateNormalizedTerminalResult, validatePreparedTurn } from "../../runtime/harness-contract.mjs";
 import { acceptDriverRoute, createDriverScope, inspectDriverInstances } from "../../runtime/harness-registry.mjs";
 
 const SESSION_ID = "123e4567-e89b-42d3-a456-426614174000";
@@ -164,6 +164,15 @@ describe("Pi Driver v2", () => {
       assert.throws(() => driver.validateNativeSessionRef({ harnessId: "pi", driverVersion: "pi@2", instanceKey: "pi-local", locatorVersion: 1, locator: { sessionId } }), /UUID/);
     }
     assert.throws(() => driver.validateNativeSessionRef({ harnessId: "pi", driverVersion: "pi@2", instanceKey: "other", locatorVersion: 1, locator: { sessionId: SESSION_ID } }), /exactly/);
+  });
+
+  it("rejects a duplicated Pi effort projection before any prompt", async () => {
+    const { driver, fakes } = fixture();
+    const [inspection] = await driver.inspectInstances(createDriverScope({ driver, purpose: "inspect", env: { PI_CODING_AGENT_DIR: "/tmp/pi-config" } }));
+    const malformed = structuredClone(inspection);
+    malformed.routes.effortsByModel[PI_MODEL] = ["high", "high"];
+    assert.throws(() => validateInstanceInspection(malformed, driver), /duplicate efforts/);
+    assert.equal(fakes.some((fake) => fake.state.commands.some((command) => command.type === "prompt")), false);
   });
 
   it("reinspects immediately before transport and rejects a disappeared exact route", async () => {
