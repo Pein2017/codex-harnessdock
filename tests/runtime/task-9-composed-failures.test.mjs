@@ -48,6 +48,7 @@ afterEach(async () => {
 });
 
 const RUNTIME_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "cc-failures-home-"));
+const CODEX_HOME = path.join(RUNTIME_HOME, "codex-home");
 process.on("exit", () => fs.rmSync(RUNTIME_HOME, { recursive: true, force: true }));
 
 const SECRET_USERNAME = "explorer-operator";
@@ -124,7 +125,7 @@ function setup(serverUrl, { secrets = false } = {}) {
   const env = {
     // This suite passes an explicit environment object, so carry the preload's
     // stable Plugin-data isolation root into the detached worker as well.
-    CODEX_HOME: process.env.CODEX_HOME,
+    CODEX_HOME,
     CODEX_THREAD_ID: ownerRootId,
     CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID: ownerRootId,
     CODEX_HARNESSDOCK_RUNTIME_HOME: RUNTIME_HOME,

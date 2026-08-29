@@ -60,6 +60,7 @@ afterEach(async () => {
 });
 
 const RUNTIME_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "hd-composed-home-"));
+const CODEX_HOME = path.join(RUNTIME_HOME, "codex-home");
 process.on("exit", () => fs.rmSync(RUNTIME_HOME, { recursive: true, force: true }));
 
 const OWNER_ROOT_ID = "composed-root";
@@ -130,7 +131,7 @@ function setup(serverUrl) {
     cwd: workspace,
     envFile,
     env: {
-      CODEX_HOME: process.env.CODEX_HOME,
+      CODEX_HOME,
       CODEX_THREAD_ID: OWNER_ROOT_ID,
       CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID: OWNER_ROOT_ID,
       CODEX_HARNESSDOCK_RUNTIME_HOME: RUNTIME_HOME,

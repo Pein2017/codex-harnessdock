@@ -320,8 +320,13 @@ describe("OpenCode shared service manager", () => {
 
   it("uses Linux socket evidence and refuses reaping on present or unreadable peers", async () => {
     const header = "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode";
+    const ipv6Header = "  sl  local_address remote_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode";
     const established = `${header}\n   0: 0100007F:1000 0100007F:9C40 01 00000000:00000000 00:00000000 00000000 1000 0 1`;
     assert.equal(inspectLoopbackPeerActivity({}, { platform: "linux", readFile: () => established }), "present");
+    assert.equal(inspectLoopbackPeerActivity({}, {
+      platform: "linux",
+      readFile: (file) => file.endsWith("tcp6") ? ipv6Header : header,
+    }), "none");
     assert.equal(inspectLoopbackPeerActivity({}, { platform: "linux", readFile: () => { throw new Error("unreadable"); } }), "unknown");
 
     for (const [peerActivity, reason] of [[() => "present", "peer_present"], [() => "unknown", "peer_unknown"]]) {
@@ -344,6 +349,32 @@ describe("OpenCode shared service manager", () => {
       assert.deepEqual(await manager.reapIfIdle(), { reaped: false, reason });
       assert.equal(terminated, 0);
     }
+  });
+
+  it("does not mistake its own health probe for a pre-existing peer", async () => {
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-opencode-self-peer-"));
+    cleanups.push(runtimeRoot);
+    let alive = false;
+    let ready = false;
+    let probing = false;
+    let now = 1_000;
+    const manager = createOpencodeServiceManager({
+      env: { OPENCODE_SERVER_URL: "http://127.0.0.1:4096", OPENCODE_EXECUTABLE: "/opt/opencode", HARNESSDOCK_OPENCODE_IDLE_TTL_SECONDS: "60" },
+      runtimeRoot,
+      probe: async () => { probing = true; return { kind: ready ? "healthy" : "absent" }; },
+      executableCheck: () => true,
+      start: () => { alive = true; ready = true; return { pid: 84, unref() {} }; },
+      getIdentity: () => "identity-84",
+      isAlive: () => alive,
+      validateIdentity: () => alive,
+      now: () => now,
+      peerActivity: () => probing ? "present" : "none",
+      terminate: () => { alive = false; return { attempted: true, delivered: true }; },
+    });
+    await manager.ensure();
+    probing = false;
+    now += 60_000;
+    assert.deepEqual(await manager.reapIfIdle(), { reaped: true, reason: "terminated" });
   });
 
   it("does not refresh activity for health or ensure and rechecks the one-hour boundary", async () => {

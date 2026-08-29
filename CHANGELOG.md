@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.24.1 - 2026-08-29
+
+- Keep focused OpenCode turn tests inside disposable Plugin-data roots, accept
+  the Linux `/proc/net/tcp6` `remote_address` header, and check pre-existing
+  peers before the reaper's own health request so an owned one-hour-idle Server
+  can terminate without weakening lease, socket, or identity guards.
+
 ## 0.24.0 - 2026-08-29
 
 - Remove the extra MCP bootstrap process, discover OpenCode routes while

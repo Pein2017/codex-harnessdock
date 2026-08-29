@@ -179,7 +179,7 @@ export function inspectLoopbackPeerActivity(env, options = {}) {
   try {
     for (const file of ["/proc/net/tcp", "/proc/net/tcp6"]) {
       const lines = String(readFile(file, "utf8")).trim().split(/\r?\n/u);
-      if (lines.length < 1 || !/local_address\s+rem_address\s+st/u.test(lines[0])) return "unknown";
+      if (lines.length < 1 || !/local_address\s+rem(?:ote)?_address\s+st/u.test(lines[0])) return "unknown";
       for (const line of lines.slice(1)) {
         const fields = line.trim().split(/\s+/u);
         if (fields.length < 4) return "unknown";
@@ -320,7 +320,6 @@ export function createOpencodeServiceManager(options = {}) {
     return withLock(async () => {
       const receipt = readReceipt(receiptFile);
       if (!receipt || receipt.version !== RECEIPT_VERSION || !managedReceiptMatches(receipt)) return { reaped: false, reason: "receipt_unproven" };
-      if (await probe() !== "healthy") return { reaped: false, reason: "endpoint_unproven" };
       if (deps.now() - timestamp(receipt.lastActivityAt) < ttlSeconds * 1_000) return { reaped: false, reason: "not_idle" };
       const leases = activeLeases(leaseDirectory);
       if (leases == null) return { reaped: false, reason: "lease_unknown" };
@@ -328,6 +327,7 @@ export function createOpencodeServiceManager(options = {}) {
       let peerActivity;
       try { peerActivity = deps.peerActivity(env); } catch { peerActivity = "unknown"; }
       if (peerActivity !== "none") return { reaped: false, reason: peerActivity === "present" ? "peer_present" : "peer_unknown" };
+      if (await probe() !== "healthy") return { reaped: false, reason: "endpoint_unproven" };
       let termination;
       try { termination = deps.terminate(receipt.pid, receipt.identity); } catch { return { reaped: false, reason: "termination_ambiguous" }; }
       if (!termination?.attempted || !termination.delivered) return { reaped: false, reason: "termination_ambiguous" };
