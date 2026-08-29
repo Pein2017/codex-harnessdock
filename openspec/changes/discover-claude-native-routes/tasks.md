@@ -1,7 +1,7 @@
 ## 1. Freeze zero-prompt native evidence
 
-- [ ] 1.1 After `enforce-exact-discovered-routes` and `discover-native-harness-routes` share the implementation base, add a disposable stream-json control probe at the existing Claude process seam with bounded stdin/stdout/stderr/deadline/process-group cleanup. Capture a sanitized native initialization/`list_models`-class receipt proving no user prompt, accepted turn, continuation, or model request.
-- [ ] 1.2 If that receipt lacks a complete exact full-model and per-model-effort projection, record the sanitized negative receipt and return `HOLD`; leave the shipped Claude catalog, aliases, defaults, and runtime behavior unchanged. Do not parse help/TUI text, scrape config, add an SDK/API dependency, or substitute a static fallback.
+- [x] 1.1 After `enforce-exact-discovered-routes` and `discover-native-harness-routes` share the implementation base, add a disposable stream-json control probe at the existing Claude process seam with bounded stdin/stdout/stderr/deadline/process-group cleanup. Capture a sanitized native initialization/`list_models`-class receipt proving no user prompt, accepted turn, continuation, or model request.
+- [x] 1.2 If that receipt lacks a complete exact full-model and per-model-effort projection, record the sanitized negative receipt and return `HOLD`; leave the shipped Claude catalog, aliases, defaults, and runtime behavior unchanged. Do not parse help/TUI text, scrape config, add an SDK/API dependency, or substitute a static fallback.
 - [ ] 1.3 Convert a successful bounded receipt into fake-control fixtures and RED cases in `tests/runtime/claude-driver-v2.test.mjs` and `tests/runtime/harness-claude-parity.test.mjs` for malformed/oversized/ambiguous rows, default/family aliases, missing effort, catalog replacement, no-prompt enforcement, and cleanup.
 
 ## 2. Replace Claude catalog admission atomically

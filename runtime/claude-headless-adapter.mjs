@@ -118,6 +118,16 @@ export const MAX_STREAM_PARSER_TOUCHED_FILES = 256;
 export const MAX_STREAM_PARSER_TERMINAL_EVENTS = 16;
 export const MAX_STREAM_PARSER_HOOK_RECEIPTS = 64;
 export const MAX_STDERR_BYTES = 64 * 1024;
+export const CLAUDE_NATIVE_ROUTE_PROBE_SCHEMA = "claude-native-route-probe-v1";
+export const CLAUDE_NATIVE_ROUTE_PROBE_MAX_STDOUT_BYTES = 64 * 1024;
+export const CLAUDE_NATIVE_ROUTE_PROBE_MAX_STDERR_BYTES = 16 * 1024;
+export const CLAUDE_NATIVE_ROUTE_PROBE_MAX_ROWS = 64;
+export const CLAUDE_NATIVE_ROUTE_PROBE_MAX_VALUE_BYTES = 256;
+export const CLAUDE_NATIVE_ROUTE_PROBE_MAX_EFFORTS = 8;
+export const CLAUDE_NATIVE_ROUTE_PROBE_TIMEOUT_MS = 10_000;
+const CLAUDE_NATIVE_ROUTE_PROBE_MAX_LINE_BYTES = 16 * 1024;
+const CLAUDE_NATIVE_ROUTE_PROBE_CLEANUP_WAIT_MS = 1_000;
+const NATIVE_MODEL_EFFORTS = new Set(["low", "medium", "high", "xhigh", "max"]);
 // The native-team witness is intentionally process-local, but it still ingests
 // provider-supplied identities. Bound those identities before they can enter
 // the member map or reach the optional callback.
@@ -1486,6 +1496,397 @@ export function buildArgs(prompt, options = {}) {
   }
 
   return args;
+}
+
+function exactNativeProbeText(value, maxBytes = CLAUDE_NATIVE_ROUTE_PROBE_MAX_VALUE_BYTES) {
+  if (typeof value !== "string" || !value || value.includes("\0")) return null;
+  if (Buffer.byteLength(value, "utf8") > maxBytes) return null;
+  return value.trim() === value ? value : null;
+}
+
+function nativeProbeVersionClass(value) {
+  const version = exactNativeProbeText(value, 64);
+  const match = version?.match(/^(\d{1,2})\.(\d{1,2})\.\d{1,3}(?:[-+][A-Za-z0-9.-]{1,32})?$/);
+  return match ? `${match[1]}.${match[2]}` : null;
+}
+
+function classifyNativeProbeModelRows(value) {
+  const failures = new Set();
+  const candidates = [];
+  let rowsSeen = 0;
+  if (!Array.isArray(value) || value.length > CLAUDE_NATIVE_ROUTE_PROBE_MAX_ROWS) {
+    failures.add("catalog_malformed");
+    return { candidates, failures, rowsSeen };
+  }
+
+  const values = new Set();
+  for (const row of value) {
+    rowsSeen += 1;
+    if (!row || typeof row !== "object" || Array.isArray(row)) {
+      failures.add("row_malformed");
+      continue;
+    }
+    const model = exactNativeProbeText(row.value);
+    const resolvedModel = exactNativeProbeText(row.resolvedModel);
+    if (!model) {
+      failures.add("row_malformed");
+      continue;
+    }
+    if (values.has(model)) {
+      failures.add("duplicate_value");
+      continue;
+    }
+    values.add(model);
+    if (model === "default" || row.disabled === true) {
+      failures.add("default_or_disabled");
+      continue;
+    }
+    // A native selector must resolve to itself. This rejects default, family,
+    // context, alias, and display-only values without an in-tree alias table.
+    if (!resolvedModel || resolvedModel !== model) {
+      failures.add("unresolved_or_alias");
+      continue;
+    }
+    if (row.supportsEffort !== true || !Array.isArray(row.supportedEffortLevels)) {
+      failures.add("missing_efforts");
+      continue;
+    }
+    if (
+      row.supportedEffortLevels.length === 0 ||
+      row.supportedEffortLevels.length > CLAUDE_NATIVE_ROUTE_PROBE_MAX_EFFORTS
+    ) {
+      failures.add("invalid_efforts");
+      continue;
+    }
+    const efforts = [];
+    const seenEfforts = new Set();
+    let invalidEffort = false;
+    for (const effortValue of row.supportedEffortLevels) {
+      const effort = exactNativeProbeText(effortValue, 16);
+      if (!effort || !NATIVE_MODEL_EFFORTS.has(effort) || seenEfforts.has(effort)) {
+        invalidEffort = true;
+        break;
+      }
+      seenEfforts.add(effort);
+      efforts.push(effort);
+    }
+    if (invalidEffort) {
+      failures.add("invalid_efforts");
+      continue;
+    }
+    candidates.push(Object.freeze({ value: model, efforts: Object.freeze(efforts) }));
+  }
+  return { candidates, failures, rowsSeen };
+}
+
+function nativeProbeReceipt({
+  cliVersionClass,
+  candidates,
+  failures,
+  frames,
+  noAcceptedTurn,
+  noGeneration,
+  noModelRequest,
+  noSessionContinuation,
+  noUserPrompt,
+  processCleaned,
+  rowsSeen,
+}) {
+  const failureClasses = [...failures].sort();
+  const result = failureClasses.length === 0 && candidates.length > 0 ? "candidate" : "HOLD";
+  const receipt = {
+    probe: "claude-native-route-control",
+    schema: CLAUDE_NATIVE_ROUTE_PROBE_SCHEMA,
+    cliVersionClass: cliVersionClass ?? "unknown",
+    counts: {
+      frames,
+      rowsSeen,
+      candidates: result === "candidate" ? candidates.length : 0,
+      failureClasses: failureClasses.length,
+    },
+    failureClasses,
+    noUserPrompt,
+    noAcceptedTurn,
+    noGeneration,
+    noSessionContinuation,
+    noModelRequest,
+    processCleaned,
+    result,
+  };
+  if (result === "candidate") receipt.candidates = candidates;
+  return Object.freeze(receipt);
+}
+
+/**
+ * One bounded zero-prompt Claude control request. This is intentionally not a
+ * Driver/admission API: a candidate is only parser evidence, never selection
+ * proof, and callers must not substitute it for a model turn.
+ */
+export async function runClaudeNativeRouteProbe(cwd, options = {}) {
+  const childEnv = options.env ?? process.env;
+  const claudeBin = options.claudeBin ?? resolveClaudeExecutable({ env: childEnv });
+  const timeoutMs = Number.isSafeInteger(options.timeoutMs) && options.timeoutMs > 0
+    ? Math.min(options.timeoutMs, CLAUDE_NATIVE_ROUTE_PROBE_TIMEOUT_MS)
+    : CLAUDE_NATIVE_ROUTE_PROBE_TIMEOUT_MS;
+  const maxStdoutBytes = Number.isSafeInteger(options.maxStdoutBytes) && options.maxStdoutBytes > 0
+    ? Math.min(options.maxStdoutBytes, CLAUDE_NATIVE_ROUTE_PROBE_MAX_STDOUT_BYTES)
+    : CLAUDE_NATIVE_ROUTE_PROBE_MAX_STDOUT_BYTES;
+  const maxStderrBytes = Number.isSafeInteger(options.maxStderrBytes) && options.maxStderrBytes > 0
+    ? Math.min(options.maxStderrBytes, CLAUDE_NATIVE_ROUTE_PROBE_MAX_STDERR_BYTES)
+    : CLAUDE_NATIVE_ROUTE_PROBE_MAX_STDERR_BYTES;
+  const requestId = `harnessdock-list-models-${randomBytes(12).toString("hex")}`;
+  const controlInput = `${JSON.stringify({
+    type: "control_request",
+    request_id: requestId,
+    request: { subtype: "list_models" },
+  })}\n`;
+  const args = buildArgs("", {
+    outputFormat: "stream-json",
+    inputFormat: "stream-json",
+    replayUserMessages: false,
+    noSessionPersistence: true,
+  });
+  const failures = new Set();
+  let candidates = [];
+  let rowsSeen = 0;
+  let frames = 0;
+  let cliVersionClass = null;
+  let initObserved = false;
+  let controlObserved = false;
+  let stdoutBytes = 0;
+  let stderrBytes = 0;
+  let lineBuffer = "";
+  let noAcceptedTurn = true;
+  let noGeneration = true;
+  let noModelRequest = true;
+  let noSessionContinuation = true;
+  let noUserPrompt = true;
+  let processCleaned = false;
+  let pidIdentity = null;
+  let shutdownPromise = null;
+  let deadline = null;
+  let settled = false;
+
+  const addFailure = (failure) => failures.add(failure);
+  const spawnImpl = options.spawnImpl ?? spawn;
+  let proc;
+  try {
+    proc = spawnImpl(claudeBin, args, {
+      cwd,
+      env: childEnv,
+      detached: true,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+  } catch {
+    addFailure("launch_failed");
+    return nativeProbeReceipt({
+      cliVersionClass,
+      candidates,
+      failures,
+      frames,
+      noAcceptedTurn,
+      noGeneration,
+      noModelRequest,
+      noSessionContinuation,
+      noUserPrompt,
+      processCleaned,
+      rowsSeen,
+    });
+  }
+
+  const hasValidIdentity = () => Number.isFinite(proc.pid) && Boolean(String(pidIdentity ?? "").trim());
+  try {
+    pidIdentity = (options.getProcessIdentity ?? getProcessIdentity)(proc.pid);
+  } catch {
+    addFailure("launch_identity_missing");
+  }
+
+  const requestShutdown = () => {
+    if (shutdownPromise) return shutdownPromise;
+    shutdownPromise = (async () => {
+      if (!proc.stdin.destroyed) {
+        try { proc.stdin.destroy(); } catch {}
+      }
+      if (!hasValidIdentity()) {
+        try { proc.kill("SIGTERM"); } catch {}
+        addFailure("cleanup_ambiguous");
+        return;
+      }
+      const cancellation = await cancelClaudeProcess(proc.pid, pidIdentity, options.processControlOptions);
+      if (cancellation.cancelled !== true) addFailure("cleanup_ambiguous");
+    })();
+    return shutdownPromise;
+  };
+
+  const rejectProtocol = (failure) => {
+    addFailure(failure);
+    void requestShutdown();
+  };
+
+  const observeFrame = (event) => {
+    frames += 1;
+    if (!event || typeof event !== "object" || Array.isArray(event) || typeof event.type !== "string") {
+      rejectProtocol("malformed_response");
+      return;
+    }
+    if (event.type === "system") {
+      if (event.subtype !== "init" || initObserved || nativeProbeVersionClass(event.claude_code_version) == null) {
+        rejectProtocol("malformed_initialization");
+        return;
+      }
+      initObserved = true;
+      cliVersionClass = nativeProbeVersionClass(event.claude_code_version);
+      return;
+    }
+    if (event.type === "control_response") {
+      const response = event.response;
+      if (!response || typeof response !== "object" || Array.isArray(response)) {
+        rejectProtocol("malformed_response");
+        return;
+      }
+      if (response.request_id !== requestId) {
+        rejectProtocol("correlation_mismatch");
+        return;
+      }
+      if (response.subtype !== "success" || controlObserved) {
+        rejectProtocol(response.subtype === "error" ? "control_error" : "malformed_response");
+        return;
+      }
+      const payload = response.response;
+      if (!payload || typeof payload !== "object" || Array.isArray(payload) || !Object.hasOwn(payload, "models")) {
+        rejectProtocol("catalog_malformed");
+        return;
+      }
+      controlObserved = true;
+      const classified = classifyNativeProbeModelRows(payload.models);
+      candidates = classified.candidates;
+      rowsSeen = classified.rowsSeen;
+      for (const failure of classified.failures) addFailure(failure);
+      return;
+    }
+    if (event.type === "user") {
+      noUserPrompt = false;
+      noAcceptedTurn = false;
+      rejectProtocol("forbidden_user_event");
+      return;
+    }
+    if (event.type === "assistant") {
+      noAcceptedTurn = false;
+      noGeneration = false;
+      rejectProtocol("forbidden_assistant_event");
+      return;
+    }
+    if (event.type === "result") {
+      noAcceptedTurn = false;
+      noGeneration = false;
+      rejectProtocol("forbidden_result_event");
+      return;
+    }
+    if (event.type === "control_request") {
+      noModelRequest = false;
+      rejectProtocol("forbidden_model_request");
+      return;
+    }
+    if (event.type === "stream_event" && /resume|continuation/i.test(String(event.subtype ?? ""))) {
+      noSessionContinuation = false;
+      rejectProtocol("forbidden_session_continuation");
+      return;
+    }
+    rejectProtocol("unexpected_event");
+  };
+
+  return new Promise((resolve) => {
+    const finish = async () => {
+      if (settled) return;
+      settled = true;
+      if (deadline) clearTimeout(deadline);
+      if (shutdownPromise) await shutdownPromise;
+      if (!initObserved) addFailure("initialization_missing");
+      if (!controlObserved) addFailure("control_response_missing");
+      if (candidates.length === 0) addFailure("no_complete_candidate");
+      if (hasValidIdentity()) {
+        const group = await waitForProcessGroup(proc.pid, CLAUDE_NATIVE_ROUTE_PROBE_CLEANUP_WAIT_MS);
+        processCleaned = group.absent === true;
+        if (!processCleaned) addFailure("cleanup_ambiguous");
+      } else {
+        addFailure("cleanup_ambiguous");
+      }
+      resolve(nativeProbeReceipt({
+        cliVersionClass,
+        candidates,
+        failures,
+        frames,
+        noAcceptedTurn,
+        noGeneration,
+        noModelRequest,
+        noSessionContinuation,
+        noUserPrompt,
+        processCleaned,
+        rowsSeen,
+      }));
+    };
+
+    proc.stdin.on("error", () => rejectProtocol("input_write_failed"));
+    proc.stderr.on("data", (chunk) => {
+      stderrBytes += Buffer.byteLength(chunk);
+      if (stderrBytes > maxStderrBytes) rejectProtocol("stderr_oversized");
+    });
+    proc.stdout.setEncoding("utf8");
+    proc.stdout.on("data", (chunk) => {
+      stdoutBytes += Buffer.byteLength(chunk, "utf8");
+      if (stdoutBytes > maxStdoutBytes) {
+        rejectProtocol("stdout_oversized");
+        return;
+      }
+      lineBuffer += chunk;
+      if (Buffer.byteLength(lineBuffer, "utf8") > CLAUDE_NATIVE_ROUTE_PROBE_MAX_LINE_BYTES) {
+        rejectProtocol("stdout_oversized");
+        return;
+      }
+      let boundary;
+      while ((boundary = lineBuffer.indexOf("\n")) >= 0) {
+        const line = lineBuffer.slice(0, boundary);
+        lineBuffer = lineBuffer.slice(boundary + 1);
+        if (!line) continue;
+        try {
+          observeFrame(JSON.parse(line));
+        } catch {
+          rejectProtocol("malformed_response");
+        }
+      }
+    });
+    proc.on("error", () => {
+      addFailure("launch_failed");
+      void finish();
+    });
+    proc.on("close", () => {
+      if (lineBuffer.trim()) {
+        try {
+          observeFrame(JSON.parse(lineBuffer));
+        } catch {
+          addFailure("malformed_response");
+        }
+      }
+      void finish();
+    });
+
+    deadline = setTimeout(() => {
+      addFailure("timeout");
+      void requestShutdown();
+    }, timeoutMs);
+
+    if (!hasValidIdentity()) {
+      void requestShutdown();
+      return;
+    }
+    try {
+      // This is the only stdin frame. It is a control request, never a user
+      // prompt, and input is closed immediately after that one frame.
+      proc.stdin.end(controlInput, "utf8");
+    } catch {
+      rejectProtocol("input_write_failed");
+    }
+  });
 }
 
 /**
