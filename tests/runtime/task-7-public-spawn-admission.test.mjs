@@ -40,6 +40,7 @@ import {
 import { readJobFile, resolveJobFile } from "../../runtime/job-store.mjs";
 import { readVersionThreeJobRecord, resolveVersionThreeJobDirectory } from "../../runtime/v3-job-store.mjs";
 import { claudeCodeInstanceKey } from "../../runtime/claude-code-driver.mjs";
+import { MODEL_ALIASES, VALID_EFFORTS } from "../../runtime/claude-headless-adapter.mjs";
 import { canonicalAgentWorkspaceRoot } from "../../runtime/agent-store.mjs";
 import { inspectLeaseInventory } from "../../runtime/instance-admission-lease.mjs";
 import {
@@ -180,7 +181,10 @@ function seamClaudeReadiness(runtime) {
         maturity: "experimental",
         detailCode: "ready",
         routes: {
-          models: ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5"],
+          models: [...new Set(MODEL_ALIASES.values())],
+          effortsByModel: Object.fromEntries(
+            [...new Set(MODEL_ALIASES.values())].map((model) => [model, [...VALID_EFFORTS]]),
+          ),
           topologies: ["leaf", "native_orchestrator"],
           interaction: "noninteractive_fixed_policy",
         },

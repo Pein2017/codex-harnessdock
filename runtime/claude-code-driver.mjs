@@ -17,6 +17,7 @@ import path from "node:path";
 
 import {
   MODEL_ALIASES,
+  VALID_EFFORTS,
   cancelClaudeProcess,
   getClaudeAuthStatus,
   getClaudeAvailability,
@@ -67,6 +68,9 @@ import { terminalMetricsFromEvidence } from "./terminal-metrics.mjs";
 
 export const CLAUDE_CODE_HARNESS_ID = "claude-code";
 export const CLAUDE_CODE_DRIVER_VERSION = "claude-code@2";
+
+const CHECKOUT_DECLARED_CLAUDE_MODELS = Object.freeze([...new Set(MODEL_ALIASES.values())]);
+const CHECKOUT_DECLARED_CLAUDE_EFFORTS = Object.freeze([...VALID_EFFORTS]);
 
 /**
  * Observable behavior of a Claude Code turn under this checkout.
@@ -1073,7 +1077,10 @@ export function createClaudeCodeDriverV2(options = {}) {
         detailCode: host.detailCode,
         routes: host.readiness === "ready"
           ? {
-              models: [...new Set(MODEL_ALIASES.values())],
+              models: [...CHECKOUT_DECLARED_CLAUDE_MODELS],
+              effortsByModel: Object.fromEntries(
+                CHECKOUT_DECLARED_CLAUDE_MODELS.map((model) => [model, [...CHECKOUT_DECLARED_CLAUDE_EFFORTS]]),
+              ),
               topologies: ["leaf", "native_orchestrator"],
               interaction: "noninteractive_fixed_policy",
             }

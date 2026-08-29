@@ -185,8 +185,8 @@ export function createFakeServiceDriver(options = {}) {
         detailCode: instance.detailCode,
         routes: instance.readiness === "ready"
           ? {
-            models: [`${harnessId}-standard`],
-            effortsByModel: { [`${harnessId}-standard`]: ["high"] },
+            models: ["standard-tier"],
+            effortsByModel: { "standard-tier": ["high"] },
             interaction: capabilities.values.interaction,
           }
           : null,

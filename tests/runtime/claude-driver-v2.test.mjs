@@ -49,7 +49,7 @@ import {
 import { classifyTurnSettlement, isPublishableTerminal } from "../../runtime/turn-settlement.mjs";
 import { createExecutionProfile } from "../../runtime/execution-profile.mjs";
 import { writeJobFile } from "../../runtime/job-store.mjs";
-import { DEFAULT_EFFORT_BY_MODEL, VALID_EFFORTS } from "../../runtime/claude-headless-adapter.mjs";
+import { DEFAULT_EFFORT_BY_MODEL, MODEL_ALIASES, VALID_EFFORTS } from "../../runtime/claude-headless-adapter.mjs";
 
 const priorHome = process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
 const roots = [];
@@ -300,6 +300,12 @@ describe("Claude Code logical instance inspection", () => {
   it("holds Claude at checkout-declared provenance and unavailable generation", async () => {
     const { driver } = makeDriver();
     const [inspection] = await inspectDriverInstances(driver, inspectScope(driver));
+    const models = [...new Set(MODEL_ALIASES.values())];
+    assert.deepEqual(inspection.routes.models, models);
+    assert.deepEqual(
+      inspection.routes.effortsByModel,
+      Object.fromEntries(models.map((model) => [model, [...VALID_EFFORTS]])),
+    );
     const route = driver.validateRoute({
       harnessId: CLAUDE_CODE_HARNESS_ID,
       model: "claude-sonnet-5",
