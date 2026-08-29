@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { DRIVER_CONTRACT_VERSION_V2, assertNativeReferenceEnvelope, boundedDriverReceipt, driverPreTransportRejection, isBoundedRouteAtom, isBoundedRouteText, splitFullModelRoute } from "./harness-contract.mjs";
-import { ROUTE_CAPABILITY_SCHEMA_VERSION } from "./harness-capabilities.mjs";
+import { ROUTE_CAPABILITY_NAMES, ROUTE_CAPABILITY_SCHEMA_VERSION } from "./harness-capabilities.mjs";
 import { NATIVE_REFERENCE_ENVELOPE_VERSION } from "./native-reference.mjs";
 import { resolvePluginRuntimeRoot } from "./paths.mjs";
 import { plainDataTree } from "./plain-record.mjs";
@@ -141,6 +141,7 @@ function routeCapabilities() {
   return Object.freeze({ capabilitySchemaVersion: ROUTE_CAPABILITY_SCHEMA_VERSION, driverMaturity: "experimental",
     values: Object.freeze({ interaction: "noninteractive_fixed_policy", activeInput: "acknowledged_active_stream", continuation: "exact_resume", history: "assistant_messages", interruptRequest: "supported", turnObservation: "unavailable", automaticRecovery: "none", authorityEnforcement: "prompt_only", leafEnforcement: "prompt_only", nativeOrchestration: "opaque_bounded" }),
     maturity: Object.freeze(Object.fromEntries(["interaction", "activeInput", "continuation", "history", "interruptRequest", "turnObservation", "automaticRecovery", "authorityEnforcement", "leafEnforcement", "nativeOrchestration"].map((key) => [key, "experimental"]))),
+    provenance: Object.freeze(Object.fromEntries(ROUTE_CAPABILITY_NAMES.map((key) => [key, "checkout_declared"]))),
   });
 }
 
@@ -190,6 +191,9 @@ export function createPiDriver(options = {}) {
   const fixedEnv = options.env ?? process.env;
   const test = options._test ?? null;
   const sessionRoot = test?.sessionRoot ?? path.join(resolvePluginRuntimeRoot(), "pi-sessions");
+  const inspectionGeneration = () => typeof test?.inspectionGeneration === "function"
+    ? test.inspectionGeneration()
+    : (test?.inspectionGeneration ?? "unavailable");
   function modelList(value) {
     const rows = Array.isArray(value?.models) ? value.models : (Array.isArray(value) ? value : []);
     if (rows.length === 0 || rows.length > MAX_DISCOVERED_MODELS) throw new Error("Pi RPC returned no bounded available models.");
@@ -268,9 +272,9 @@ export function createPiDriver(options = {}) {
       try {
         const facts = await discover(scope);
         const routes = inspectionRouteFacts(facts.models, facts.effortsByModel);
-        return [{ harnessId: PI_HARNESS_ID, instanceKey: INSTANCE_KEY, readiness: "ready", liveValidated: true, maturity: "experimental", detailCode: "ready", routes: Object.freeze(routes) }];
+        return [{ harnessId: PI_HARNESS_ID, instanceKey: INSTANCE_KEY, readiness: "ready", liveValidated: true, maturity: "experimental", detailCode: "ready", routes: Object.freeze(routes), capabilityProvenance: routeCapabilities().provenance, inspectionGeneration: inspectionGeneration() }];
       } catch (error) {
-        return [{ harnessId: PI_HARNESS_ID, instanceKey: INSTANCE_KEY, readiness: "unavailable", liveValidated: true, maturity: "experimental", detailCode: piDiscoveryFailure(error), routes: null }];
+        return [{ harnessId: PI_HARNESS_ID, instanceKey: INSTANCE_KEY, readiness: "unavailable", liveValidated: true, maturity: "experimental", detailCode: piDiscoveryFailure(error), routes: null, capabilityProvenance: routeCapabilities().provenance, inspectionGeneration: inspectionGeneration() }];
       }
     },
     validateRoute(request, inspection) {

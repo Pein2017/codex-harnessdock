@@ -11,7 +11,7 @@
  * object itself exposes only the contract surface.
  */
 
-import { ROUTE_CAPABILITY_SCHEMA_VERSION } from "../../../runtime/harness-capabilities.mjs";
+import { ROUTE_CAPABILITY_NAMES, ROUTE_CAPABILITY_SCHEMA_VERSION } from "../../../runtime/harness-capabilities.mjs";
 import {
   DRIVER_CONTRACT_VERSION_V2,
   boundedDriverReceipt,
@@ -56,6 +56,10 @@ function defaultCapabilities(overrides = {}) {
       leafEnforcement: "validated",
       nativeOrchestration: "validated",
       ...(overrides.maturity ?? {}),
+    },
+    provenance: {
+      ...Object.fromEntries(ROUTE_CAPABILITY_NAMES.map((name) => [name, "checkout_declared"])),
+      ...(overrides.provenance ?? {}),
     },
   };
 }
@@ -186,6 +190,8 @@ export function createFakeServiceDriver(options = {}) {
             interaction: capabilities.values.interaction,
           }
           : null,
+        capabilityProvenance: capabilities.provenance,
+        inspectionGeneration: options.inspectionGeneration ?? "unavailable",
       }));
     },
 

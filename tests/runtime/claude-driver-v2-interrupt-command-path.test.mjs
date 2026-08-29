@@ -180,6 +180,7 @@ async function setup(options = {}) {
     assignedMessageIds: reservation.assignedMessages.map((message) => message.messageId),
     preparedInput: PROMPT,
     turnOptions: preparedTurn.turnOptions,
+    inspectionEvidence: { generation: "unavailable", capabilities: v3Route.capabilities },
   });
 
   function readNativeTurnRef() {

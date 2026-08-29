@@ -186,6 +186,7 @@ async function setup(options = {}) {
     assignedMessageIds,
     preparedInput: PROMPT,
     turnOptions: launchTurnOptions,
+    inspectionEvidence: { generation: "unavailable", capabilities: v3Route.capabilities },
   });
 
   return {
@@ -472,7 +473,7 @@ describe("Task 7 correction — turn options are durably bound to the launch cla
   function claimInput(overrides) {
     const binding = { ownerRootId: "root-opt", agentId: "agent-opt", jobId: "job-opt" };
     const route = versionThreeRoute();
-    return {
+    const input = {
       ...binding,
       attemptId: "attempt-same",
       route,
@@ -488,6 +489,10 @@ describe("Task 7 correction — turn options are durably bound to the launch cla
       preparedInput: "identical prompt",
       ...overrides,
     };
+    if (!Object.hasOwn(overrides, "inspectionEvidence")) {
+      input.inspectionEvidence = { generation: "unavailable", capabilities: input.route.capabilities };
+    }
+    return input;
   }
 
   it("refuses an omitted turn-option value rather than inventing one", () => {
@@ -630,6 +635,7 @@ describe("Task 7 correction — turn options are durably bound to the launch cla
       assignedMessageIds: ["message-1"],
       preparedInput,
       turnOptions: { tier: "one" },
+      inspectionEvidence: { generation: "unavailable", capabilities: route.capabilities },
     });
 
     const first = await launchVersionThreeTurn(launchInput({ tier: "one" }));

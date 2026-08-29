@@ -16,7 +16,11 @@ import {
   runDetachedVersionThreeTurn,
 } from "./v3-worker-entry.mjs";
 import { createAgentStore } from "./agent-store.mjs";
-import { FUTURE_WRITE_GENERATION, versionThreeRouteText } from "./durable-state-v3.mjs";
+import {
+  FUTURE_WRITE_GENERATION,
+  assertSameDurableRouteSemantics,
+  versionThreeRouteText,
+} from "./durable-state-v3.mjs";
 import {
   NATIVE_REFERENCE_ENVELOPE_VERSION,
   validateNativeReferenceEnvelope,
@@ -49,6 +53,7 @@ import {
 } from "./claude-legacy-adapter.mjs";
 import {
   admittedDriverDescription,
+  validateRouteInspectionEvidence,
   validateHarnessTurnResult,
   validateInstanceInspection,
   validateNormalizedTerminalResult,
@@ -593,6 +598,19 @@ function pendingPublicProgress(cwd, ownerRootId, jobId = null, progressJobIds = 
  * facts rather than computed, and an absent capacity stays null rather than
  * defaulting to a number.
  */
+const PUBLIC_ROUTE_FACT_FIELDS = Object.freeze([
+  "models", "topologies", "effortsByModel", "capacity", "interaction", "activeInput",
+  "continuation", "history", "interruptRequest", "turnObservation", "automaticRecovery",
+  "authorityEnforcement", "leafEnforcement", "nativeOrchestration", "authorities",
+]);
+
+function publicHarnessRoutes(routes) {
+  if (routes == null) return null;
+  return Object.freeze(Object.fromEntries(
+    PUBLIC_ROUTE_FACT_FIELDS.filter((field) => Object.hasOwn(routes, field)).map((field) => [field, routes[field]])
+  ));
+}
+
 function publicHarnessInstance(inspection) {
   const routes = inspection.routes ?? null;
   return Object.freeze({
@@ -602,7 +620,9 @@ function publicHarnessInstance(inspection) {
     live_validated: inspection.liveValidated,
     maturity: inspection.maturity,
     capacity: routes && Number.isSafeInteger(routes.capacity) ? routes.capacity : null,
-    routes: routes === null ? null : Object.freeze({ ...routes }),
+    routes: publicHarnessRoutes(routes),
+    ...(inspection.capabilityProvenance == null ? {} : { capability_provenance: inspection.capabilityProvenance }),
+    ...(inspection.inspectionGeneration == null ? {} : { inspection_generation: inspection.inspectionGeneration }),
   });
 }
 
@@ -1367,10 +1387,35 @@ class InternalAgentRuntime {
     if (assigned.length === 0) throw new Error(`Version-three job ${jobId} has no prepared initial assignment.`);
     const assignedMessageIds = assigned.map((message) => message.messageId);
     const taskInput = assigned.map((message) => message.text).join("\n\n");
-    const driver = resolveDriverV2(agent.route.harnessId, { env: this.env });
+    const executionRoute = assertSameDurableRouteSemantics(
+      agent.route,
+      options.executionRoute,
+      `Version-three Agent ${agent.path} launch`,
+    );
+    const driver = resolveDriverV2(executionRoute.harnessId, { env: this.env });
+    const inspectionEvidence = validateRouteInspectionEvidence(
+      options.inspectionEvidence, executionRoute, "Version-three launch inspection evidence"
+    );
     const turnOptions = options.turnOptions ?? null;
     let leases = [];
     let claim = readLaunchClaim(identity);
+    if (claim) {
+      if (claim.inspectionEvidence == null) {
+        throw new Error("Version-three launch refuses an evidence-less historical claim before submission.");
+      }
+      if (
+        claim.lifecycleOwner !== "version_three_worker" ||
+        claim.controlRoot !== agent.workspaceRoot ||
+        claim.executionRoot !== (agent.executionRoot ?? agent.workspaceRoot)
+      ) {
+        throw new Error("Version-three launch claim does not bind this Agent's control and execution roots.");
+      }
+      assertSameDurableRouteSemantics(agent.route, claim.route, `Version-three launch claim ${jobId}`);
+      validateRouteInspectionEvidence(claim.inspectionEvidence, executionRoute, "Version-three launch claim inspection evidence");
+      if (JSON.stringify(claim.route) !== JSON.stringify(executionRoute)) {
+        throw new Error(`Version-three launch claim ${jobId} does not bind this exact execution route.`);
+      }
+    }
     try {
       if (claim) {
         if (claim.attemptId !== attemptId) {
@@ -1386,7 +1431,7 @@ class InternalAgentRuntime {
         }
       } else {
         const preparedTurn = driver.prepareTurn({
-          route: agent.route,
+          route: executionRoute,
           taskInput,
           turnOptions,
           turnId: jobId,
@@ -1396,7 +1441,7 @@ class InternalAgentRuntime {
           : validateNativeReferenceEnvelope(agent.nativeSessionRef, {
               driver,
               kind: "session",
-              route: agent.route,
+              route: executionRoute,
             });
         const expectedLease = nativeSessionRef == null
           ? {
@@ -1411,41 +1456,42 @@ class InternalAgentRuntime {
           lifecycleOwner: "version_three_worker",
           controlRoot: agent.workspaceRoot,
           executionRoot: agent.executionRoot ?? agent.workspaceRoot,
-          route: agent.route,
+          route: executionRoute,
           expectedLeases: [
             expectedLease,
-            ...(agent.route.authority === "behavioral_write"
+            ...(executionRoute.authority === "behavioral_write"
               ? [{ kind: "writer", workspaceRoot: agent.executionRoot ?? agent.workspaceRoot }]
               : []),
           ],
           assignedMessageIds,
           preparedInput: taskInput,
           turnOptions: preparedTurn.turnOptions ?? turnOptions,
+          inspectionEvidence,
         });
         const admissionLease = nativeSessionRef == null
           ? acquireIntendedInstanceLease({
               ...identity,
               attemptId,
-              route: agent.route,
-              harnessId: agent.route.harnessId,
-              instanceKey: agent.route.instanceKey,
+              route: executionRoute,
+              harnessId: executionRoute.harnessId,
+              instanceKey: executionRoute.instanceKey,
               capacityClass: `${V3_TURN_EVIDENCE_CLASS}:${jobId}`,
               capacityLimit: 1,
             })
           : acquireIntendedNativeSessionLease({
               ...identity,
               attemptId,
-              route: agent.route,
-              harnessId: agent.route.harnessId,
-              instanceKey: agent.route.instanceKey,
+              route: executionRoute,
+              harnessId: executionRoute.harnessId,
+              instanceKey: executionRoute.instanceKey,
               nativeSessionId: nativeSessionRef.locator.sessionId,
             });
         leases = [admissionLease];
-        if (agent.route.authority === "behavioral_write") {
+        if (executionRoute.authority === "behavioral_write") {
           leases.push(acquireIntendedWorkspaceWriterLease({
             ...identity,
             attemptId,
-            route: agent.route,
+            route: executionRoute,
             workspaceRoot: agent.executionRoot ?? agent.workspaceRoot,
           }));
         }

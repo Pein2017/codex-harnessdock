@@ -8,6 +8,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 import { createAgentRuntime } from "../../runtime/agent-runtime.mjs";
+import { resolveAgentRegistryDirectory } from "../../runtime/agent-store.mjs";
 import { createCcMcpServer } from "../../runtime/mcp-server.mjs";
 import { FUTURE_WRITE_GENERATION } from "../../runtime/durable-state-v3.mjs";
 import {
@@ -55,6 +56,8 @@ function setup() {
       maturity: "experimental",
       detailCode: "ready",
       routes: { models: [PI_MODEL], topologies: ["leaf"], interaction: "noninteractive_fixed_policy", effortsByModel: { [PI_MODEL]: ["medium", "high"] }, defaultsByModel: { [PI_MODEL]: "high" } },
+      capabilityProvenance: Object.fromEntries(["interaction", "activeInput", "continuation", "history", "interruptRequest", "turnObservation", "automaticRecovery", "authorityEnforcement", "leafEnforcement", "nativeOrchestration"].map((name) => [name, "checkout_declared"])),
+      inspectionGeneration: "unavailable",
     }],
   });
   const launches = [];
@@ -138,6 +141,7 @@ describe("Pi public generation v3 dispatch", () => {
       driver,
       inspections: ["pi-local-a", "pi-local-b"].map((instanceKey) => ({
         harnessId: PI_HARNESS_ID, instanceKey, readiness: "ready", liveValidated: true, maturity: "experimental", detailCode: "ready", routes: routeFacts,
+        capabilityProvenance: Object.fromEntries(["interaction", "activeInput", "continuation", "history", "interruptRequest", "turnObservation", "automaticRecovery", "authorityEnforcement", "leafEnforcement", "nativeOrchestration"].map((name) => [name, "checkout_declared"])), inspectionGeneration: "unavailable",
       })),
     });
     await assert.rejects(context.runtime.spawnAgent(spawnInput({ task_name: "ambiguous_pi" })), /2 ready logical instances/);
@@ -147,6 +151,8 @@ describe("Pi public generation v3 dispatch", () => {
   it("keeps follow-up and interrupt on the v3 worker path", async () => {
     const context = setup();
     const receipt = await context.runtime.spawnAgent(spawnInput());
+    assert.equal(receipt.inspection_generation, "unavailable");
+    assert.deepEqual(receipt.capability_provenance, context.launches[0].inspectionEvidence.capabilities.provenance);
     const store = context.runtime.versionThreeStore();
     const agent = store.resolveTarget(receipt.agent_name);
     const attemptId = context.launches[0].attemptId;
@@ -189,6 +195,81 @@ describe("Pi public generation v3 dispatch", () => {
     assert.equal(context.launches.length, 2);
   });
 
+  it("revalidates only the immutable instance when other ready instances appear", async () => {
+    const context = setup();
+    const receipt = await context.runtime.spawnAgent(spawnInput({ task_name: "pi_instance_revalidation" }));
+    const store = context.runtime.versionThreeStore();
+    const agent = store.resolveTarget(receipt.agent_name);
+    const initial = await context.runtime.jobs.inspectRouteInstance(PI_HARNESS_ID);
+    const own = initial.inspections[0];
+    const ready = (instanceKey) => ({ ...own, instanceKey });
+    context.runtime.jobs.inspectRouteInstance = async () => ({
+      ...initial,
+      inspections: [ready(agent.route.instanceKey), ready("pi-foreign")],
+    });
+    store.updateAgent(agent.agentId, (current) => ({ ...current, activeJobId: null, status: "completed" }));
+    await context.runtime.followupTask({ target: receipt.agent_name, message: "ignore the foreign ready instance" });
+    assert.equal(context.launches.length, 2);
+    assert.equal(context.launches[1].executionRoute.instanceKey, agent.route.instanceKey);
+
+    store.updateAgent(agent.agentId, (current) => ({ ...current, activeJobId: null, status: "completed" }));
+    const beforeMessages = store.listMessages(agent.agentId).length;
+    for (const inspections of [[], [ready(agent.route.instanceKey), ready(agent.route.instanceKey)]]) {
+      context.runtime.jobs.inspectRouteInstance = async () => ({ ...initial, inspections });
+      await assert.rejects(
+        context.runtime.followupTask({ target: receipt.agent_name, message: "must not reserve without one matching instance" }),
+        /exactly one current ready inspection/,
+      );
+      assert.equal(store.listMessages(agent.agentId).length, beforeMessages);
+    }
+  });
+
+  it("revalidates a stored v2 Agent into a private v3 execution route without rewriting history", async () => {
+    const context = setup();
+    const receipt = await context.runtime.spawnAgent(spawnInput({ task_name: "pi_v2_forward" }));
+    const store = context.runtime.versionThreeStore();
+    const created = store.resolveTarget(receipt.agent_name);
+    store.updateAgent(created.agentId, (current) => ({ ...current, activeJobId: null, status: "completed" }));
+    const registryPath = path.join(resolveAgentRegistryDirectory({
+      cwd: created.workspaceRoot, ownerRootId: context.ownerRootId,
+    }), "registry.json");
+    const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+    const historical = registry.agents[created.agentId];
+    const { provenance: _provenance, ...v2Capabilities } = historical.route.capabilities;
+    historical.route = {
+      ...historical.route,
+      capabilitySchemaVersion: 2,
+      capabilities: { ...v2Capabilities, capabilitySchemaVersion: 2 },
+    };
+    const historicalRoute = JSON.stringify(historical.route);
+    fs.writeFileSync(registryPath, JSON.stringify(registry));
+
+    await context.runtime.followupTask({ target: receipt.agent_name, message: "freshly revalidate this v2 route" });
+    const launch = context.launches.at(-1);
+    assert.equal(launch.executionRoute.capabilitySchemaVersion, 3);
+    assert.deepEqual(launch.inspectionEvidence.capabilities, launch.executionRoute.capabilities);
+    const after = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+    assert.equal(JSON.stringify(after.agents[created.agentId].route), historicalRoute);
+
+    const beforeMessages = store.listMessages(created.agentId).length;
+    context.runtime.jobs.inspectRouteInstance = async () => ({
+      driver: resolveDriverV2(PI_HARNESS_ID, { env: {} }),
+      inspections: [{
+        harnessId: PI_HARNESS_ID, instanceKey: "pi-local", readiness: "ready", liveValidated: true,
+        maturity: "experimental", detailCode: "ready",
+        routes: { models: [], topologies: ["leaf"], interaction: "noninteractive_fixed_policy", effortsByModel: {}, defaultsByModel: {} },
+        capabilityProvenance: Object.fromEntries(["interaction", "activeInput", "continuation", "history", "interruptRequest", "turnObservation", "automaticRecovery", "authorityEnforcement", "leafEnforcement", "nativeOrchestration"].map((name) => [name, "checkout_declared"])),
+        inspectionGeneration: `sha256:${"b".repeat(64)}`,
+      }],
+    });
+    store.updateAgent(created.agentId, (current) => ({ ...current, activeJobId: null, status: "completed" }));
+    await assert.rejects(
+      context.runtime.followupTask({ target: receipt.agent_name, message: "must not enqueue a vanished tuple" }),
+      /model|route|admit/i,
+    );
+    assert.equal(store.listMessages(created.agentId).length, beforeMessages);
+  });
+
   it("carries the canonical effective effort through the real detached worker entry", async () => {
     const context = setup();
     const receipt = await context.runtime.spawnAgent(spawnInput({ task_name: "pi_worker_effort" }));
@@ -218,15 +299,30 @@ describe("Pi public generation v3 dispatch", () => {
       assignedMessageIds,
       preparedInput: "Inspect the repository.",
       turnOptions: { effort: "high" },
+      inspectionEvidence: { generation: "unavailable", capabilities: agent.route.capabilities },
     });
     // This reaches the production runWorker -> runDetachedVersionThreeTurn
-    // seam without stubbing it. Remove the now-canonical fixed Pi directory
-    // only from this isolated runtime so fresh inspection fails before any
-    // native process is opened.
-    delete context.runtime.jobs.env.PI_CODING_AGENT_DIR;
+    // seam before any native operation; its stored Agent route is then made
+    // semantically foreign to the claim's v3 execution route.
+    const registryPath = path.join(resolveAgentRegistryDirectory({
+      cwd: agent.workspaceRoot, ownerRootId: context.ownerRootId,
+    }), "registry.json");
+    const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+    const stored = registry.agents[agent.agentId];
+    const { provenance: _provenance, ...v2Capabilities } = stored.route.capabilities;
+    stored.route = {
+      ...stored.route,
+      capabilitySchemaVersion: 2,
+      capabilities: {
+        ...v2Capabilities,
+        capabilitySchemaVersion: 2,
+        maturity: { ...v2Capabilities.maturity, continuation: "validated" },
+      },
+    };
+    fs.writeFileSync(registryPath, JSON.stringify(registry));
     await assert.rejects(
       context.runtime.jobs.runWorker(agent.activeJobId, { agentId: agent.agentId, attemptId: launch.attemptId }),
-      /Pi instance is not ready/
+      /route identity does not semantically derive/,
     );
   });
 

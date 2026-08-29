@@ -64,7 +64,7 @@ function fakePi(options = {}) {
 
 function fixture(options = {}) {
   const fakes = [];
-  const driver = createPiDriver({ env: { PI_CODING_AGENT_DIR: "/tmp/pi-config" }, _test: { sessionRoot: options.sessionRoot ?? "/tmp/pi-driver-fixture", spawn: (_command, argv) => {
+  const driver = createPiDriver({ env: { PI_CODING_AGENT_DIR: "/tmp/pi-config" }, _test: { inspectionGeneration: options.inspectionGeneration, sessionRoot: options.sessionRoot ?? "/tmp/pi-driver-fixture", spawn: (_command, argv) => {
     const fake = fakePi({ ...options, models: options.modelsForSpawn?.(fakes.length) ?? options.models }); fake.state.argv = argv;
     if (argv.includes("--no-session") && !argv.includes("--offline")) fake.state.catalogRefreshes += 1;
     fakes.push(fake); return fake.child;
@@ -173,6 +173,24 @@ describe("Pi Driver v2", () => {
     const scope = createDriverScope({ driver, purpose: "turn", route, taskInput: "x", turnOptions: { effort: route.effort }, env: { PI_CODING_AGENT_DIR: "/tmp/pi-config" } });
     const prepared = driver.prepareTurn({ route, taskInput: "x", turnOptions: { effort: route.effort } });
     await assert.rejects(driver.revalidatePreparedTurn(prepared, scope), /not freshly admitted|drifted/);
+  });
+
+  it("replaces a whole Pi projection and keeps safe generation evidence separate from route identity", async () => {
+    const firstToken = `sha256:${"a".repeat(64)}`;
+    const secondToken = `sha256:${"b".repeat(64)}`;
+    const generations = [firstToken, secondToken];
+    const { driver } = fixture({
+      inspectionGeneration: () => generations.shift(),
+      modelsForSpawn: (index) => index === 0 ? [PI_MODEL] : ["openai-codex/gpt-5.6-terra"],
+    });
+    const scope = createDriverScope({ driver, purpose: "inspect", env: { PI_CODING_AGENT_DIR: "/tmp/pi-config" } });
+    const firstInspection = (await driver.inspectInstances(scope))[0];
+    const secondInspection = (await driver.inspectInstances(scope))[0];
+    assert.deepEqual(firstInspection.capabilityProvenance, secondInspection.capabilityProvenance);
+    assert.equal(firstInspection.inspectionGeneration, firstToken);
+    assert.equal(secondInspection.inspectionGeneration, secondToken);
+    assert.deepEqual(secondInspection.routes.models, ["openai-codex/gpt-5.6-terra"]);
+    assert.equal(Object.hasOwn(secondInspection.routes.effortsByModel, PI_MODEL), false);
   });
 
   it("keeps direct native config parity across behavioral authorities", async () => {

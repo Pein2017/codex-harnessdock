@@ -20,6 +20,7 @@ import { PACKAGE_VERSION, SOURCE_ROOT } from "../../runtime/version.mjs";
 import { acquireInstanceLease } from "../../runtime/instance-admission-lease.mjs";
 import { acquireWorkspaceWriterLease } from "../../runtime/workspace-writer-lease.mjs";
 import { versionThreeRoute } from "./fixtures/version-three-state.mjs";
+import { projectNativeRouteDiscovery } from "../../runtime/release-smoke.mjs";
 
 const temporaryDirectories = [];
 
@@ -617,6 +618,30 @@ describe("doctor native-route discovery", () => {
     const pi = check.details.routes[0];
     assert.deepEqual(pi.effortsByModel["openai-codex/gpt-5.6-terra"], ["low", "high"]);
     assert.equal(pi.modelCount, 2);
+  });
+
+  it("reports only safe unchanged, changed, or unavailable inspection-generation drift", () => {
+    const token = `sha256:${"a".repeat(64)}`;
+    const changed = `sha256:${"b".repeat(64)}`;
+    const observation = (harness, instance, inspection_generation) => ({
+      harness,
+      instances: [{
+        instance,
+        inspection_generation,
+        readiness: "ready",
+        live_validated: true,
+        maturity: "experimental",
+        routes: { models: ["model"], effortsByModel: { model: ["high"] } },
+      }],
+    });
+    const check = diagnoseNativeRouteDiscovery({
+      nativeRoutes: projectNativeRouteDiscovery(
+        [observation("pi", "pi-local", token), observation("opencode", "opencode-local", changed), observation("claude-code", "claude-local", "unavailable"), observation("pi-new", "unmatched-current", token)],
+        [observation("pi", "pi-local", token), observation("opencode", "opencode-local", token), observation("claude-code", "claude-local", "unavailable")],
+      ),
+    });
+    assert.deepEqual(check.details.routes.map((route) => route.inspectionGeneration).sort(), ["changed", "unavailable", "unavailable", "unchanged"]);
+    assert.doesNotMatch(JSON.stringify(check), /sha256:[0-9a-f]{64}/);
   });
 
   it("distinguishes unavailable, ambiguous, and route-drift conditions and warns without repair", () => {

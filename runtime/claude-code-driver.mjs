@@ -54,7 +54,7 @@ import {
   canonicalNativeSessionRef,
   driverPreTransportRejection,
 } from "./harness-contract.mjs";
-import { ROUTE_CAPABILITY_SCHEMA_VERSION } from "./harness-capabilities.mjs";
+import { ROUTE_CAPABILITY_NAMES, ROUTE_CAPABILITY_SCHEMA_VERSION } from "./harness-capabilities.mjs";
 import { isAdmittedHarnessTurnFailureClass } from "./harness-failure-classes.mjs";
 import {
   NATIVE_REFERENCE_ENVELOPE_VERSION,
@@ -597,6 +597,7 @@ export function claudeRouteCapabilities(topology) {
       leafEnforcement: "validated",
       nativeOrchestration: orchestrator ? "experimental" : "validated",
     }),
+    provenance: Object.freeze(Object.fromEntries(ROUTE_CAPABILITY_NAMES.map((key) => [key, "checkout_declared"]))),
   });
 }
 
@@ -1037,6 +1038,8 @@ export function createClaudeCodeDriverV2(options = {}) {
           maturity: "experimental",
           detailCode: "not_configured",
           routes: null,
+          capabilityProvenance: claudeRouteCapabilities("leaf").provenance,
+          inspectionGeneration: "unavailable",
         }];
       }
       const instanceKey = fixedInstanceKey;
@@ -1057,6 +1060,8 @@ export function createClaudeCodeDriverV2(options = {}) {
           maturity: "experimental",
           detailCode: "unknown",
           routes: null,
+          capabilityProvenance: claudeRouteCapabilities("leaf").provenance,
+          inspectionGeneration: "unavailable",
         }];
       }
       return [{
@@ -1073,6 +1078,8 @@ export function createClaudeCodeDriverV2(options = {}) {
               interaction: "noninteractive_fixed_policy",
             }
           : null,
+        capabilityProvenance: claudeRouteCapabilities("leaf").provenance,
+        inspectionGeneration: "unavailable",
       }];
     },
 

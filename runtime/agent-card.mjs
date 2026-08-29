@@ -8,7 +8,9 @@ const SAFE_PHASES = Object.freeze({
   retrying: "retrying",
   reconnecting: "reconnecting",
 });
-import { isBoundedRouteAtom } from "./harness-contract.mjs";
+import { assertSameDurableRouteSemantics } from "./durable-state-v3.mjs";
+import { isBoundedRouteAtom, validateRouteInspectionEvidence } from "./harness-contract.mjs";
+import { readLaunchClaim } from "./launch-claim.mjs";
 
 function nullableEffort(value) {
   return isBoundedRouteAtom(value) ? value : null;
@@ -29,6 +31,31 @@ function safeElapsedSeconds(startedAt, endedAt, now) {
   return Math.max(0, Math.floor((end - start) / 1000));
 }
 
+function acceptedAttemptEvidence(agent, job) {
+  if (agent?.version !== 3 || !job?.ownerRootId || !job?.agentId || !job?.id || !job?.attemptId || !job?.route) return null;
+  try {
+    assertSameDurableRouteSemantics(agent.route, job.route, "Agent Card");
+    const claim = readLaunchClaim({ ownerRootId: job.ownerRootId, agentId: job.agentId, jobId: job.id });
+    if (!claim || claim.attemptId !== job.attemptId || claim.acceptance !== "acceptance_proven" ||
+        JSON.stringify(claim.route) !== JSON.stringify(job.route)) return null;
+    return validateRouteInspectionEvidence(claim.inspectionEvidence, claim.route, "Agent Card inspection evidence");
+  } catch {
+    return null;
+  }
+}
+
+function projectedInspectionEvidence(agent, job, options) {
+  if (options?.inspectionEvidence != null) {
+    if (agent?.version !== 3 || agent?.route == null) {
+      throw new Error("Agent Card inspection evidence requires a version-three Agent route.");
+    }
+    return validateRouteInspectionEvidence(
+      options.inspectionEvidence, agent.route, "Agent Card spawn inspection evidence"
+    );
+  }
+  return acceptedAttemptEvidence(agent, job);
+}
+
 /**
  * Project only retained Agent/job facts.  This is observation, not a liveness
  * or progress-delivery operation; callers must not persist its result.
@@ -47,6 +74,7 @@ export function projectAgentCard(agent, job, options = {}) {
   // at creation, including effective reasoning effort. Nothing about an
   // observed turn may restate that identity.
   const frozenRoute = agent?.version === 3 && agent?.route ? agent.route : null;
+  const inspectionEvidence = projectedInspectionEvidence(agent, job, options);
   const terminalJob = terminal.has(job?.status);
   const completedAt = terminalJob ? nullableTimestamp(job?.completedAt) : null;
   return {
@@ -57,6 +85,10 @@ export function projectAgentCard(agent, job, options = {}) {
     // only the Harness it recorded and no maturity to claim.
     harness: agent.harnessId ?? null,
     route_maturity: frozenRoute?.capabilities?.driverMaturity ?? null,
+    ...(inspectionEvidence == null ? {} : {
+      capability_provenance: inspectionEvidence.capabilities.provenance,
+      inspection_generation: inspectionEvidence.generation,
+    }),
     model: frozenRoute ? frozenRoute.model : agent.selectedModel,
     reasoning_effort: nullableEffort(frozenRoute?.effort ?? job?.request?.effort),
     // Historical per-turn write intent is legacy Claude evidence; it can never

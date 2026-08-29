@@ -529,11 +529,22 @@ export function assertNoLeakedConfiguration(value, context) {
   }
 }
 
-export function projectNativeRouteDiscovery(records) {
+export function projectNativeRouteDiscovery(records, previousRecords = null) {
+  const priorGenerations = new Map();
+  for (const record of Array.isArray(previousRecords) ? previousRecords : []) {
+    for (const instance of Array.isArray(record?.instances) ? record.instances : []) {
+      const harness = boundedAtom(record?.harness, 48);
+      const instanceKey = boundedAtom(instance?.instance, 64);
+      if (harness && instanceKey) priorGenerations.set(`${harness}\0${instanceKey}`, instance?.inspection_generation ?? null);
+    }
+  }
   return (Array.isArray(records) ? records : []).map((record) => {
     const harness = boundedAtom(record?.harness, 48) || "unknown";
     const instances = Array.isArray(record?.instances) ? record.instances : [];
     const projectedInstances = instances.slice(0, 8).map((instance) => {
+      const priorGeneration = priorGenerations.get(
+        `${harness}\0${boundedAtom(instance?.instance, 64)}`
+      ) ?? null;
       const routes = instance?.routes ?? null;
       const effortsByModel = routes && typeof routes.effortsByModel === "object" && routes.effortsByModel
         ? Object.fromEntries(
@@ -552,6 +563,8 @@ export function projectNativeRouteDiscovery(records) {
           : [],
         efforts: routes ? boundedEffortList(routes.reasoningEfforts) : [],
         effortsByModel,
+        inspectionGeneration: instance?.inspection_generation ?? null,
+        previousInspectionGeneration: priorGeneration,
       };
     });
     let status;
@@ -636,6 +649,14 @@ export async function probeInstalledMcp(options = {}) {
       // side-effect free by contract: it starts no work, mutates no Agent, and
       // does not start, stop, or reconfigure any Harness's Server. It is
       // therefore the only new call this zero-model smoke may add.
+      const firstHarnesses = await client.callTool(
+        { name: "list_harnesses", arguments: {}, _meta: meta },
+        undefined,
+        callOptions(60_000),
+      );
+      if (firstHarnesses?.isError) throw toolError(firstHarnesses, "list_harnesses");
+      const previousRecords = /** @type {any} */ (firstHarnesses?.structuredContent)?.harnesses;
+      if (!Array.isArray(previousRecords)) throw new Error("list_harnesses returned no structured Harness array.");
       const harnesses = await client.callTool(
         { name: "list_harnesses", arguments: {}, _meta: meta },
         undefined,
@@ -647,7 +668,7 @@ export async function probeInstalledMcp(options = {}) {
       harnessCount = records.length;
       // Bounded, redacted, zero-model projection of the fresh native-route
       // discovery this same call performed. No extra Server or model traffic.
-      nativeRoutes = projectNativeRouteDiscovery(records);
+      nativeRoutes = projectNativeRouteDiscovery(records, previousRecords);
       if (options.expectedHarnessCount != null && harnessCount !== options.expectedHarnessCount) {
         throw new Error(
           `Installed Plugin reported ${harnessCount} admitted Harnesses; this release admits ` +

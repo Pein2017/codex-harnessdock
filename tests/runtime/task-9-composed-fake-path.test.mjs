@@ -288,6 +288,10 @@ describe("Task 9.1 — one complete OpenCode turn through MCP, runtime, and the 
     assert.equal(typeof record.nativeTurnRef.locatorVersion, "number");
     assert.ok(record.nativeTurnRef.locator, "the turn reference carries its Driver's locator");
 
+    const listedCard = runtime.list_agents().agents.find((entry) => entry.agent_name === spawned.agent_name);
+    assert.deepEqual(listedCard.capability_provenance, claim.inspectionEvidence.capabilities.provenance);
+    assert.equal(listedCard.inspection_generation, claim.inspectionEvidence.generation);
+
     // 6. The Server saw exactly one session creation and one prompt, and
     //    nothing else mutating.
     const mutating = server.requests.filter((request) => request.method !== "GET");

@@ -138,6 +138,9 @@ function runtimeFor(serverUrl) {
       CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID: "generation-root",
       CODEX_HARNESSDOCK_RUNTIME_HOME: RUNTIME_HOME,
       CODEX_HARNESSDOCK_RUNTIME_ENV_FILE: "",
+      // A dead-origin test must not fall through to the host's native OpenCode
+      // diagnostic executable and turn into a dormant-route observation.
+      OPENCODE_EXECUTABLE: "",
     },
   });
 }
@@ -233,7 +236,7 @@ describe("public generation: list_harnesses observes without selecting", () => {
     const opencode = harnessOf(listing, OPENCODE_HARNESS_ID);
     assert.equal(opencode.driver_version, OPENCODE_DRIVER_VERSION);
     assert.equal(opencode.maturity, "experimental");
-    assert.equal(opencode.capability_schema_version, 2);
+    assert.equal(opencode.capability_schema_version, 3);
     assert.equal(opencode.instances.length, 1);
     const instance = opencode.instances[0];
     assert.equal(instance.instance, opencodeExplorerInstanceKey(url));
@@ -426,6 +429,7 @@ describe("public generation: list_harnesses through MCP and the operator CLI", (
           CODEX_HARNESSDOCK_RUNTIME_SOURCE_ROOT: "",
           CODEX_HARNESSDOCK_RUNTIME_ENV_FILE: envFileFor(DEAD_SERVER_URL),
           CODEX_HARNESSDOCK_RUNTIME_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "cc-generation-cli-")),
+          OPENCODE_EXECUTABLE: "",
         },
       }
     );

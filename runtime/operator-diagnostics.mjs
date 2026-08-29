@@ -28,6 +28,7 @@ import {
 } from "./plugin-installation.mjs";
 import { inspectIdentityCutover } from "./plugin-identity-cutover.mjs";
 import { inspectLeaseInventory } from "./instance-admission-lease.mjs";
+import { validateInspectionGeneration } from "./harness-contract.mjs";
 import { CANONICAL_RUNTIME_CHECKOUT, PACKAGE_VERSION, SOURCE_ROOT } from "./version.mjs";
 
 export const CANONICAL_CHECKOUT = CANONICAL_RUNTIME_CHECKOUT;
@@ -430,6 +431,19 @@ const NATIVE_ROUTE_LEAK_PATTERNS = [
   /\bmcpServers?\b|\.mcp\.json\b/i,
 ];
 
+function inspectionGenerationDrift(instance) {
+  try {
+    const current = validateInspectionGeneration(instance?.inspectionGeneration);
+    const previous = instance?.previousInspectionGeneration == null
+      ? null
+      : validateInspectionGeneration(instance.previousInspectionGeneration);
+    if (previous == null || current === "unavailable" || previous === "unavailable") return "unavailable";
+    return previous === current ? "unchanged" : "changed";
+  } catch {
+    return "unavailable";
+  }
+}
+
 /**
  * Bounded, redacted read-only diagnosis of the fresh native Pi/OpenCode route
  * discovery that the isolated MCP probe already performed. It reports route
@@ -480,6 +494,7 @@ export function diagnoseNativeRouteDiscovery(mcp) {
           ]),
         )
         : {},
+      inspectionGeneration: inspectionGenerationDrift(instance),
     };
   });
   const degraded = byStatus.unavailable.length + byStatus.ambiguous.length + byStatus.drift.length;

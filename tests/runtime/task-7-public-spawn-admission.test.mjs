@@ -38,7 +38,7 @@ import {
   releaseLeasesOnSettlement,
 } from "../../runtime/workspace-writer-lease.mjs";
 import { readJobFile, resolveJobFile } from "../../runtime/job-store.mjs";
-import { resolveVersionThreeJobDirectory } from "../../runtime/v3-job-store.mjs";
+import { readVersionThreeJobRecord, resolveVersionThreeJobDirectory } from "../../runtime/v3-job-store.mjs";
 import { claudeCodeInstanceKey } from "../../runtime/claude-code-driver.mjs";
 import { canonicalAgentWorkspaceRoot } from "../../runtime/agent-store.mjs";
 import { inspectLeaseInventory } from "../../runtime/instance-admission-lease.mjs";
@@ -184,6 +184,8 @@ function seamClaudeReadiness(runtime) {
           topologies: ["leaf", "native_orchestrator"],
           interaction: "noninteractive_fixed_policy",
         },
+        capabilityProvenance: Object.fromEntries(["interaction", "activeInput", "continuation", "history", "interruptRequest", "turnObservation", "automaticRecovery", "authorityEnforcement", "leafEnforcement", "nativeOrchestration"].map((name) => [name, "checkout_declared"])),
+        inspectionGeneration: "unavailable",
       }],
     };
   };
@@ -527,6 +529,8 @@ describe("Task 7 — one root owns Agents on both Harnesses with no cross-Harnes
     assert.equal(byName[explorer.path].harness, OPENCODE_HARNESS_ID);
     assert.equal(byName[explorer.path].model, OPENCODE_EXPLORER_MODEL);
     assert.equal(byName[claude.agent_name].model, "claude-sonnet-5");
+    assert.equal(byName[explorer.path].capability_provenance, undefined);
+    assert.equal(byName[explorer.path].inspection_generation, undefined);
 
     // A message addressed to one Agent reaches only that Agent's mailbox.
     runtime.sendMessage({ target: explorer.path, message: "for the Explorer only" });
@@ -743,6 +747,20 @@ describe("Task 7 — each Harness states exactly one execution lifecycle", () =>
     assert.equal(card?.agent_status, "completed", "the Explorer turn must settle through the public surface");
 
     const agent = runtime.versionThreeStore().resolveTarget(agentId);
+    const claim = readLaunchClaim({
+      ownerRootId: runtime.ownerRootId,
+      agentId,
+      jobId: agent.latestJobId,
+    });
+    const job = readVersionThreeJobRecord({
+      ownerRootId: runtime.ownerRootId,
+      agentId,
+      jobId: agent.latestJobId,
+    });
+    assert.equal(claim?.acceptance, "acceptance_proven");
+    assert.ok(job, "the accepted version-three turn has a durable job record");
+    assert.deepEqual(card.capability_provenance, claim.inspectionEvidence.capabilities.provenance);
+    assert.equal(card.inspection_generation, claim.inspectionEvidence.generation);
     assert.equal(agent.version, 3);
     assert.equal(agent.route.harnessId, OPENCODE_HARNESS_ID);
     assert.equal(harnessExecutionLifecycle(agent.route.harnessId), "version_three_worker");
@@ -794,6 +812,9 @@ describe("Task 7 — each Harness states exactly one execution lifecycle", () =>
     const claim = readLaunchClaim({ ownerRootId: runtime.ownerRootId, agentId: agent.agentId, jobId });
     assert.equal(claim.submissionState, "rollback_complete");
     assert.equal(claim.acceptance, "not_submitted");
+    const card = runtime.listAgents().agents.find((entry) => entry.agent_name === agent.path);
+    assert.equal(card.capability_provenance, undefined);
+    assert.equal(card.inspection_generation, undefined);
     assert.equal(rollbackPreparedVersionThreeTurn({
       cwd: runtime.cwd,
       ownerRootId: runtime.ownerRootId,

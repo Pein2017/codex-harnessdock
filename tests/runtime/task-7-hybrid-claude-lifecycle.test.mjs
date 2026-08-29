@@ -112,6 +112,8 @@ function seamClaude(runtime) {
         topologies: ["leaf", "native_orchestrator"],
         interaction: "noninteractive_fixed_policy",
       },
+      capabilityProvenance: Object.fromEntries(["interaction", "activeInput", "continuation", "history", "interruptRequest", "turnObservation", "automaticRecovery", "authorityEnforcement", "leafEnforcement", "nativeOrchestration"].map((name) => [name, "checkout_declared"])),
+      inspectionGeneration: "unavailable",
     }],
   });
   runtime.jobs.assertReady = () => readinessReceipt(runtime);

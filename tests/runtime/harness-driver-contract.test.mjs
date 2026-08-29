@@ -50,6 +50,7 @@ import {
   validateHarnessTurnResult,
   validateCanonicalRoute,
   validateLiveHarnessTurn,
+  validateInstanceInspection,
   validateNormalizedTerminalResult,
   validatePreparedTurn,
 } from "../../runtime/harness-contract.mjs";
@@ -142,11 +143,72 @@ function routeCapabilities(overrides = {}) {
       leafEnforcement: "validated",
       nativeOrchestration: "validated",
     },
+    provenance: Object.fromEntries(
+      ROUTE_CAPABILITY_NAMES.map((name) => [name, "checkout_declared"]),
+    ),
     ...overrides,
   };
 }
 
 describe("Harness Driver contract", () => {
+  it("requires capability-schema v3 provenance and bounded inspection evidence", () => {
+    const provenance = Object.fromEntries(
+      ROUTE_CAPABILITY_NAMES.map((name) => [name, "checkout_declared"]),
+    );
+    const snapshot = {
+      capabilitySchemaVersion: 3,
+      driverMaturity: "experimental",
+      values: routeCapabilities().values,
+      maturity: routeCapabilities().maturity,
+      provenance,
+    };
+    assert.equal(ROUTE_CAPABILITY_SCHEMA_VERSION, 3);
+    assert.deepEqual(validateRouteCapabilitySnapshot(snapshot).provenance, provenance);
+
+    const { continuation: _missing, ...missing } = provenance;
+    assert.throws(
+      () => validateRouteCapabilitySnapshot({ ...snapshot, provenance: missing }),
+      /provenance|continuation/,
+    );
+    assert.throws(
+      () => validateRouteCapabilitySnapshot({ ...snapshot, provenance: { ...provenance, telepathy: "checkout_declared" } }),
+      /unknown capability provenance: telepathy/,
+    );
+
+    const inspection = validateInstanceInspection({
+      harnessId: "fake-service",
+      instanceKey: "tenant-alpha",
+      readiness: "ready",
+      liveValidated: true,
+      maturity: "experimental",
+      detailCode: "ready",
+      routes: { models: ["fake-service-standard"], effortsByModel: { "fake-service-standard": ["high"] } },
+      capabilityProvenance: provenance,
+      inspectionGeneration: "unavailable",
+    }, { harnessId: "fake-service" });
+    assert.equal(inspection.inspectionGeneration, "unavailable");
+    assert.deepEqual(inspection.capabilityProvenance, provenance);
+    for (const omitted of ["capabilityProvenance", "inspectionGeneration"]) {
+      const invalid = {
+        harnessId: "fake-service",
+        instanceKey: "tenant-alpha",
+        readiness: "ready",
+        liveValidated: true,
+        maturity: "experimental",
+        detailCode: "ready",
+        routes: { models: ["fake-service-standard"], effortsByModel: { "fake-service-standard": ["high"] } },
+        capabilityProvenance: provenance,
+        inspectionGeneration: "unavailable",
+      };
+      delete invalid[omitted];
+      assert.throws(() => validateInstanceInspection(invalid, { harnessId: "fake-service" }), /requires current capability provenance and inspection generation/);
+    }
+    assert.throws(() => validateInstanceInspection({
+      harnessId: "fake-service", instanceKey: "tenant-alpha", readiness: "ready", liveValidated: true,
+      maturity: "experimental", detailCode: "ready", routes: null,
+    }, { harnessId: "fake-service" }), /requires current capability provenance and inspection generation/);
+  });
+
   it("publishes one closed capability vocabulary and fails on anything outside it", () => {
     assert.deepEqual(HARNESS_CAPABILITY_NAMES, [
       "activeInput",
@@ -290,6 +352,10 @@ describe("Harness Driver contract", () => {
       "claude_config_dir",
       "env_file",
       "capability_override",
+      "provenance",
+      "generation",
+      "native_config_path",
+      "capability_snapshot",
     ]) {
       assert.throws(
         () => assertNoHarnessImplementationSelector({ [key]: "/somewhere" }, "spawn_agent"),
@@ -846,8 +912,8 @@ describe("Harness Driver contract", () => {
 });
 
 describe("Driver Contract v2 route capabilities", () => {
-  it("publishes the closed version-two dimensions with independent route maturity", () => {
-    assert.equal(ROUTE_CAPABILITY_SCHEMA_VERSION, 2);
+  it("publishes the closed version-three dimensions with independent route maturity", () => {
+    assert.equal(ROUTE_CAPABILITY_SCHEMA_VERSION, 3);
     assert.deepEqual(ROUTE_CAPABILITY_NAMES, [
       "activeInput",
       "authorityEnforcement",
@@ -872,6 +938,7 @@ describe("Driver Contract v2 route capabilities", () => {
     assert.equal(Object.isFrozen(snapshot), true);
     assert.equal(Object.isFrozen(snapshot.values), true);
     assert.equal(Object.isFrozen(snapshot.maturity), true);
+    assert.equal(Object.isFrozen(snapshot.provenance), true);
     assert.equal(snapshot.values.interaction, "noninteractive_fixed_policy");
     assert.equal(capabilityMaturity(snapshot, "history"), "experimental");
     assert.equal(capabilityMaturity(snapshot, "continuation"), "validated");
@@ -1544,6 +1611,25 @@ describe("Driver Contract v2 registry and scope", () => {
       /effective effort "low" does not match the requested "high"/,
     );
     assert.deepEqual(capabilities.values.interaction, "noninteractive_fixed_policy");
+  });
+
+  it("refuses capability provenance that the fresh inspection did not prove", async () => {
+    for (const claimed of ["inspection_proven", "session_negotiated"]) {
+      const overclaim = createFakeServiceDriver({
+        routeOverride: (route) => ({
+          ...route,
+          capabilities: {
+            ...route.capabilities,
+            provenance: { ...route.capabilities.provenance, continuation: claimed },
+          },
+        }),
+      });
+      await assert.rejects(
+        () => acceptFakeServiceRoute(overclaim.driver),
+        /provenance does not match|session-negotiated/,
+        claimed,
+      );
+    }
   });
 
   it("reports instance readiness independently and fails closed when selection is ambiguous", async () => {

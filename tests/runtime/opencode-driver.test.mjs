@@ -315,6 +315,25 @@ describe("opencode driver: readiness and route admission", () => {
     assert.equal(server.requests.find((request) => request.path === "/provider")?.query.directory, WORKSPACE_ROOT);
   });
 
+  it("replaces the whole OpenCode projection when a model disappears and records only opaque test drift", async () => {
+    const { server, url } = await startFake();
+    const generations = [`sha256:${"a".repeat(64)}`, `sha256:${"b".repeat(64)}`];
+    const driver = driverFor(url, { _test: { inspectionGeneration: () => generations.shift() } });
+    const scope = createDriverScope({ driver, purpose: "inspect", env: { OPENCODE_SERVER_URL: url }, workspaceRoot: WORKSPACE_ROOT });
+    const [first] = await driver.inspectInstances(scope);
+    const next = readyProvider();
+    next.body.all[0].models = {
+      "gpt-5.6-terra": next.body.all[0].models["gpt-5.6-terra"],
+    };
+    server.state.provider = next;
+    const [second] = await driver.inspectInstances(scope);
+    assert.equal(first.inspectionGeneration, `sha256:${"a".repeat(64)}`);
+    assert.equal(second.inspectionGeneration, `sha256:${"b".repeat(64)}`);
+    assert.equal(Object.hasOwn(second.routes.effortsByModel, OPENCODE_EXPLORER_MODEL), false);
+    assert.deepEqual(second.routes.models, ["openai/gpt-5.6-terra"]);
+    assert.deepEqual(second.capabilityProvenance, first.capabilityProvenance);
+  });
+
   it("does not advertise dormant CLI routes when the connected Server is absent", async () => {
     let discovered = 0;
     const driver = driverFor("http://127.0.0.1:4998", {

@@ -27,13 +27,13 @@ import {
   FUTURE_WRITE_GENERATION,
   JOB_STATE_VERSION_V3,
   assertUnderstoodJobRecord,
+  assertSameDurableRouteSemantics,
   assertVersionThreeWriteAllowed,
   isUnderstoodJobRecord,
   jobDurableStateVersion,
   normalizeWriteGeneration,
   validateVersionThreeRoute,
   validateStoredVersionThreeRoute,
-  versionThreeRouteText,
 } from "./durable-state-v3.mjs";
 import {
   HARNESS_CAPABILITY_NAMES,
@@ -795,7 +795,14 @@ function assertVersionThreeLifecycleUnavailable(agent, operation) {
  */
 function assertVersionThreeLifecycleOwned(agent, generation, operation) {
   if (agent?.version !== AGENT_RECORD_VERSION_V3) return false;
-  validateVersionThreeRoute(agent.route, `Version-three Agent ${agent.path ?? agent.agentId} activation route`);
+  // Stored schema-v2 routes remain readable.  AgentRuntime must freshly admit
+  // a v3 execution route before it asks this store to reserve a turn.
+  const storedRoute = validateStoredVersionThreeRoute(
+    agent.route, `Version-three Agent ${agent.path ?? agent.agentId} activation route`
+  );
+  if (typeof storedRoute.effort !== "string") {
+    throw new Error(`Version-three Agent ${agent.path ?? agent.agentId} activation route requires explicit effort.`);
+  }
   // A version-three record whose route runs the version-one supervisor is
   // created and driven by the generation that states its route, so its
   // activation and turn transitions belong to that generation too. The
@@ -824,7 +831,7 @@ function assertVersionThreeLifecycleOwned(agent, generation, operation) {
  * exact pointer the next version-three worker consumes.
  */
 function versionThreeContinuation(job, agent) {
-  const projection = classifyVersionThreeContinuation(job?.normalizedTerminalResult, agent.route);
+  const projection = classifyVersionThreeContinuation(job?.normalizedTerminalResult, job.route);
   const lineage = {
     jobId: job.id,
     attemptId: job.attemptId == null ? null : assertText(job.attemptId, "Version-three receipt attempt ID"),
@@ -867,10 +874,7 @@ function assertVersionThreeJobIdentity(job, agent) {
   if (job?.route == null) {
     throw new Error(`${label} requires a receipt that states its route identity.`);
   }
-  const route = validateVersionThreeRoute(job.route, `${label} receipt route`);
-  if (versionThreeRouteText(route) !== versionThreeRouteText(agent.route)) {
-    throw new Error(`${label} receipt route identity does not match the Agent's frozen route.`);
-  }
+  const route = assertSameDurableRouteSemantics(agent.route, job.route, `${label} receipt`);
   for (const [field, observed, expected] of [
     ["Harness", job.harnessId, route.harnessId],
     ["logical instance", job.harnessInstanceKey, route.instanceKey],
@@ -1409,14 +1413,10 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir, harness, w
         throw new Error("Agent updater must not change immutable field capabilities.");
       }
       if (current.version === AGENT_RECORD_VERSION_V3) {
-        const frozen = versionThreeRouteText(current.route);
-        let candidate = null;
-        try {
-          candidate = next.route == null ? null : versionThreeRouteText(next.route);
-        } catch {
-          candidate = null;
-        }
-        if (candidate !== frozen) {
+        // Preserve stored schema-v2 routes byte/semantic unchanged: an update
+        // may advance lifecycle only, never silently migrate historical route
+        // evidence while an attempt carries its fresh v3 execution route.
+        if (JSON.stringify(next.route) !== JSON.stringify(current.route)) {
           throw new Error("Agent updater must not change immutable field route.");
         }
       }

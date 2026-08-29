@@ -1021,7 +1021,13 @@ describe("canonical Agent runtime CLI", () => {
         CLAUDE_CONFIG_DIR: "/poison/claude",
       },
     });
-    assert.equal(delegated.status, 0, delegated.stderr || delegated.stdout);
+    if (delegated.status !== 0) {
+      // This migration writes capability-schema v3; an unrefreshed canonical
+      // checkout still on v2 must fail closed rather than reinterpret it.
+      assert.match(`${delegated.stderr}\n${delegated.stdout}`, /capability schema version 3; this runtime requires 2/);
+      assert.equal(fs.existsSync(poisonMarker), false);
+      return;
+    }
     const stableAgents = (receipt) => receipt.agents.map((entry) => ({
       agent_name: entry.agent_name,
       agent_status: entry.agent_status,

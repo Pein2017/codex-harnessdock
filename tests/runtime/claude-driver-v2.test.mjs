@@ -236,7 +236,7 @@ describe("Claude Code Driver Contract v2 admission", () => {
 
     const description = admittedDriverDescription(driver);
     assert.equal(description.contractVersion, DRIVER_CONTRACT_VERSION_V2);
-    assert.equal(description.capabilitySchemaVersion, 2);
+    assert.equal(description.capabilitySchemaVersion, 3);
     assert.deepEqual(description.environmentKeys, ["CLAUDE_CONFIG_DIR"]);
     assert.equal(description.maturity, "experimental");
 
@@ -295,6 +295,38 @@ describe("Claude Code logical instance inspection", () => {
     // Stable for one configuration, distinct across configurations.
     assert.equal(claudeCodeInstanceKey(CONFIG_DIR), claudeCodeInstanceKey(CONFIG_DIR));
     assert.notEqual(claudeCodeInstanceKey(CONFIG_DIR), claudeCodeInstanceKey("/data/other/.claude"));
+  });
+
+  it("holds Claude at checkout-declared provenance and unavailable generation", async () => {
+    const { driver } = makeDriver();
+    const [inspection] = await inspectDriverInstances(driver, inspectScope(driver));
+    const route = driver.validateRoute({
+      harnessId: CLAUDE_CODE_HARNESS_ID,
+      model: "claude-sonnet-5",
+      topology: "leaf",
+      authority: "behavioral_read_only",
+      effort: "high",
+    }, inspection);
+    assert.equal(inspection.inspectionGeneration, "unavailable");
+    assert.equal(new Set(Object.values(inspection.capabilityProvenance)).size, 1);
+    assert.equal(Object.values(inspection.capabilityProvenance)[0], "checkout_declared");
+    for (const claimed of ["inspection_proven", "session_negotiated"]) {
+      const forged = {
+        ...route,
+        capabilities: {
+          ...route.capabilities,
+          provenance: { ...route.capabilities.provenance, continuation: claimed },
+        },
+      };
+      assert.throws(
+        () => validateCanonicalRoute(forged, {
+          driver,
+          inspection,
+          request: { harnessId: CLAUDE_CODE_HARNESS_ID, model: route.model, topology: route.topology, authority: route.authority, effort: route.effort },
+        }),
+        /provenance does not match|session-negotiated/,
+      );
+    }
   });
 
   it("reports each unready host fact with its own closed detail code", async () => {
