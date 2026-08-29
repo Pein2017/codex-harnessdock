@@ -6,6 +6,7 @@ import { EventEmitter } from "node:events";
 import { afterEach, describe, it } from "node:test";
 
 import { createOpencodeServiceManager } from "../../runtime/opencode-service-manager.mjs";
+import { resolveExpectedPluginDataRoot } from "../../runtime/paths.mjs";
 
 const cleanups = [];
 afterEach(() => {
@@ -49,6 +50,52 @@ describe("OpenCode shared service manager", () => {
     assert.deepEqual(await manager.ensure(), { status: "reused" });
     assert.deepEqual(state(), { starts: 0, killed: 0 });
     assert.equal(fs.existsSync(path.join(runtimeRoot, "opencode-service", "receipt.json")), false);
+  });
+
+  it("keeps managed ownership outside disposable runtime isolation homes", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-opencode-service-owner-"));
+    cleanups.push(root);
+    const codexHome = path.join(root, "codex-home");
+    const firstRuntimeHome = path.join(root, "first-runtime-home");
+    const secondRuntimeHome = path.join(root, "second-runtime-home");
+    const priorCodexHome = process.env.CODEX_HOME;
+    const priorRuntimeHome = process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
+    process.env.CODEX_HOME = codexHome;
+    process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = firstRuntimeHome;
+    try {
+      const stableRuntimeRoot = path.join(resolveExpectedPluginDataRoot(), "runtime");
+      const receipt = path.join(stableRuntimeRoot, "opencode-service", "receipt.json");
+      let started = 0;
+      const first = createOpencodeServiceManager({
+        env: { OPENCODE_SERVER_URL: "http://127.0.0.1:4096", OPENCODE_EXECUTABLE: "/opt/opencode" },
+        probe: async () => ({ kind: started ? "healthy" : "absent" }),
+        executableCheck: () => true,
+        start: () => { started += 1; return { pid: 21, unref() {} }; },
+        getIdentity: () => "child-identity",
+      });
+      assert.deepEqual(await first.ensure(), { status: "managed" });
+      assert.equal(started, 1);
+      assert.equal(fs.existsSync(path.join(firstRuntimeHome, "opencode-service", "receipt.json")), false);
+      assert.equal(fs.statSync(path.dirname(receipt)).mode & 0o777, 0o700);
+      assert.equal(fs.statSync(receipt).mode & 0o777, 0o600);
+
+      fs.rmSync(firstRuntimeHome, { recursive: true, force: true });
+      process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = secondRuntimeHome;
+      const second = createOpencodeServiceManager({
+        env: { OPENCODE_SERVER_URL: "http://127.0.0.1:4096", OPENCODE_EXECUTABLE: "/opt/opencode" },
+        probe: async () => ({ kind: "healthy" }),
+        start: () => { throw new Error("managed service must be reused"); },
+        isAlive: () => true,
+        validateIdentity: () => true,
+      });
+      assert.deepEqual(await second.inspect(), { status: "managed" });
+      assert.equal(fs.existsSync(receipt), true);
+    } finally {
+      if (priorCodexHome == null) delete process.env.CODEX_HOME;
+      else process.env.CODEX_HOME = priorCodexHome;
+      if (priorRuntimeHome == null) delete process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
+      else process.env.CODEX_HARNESSDOCK_RUNTIME_HOME = priorRuntimeHome;
+    }
   });
 
   it("inspects managed and reused readiness without lifecycle mutation or configuration disclosure", async () => {

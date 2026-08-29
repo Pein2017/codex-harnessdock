@@ -12,7 +12,7 @@ import path from "node:path";
 import { resolveOpencodeServerUrl, createOpencodeDiscoveryClient, discoverOpencodeHealth } from "./opencode-client.mjs";
 import { recoverStaleDirectoryLock, sameFileIdentity } from "./durable-directory-lock.mjs";
 import { resolveRuntimeEnvironment } from "./environment.mjs";
-import { resolvePluginRuntimeRoot } from "./paths.mjs";
+import { resolveExpectedPluginDataRoot } from "./paths.mjs";
 import { getProcessIdentity, isProcessAlive, terminateProcessTree, validateProcessIdentity } from "./process-control.mjs";
 
 const RECEIPT_VERSION = 1;
@@ -169,7 +169,7 @@ function observeStartedChild(child) {
  */
 export function createOpencodeServiceManager(options = {}) {
   const env = options.env ?? resolveRuntimeEnvironment({ cwd: options.cwd, envFile: options.envFile }).env;
-  const runtimeRoot = path.resolve(options.runtimeRoot ?? resolvePluginRuntimeRoot());
+  const runtimeRoot = path.resolve(options.runtimeRoot ?? path.join(resolveExpectedPluginDataRoot(), "runtime"));
   const deps = {
     probe: options.probe ?? ((value, probeOptions) => defaultProbe(value, options.cwd, probeOptions)),
     executableCheck: options.executableCheck ?? ((file) => {
