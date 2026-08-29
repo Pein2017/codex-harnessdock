@@ -148,7 +148,6 @@ function inspectionRouteFacts(models, effortsByModel) {
   return Object.freeze({
     models: Object.freeze([...models]),
     topologies: Object.freeze(["leaf"]),
-    reasoningEfforts: Object.freeze([...new Set(Object.values(effortsByModel).flat())]),
     effortsByModel: Object.freeze(Object.fromEntries(Object.entries(effortsByModel).map(([model, efforts]) => [model, Object.freeze([...efforts])]))),
     interaction: "noninteractive_fixed_policy",
     activeInput: "acknowledged_active_stream",

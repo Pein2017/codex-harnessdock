@@ -784,10 +784,13 @@ export function validateCanonicalRoute(route, { driver, inspection, request }) {
       );
     }
   }
-  if (Object.hasOwn(request, "effort") && route.effort !== request.effort) {
+  if (!isBoundedRouteAtom(request.effort)) {
+    throw new Error(`${label} request must state one explicit effort.`);
+  }
+  if (route.effort !== request.effort) {
     throw new Error(`${label} effective effort ${JSON.stringify(route.effort ?? null)} does not match the requested ${JSON.stringify(request.effort)}.`);
   }
-  if (route.effort != null && (typeof route.effort !== "string" || !route.effort.trim() || route.effort !== route.effort.trim())) {
+  if (!isBoundedRouteAtom(route.effort)) {
     throw new Error(`${label} must record one effective native effort.`);
   }
   const capabilities = assertDriverRouteCoherence(driver, route.capabilities);
@@ -799,7 +802,7 @@ export function validateCanonicalRoute(route, { driver, inspection, request }) {
     topology: route.topology,
     authority: route.authority,
     driverVersion: route.driverVersion,
-    ...(route.effort == null ? {} : { effort: route.effort }),
+    effort: route.effort,
     capabilities,
   });
 }

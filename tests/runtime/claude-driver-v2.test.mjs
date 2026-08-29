@@ -388,6 +388,7 @@ describe("Claude Code canonical route validation", () => {
       model: "claude-haiku-4-5",
       topology: "leaf",
       authority: "behavioral_read_only",
+      effort: "high",
     };
     const route = validateCanonicalRoute(
       driver.validateRoute(request, inspections[0]),

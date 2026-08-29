@@ -135,30 +135,20 @@ describe("HarnessDock Skill guidance neutrality", () => {
     assert.match(spawn, /with `task_name`, self-contained\s+`message`, and `harness`, `model`, `topology`, `write`/i);
     assert.match(spawn, /`harness`, `model`, `topology`, `write`/);
     assert.doesNotMatch(spawn, /delegation_mode/);
-    assert.match(spawn, /never pass\s+cwd\/directory, env,\s+session, or fork selectors/i);
-    for (const model of ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5"]) {
-      assert.match(spawn, new RegExp(model));
-    }
-    for (const model of [
-      "openai-codex/gpt-5.6-luna",
-      "openai-codex/gpt-5.6-terra",
-      "openai-codex/gpt-5.6-sol",
-      "openai/gpt-5.6-luna",
-      "openai/gpt-5.6-terra",
-      "openai/gpt-5.6-sol",
-    ]) assert.match(spawn, new RegExp(model.replace("/", "\\/")));
-    assert.match(spawn, /`pi`[\s\S]*provider `openai-codex` only/i);
-    assert.match(spawn, /every turn requires `low`, `medium`, `high`, `xhigh`, or `max`/i);
-    assert.match(spawn, /No\s+capacity ceiling[\s\S]*exact serialized session/i);
-    assert.match(spawn, /resume-only[\s\S]*active input\s+acknowledged[\s\S]*no automatic recovery\/orchestration/i);
-    assert.match(spawn, /Pi `write: false` allows only `read`, `grep`, `find`, and[\s\S]*Pi `write: true` also allows `bash`, `edit`, and `write`/i);
+    assert.match(spawn, /never pass\s+environment, session, or fork selectors/i);
+    assert.match(spawn, /list-harnesses[\s\S]*current inventory[\s\S]*all route fields[\s\S]*mandatory/i);
+    assert.match(spawn, /exact admitted[\s\S]*`reasoning_effort` values/i);
+    for (const staleRoster of [
+      "claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5",
+      "openai-codex/gpt-5.6-luna", "openai-codex/gpt-5.6-terra", "openai-codex/gpt-5.6-sol",
+      "openai/gpt-5.6-luna", "openai/gpt-5.6-terra", "openai/gpt-5.6-sol",
+      "`low`, `medium`, `high`, `xhigh`, or `max`",
+    ]) assert.doesNotMatch(spawn, new RegExp(staleRoster.replaceAll("/", "\\/"), "i"));
+    assert.doesNotMatch(spawn, /Pi `write: false` allows only|Pi `write: true` also allows/i);
     assert.doesNotMatch(spawn, /deepseek|opencode-go/i);
-    assert.match(spawn, /No\s+capacity ceiling/i);
-    assert.match(spawn, /No `-fast` variants/i);
-    assert.match(spawn, /`low`, `medium`, `high`, `xhigh`, or `max`/i);
     assert.match(spawn, /`write: false` is behavioral read\/review-only[\s\S]*`write: true`/i);
     assert.match(spawn, /`IS_SANDBOX=1`[\s\S]*`--dangerously-skip-permissions`/i);
-    assert.match(spawn, /Use\s+`native_orchestrator` only with exact Opus or Fable/i);
+    assert.match(spawn, /`native_orchestrator` only when fresh listing admits it/i);
     assert.match(spawn, /named member must launch asynchronously and a correlated `SendMessage`/i);
     assert.match(spawn, /Transport never auto-reconnects/i);
     assert.match(spawn, /`Workflow` remains disabled/i);

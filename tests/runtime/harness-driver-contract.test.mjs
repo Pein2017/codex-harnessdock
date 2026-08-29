@@ -48,6 +48,7 @@ import {
   validateDriverV2,
   validateHarnessDriver,
   validateHarnessTurnResult,
+  validateCanonicalRoute,
   validateLiveHarnessTurn,
   validateNormalizedTerminalResult,
   validatePreparedTurn,
@@ -1493,6 +1494,18 @@ describe("Driver Contract v2 registry and scope", () => {
     assert.equal(accepted.route.capabilities.values.interaction, "noninteractive_fixed_policy");
     assert.equal(capabilityMaturity(accepted.route.capabilities, "continuation"), "experimental");
     assert.equal(Object.isFrozen(accepted.route), true);
+
+    const incomplete = { ...accepted.route };
+    delete incomplete.effort;
+    assert.throws(
+      () => validateCanonicalRoute(incomplete, {
+        driver: service,
+        inspection: accepted.inspection,
+        request: { harnessId: service.harnessId, model: "standard-tier", topology: "leaf", authority: "behavioral_read_only" },
+      }),
+      /must state one explicit effort/,
+      "a direct internal canonical-route caller cannot mint an effortless route",
+    );
 
     for (const field of ["model", "topology", "authority"]) {
       const { [field]: _dropped, ...partial } = routeRequest();

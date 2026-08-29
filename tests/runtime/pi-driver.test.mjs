@@ -118,7 +118,8 @@ describe("Pi Driver v2", () => {
     assert.equal(fake.state.argv.includes("--tools"), false);
     for (const flag of ["--no-extensions", "--no-skills", "--no-prompt-templates"]) assert.equal(fake.state.argv.includes(flag), false);
     assert.deepEqual(route.capabilities.values, { interaction: "noninteractive_fixed_policy", activeInput: "acknowledged_active_stream", continuation: "exact_resume", history: "assistant_messages", interruptRequest: "supported", turnObservation: "terminal_observable", automaticRecovery: "none", authorityEnforcement: "prompt_only", leafEnforcement: "prompt_only", nativeOrchestration: "opaque_bounded" });
-    assert.deepEqual(inspection.routes.reasoningEfforts, ["medium", "high"]);
+    assert.equal(Object.hasOwn(inspection.routes, "reasoningEfforts"), false);
+    assert.deepEqual(inspection.routes.effortsByModel, { [PI_MODEL]: ["medium", "high"] });
     assert.equal(inspection.routes.continuation, "exact_resume");
     assert.equal(inspection.routes.automaticRecovery, "none");
     assert.equal(typeof driver.observeTurn, "function");
