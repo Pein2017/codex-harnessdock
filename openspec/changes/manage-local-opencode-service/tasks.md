@@ -13,5 +13,5 @@
 
 - [x] 3.1 Update doctor and zero-model release smoke assertions for bounded managed/reused readiness without a model call.
 - [x] 3.2 Update changelog and package minor version, then run focused tests, strict OpenSpec validation, and `npm run check`.
-- [ ] 3.3 Promote the accepted source to the canonical checkout, refresh the installed Plugin, and validate doctor plus live Pi/OpenCode `list_harnesses` from a fresh task/process.
-- [ ] 3.4 Freeze the final diff for one `claude-opus-5` high blocking review and directly replay any accepted counterexamples before completion.
+- [x] 3.3 Promote the accepted source to the canonical checkout, refresh the installed Plugin, and validate doctor plus live Pi/OpenCode `list_harnesses` from a fresh task/process.
+- [x] 3.4 Freeze the final diff for one `claude-opus-5` high blocking review and directly replay any accepted counterexamples before completion.
