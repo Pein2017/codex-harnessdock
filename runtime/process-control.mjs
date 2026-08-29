@@ -188,11 +188,29 @@ export function validateProcessIdentity(pid, expectedIdentity, options = {}) {
   }
 }
 
-export function isProcessAlive(pid) {
+function readLinuxProcessState(pid, readFileImpl) {
+  const stat = String(readFileImpl(`/proc/${pid}/stat`, "utf8"));
+  const closeParen = stat.lastIndexOf(")");
+  if (closeParen < 0) throw new Error("Linux process stat has no command boundary.");
+  const state = stat.slice(closeParen + 2).trim().split(/\s+/u)[0];
+  if (!state) throw new Error("Linux process stat has no state.");
+  return state;
+}
+
+export function isProcessAlive(pid, options = {}) {
+  const killImpl = options.killImpl ?? process.kill.bind(process);
   try {
-    process.kill(pid, 0);
-    return true;
+    killImpl(pid, 0);
   } catch {
     return false;
+  }
+  if ((options.platform ?? process.platform) !== "linux") return true;
+  try {
+    const state = readLinuxProcessState(pid, options.readFileImpl ?? readFileSync);
+    return !["Z", "X", "x"].includes(state);
+  } catch {
+    // A successful signal-zero probe with unreadable proc state is ambiguous;
+    // preserving the process/lock is safer than reclaiming a live owner.
+    return true;
   }
 }

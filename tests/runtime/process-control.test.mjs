@@ -6,9 +6,28 @@ import {
   interruptClaudeProcess,
   requestClaudeInterrupt,
 } from "../../runtime/claude-headless-adapter.mjs";
-import { getProcessIdentity } from "../../runtime/process-control.mjs";
+import { getProcessIdentity, isProcessAlive } from "../../runtime/process-control.mjs";
 
 describe("cross-platform process control", () => {
+  it("treats a Linux zombie as unable to own live process state", () => {
+    const options = {
+      platform: "linux",
+      killImpl: () => {},
+      readFileImpl: () => `${process.pid} (node worker) Z 1 2 3 4\n`,
+    };
+    assert.equal(isProcessAlive(process.pid, options), false);
+
+    assert.equal(isProcessAlive(process.pid, {
+      ...options,
+      readFileImpl: () => `${process.pid} (node worker) S 1 2 3 4\n`,
+    }), true);
+
+    assert.equal(isProcessAlive(process.pid, {
+      ...options,
+      readFileImpl: () => { throw new Error("proc state unavailable"); },
+    }), true, "unknown Linux process state must fail closed as alive");
+  });
+
   it("uses process creation time and path as native Windows identity", () => {
     let command = null;
     const identity = getProcessIdentity(42, {
