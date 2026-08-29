@@ -97,6 +97,45 @@ function waitMs(milliseconds) {
 }
 
 describe("Agent durable launch boundary", () => {
+  it("reserves an exact inspected tuple and rejects stale tuples before durable or transport work", async () => {
+    const { runtime, workspace } = setup();
+    const inspected = runtime.jobs.inspectRouteInstance;
+    runtime.jobs.inspectRouteInstance = async (harnessId) => {
+      const observed = await inspected(harnessId);
+      return {
+        ...observed,
+        inspections: observed.inspections.map((inspection) => ({
+          ...inspection,
+          routes: { ...inspection.routes, models: ["claude-sonnet-5"], effortsByModel: { "claude-sonnet-5": ["high"] } },
+        })),
+      };
+    };
+    runtime.jobs.assertReady = () => readiness(runtime);
+    let transports = 0;
+    runtime.jobs.launchPreparedStart = async (prepared) => {
+      transports += 1;
+      return { jobId: prepared.jobId, agentId: prepared.agentId, status: "queued" };
+    };
+    const exact = {
+      topology: "leaf", harness: "claude-code", message: "bounded task", model: "claude-sonnet-5",
+      reasoning_effort: "high", write: false,
+    };
+    await runtime.spawnAgent({ ...exact, task_name: "exact_tuple" });
+    const agents = runtime.store.listAgents().length;
+    const jobs = listStoredJobs(workspace).length;
+    for (const stale of [
+      { task_name: "stale_model", model: "claude-opus-5", reasoning_effort: "high" },
+      { task_name: "stale_effort", model: "claude-sonnet-5", reasoning_effort: "low" },
+      { task_name: "model_alias", model: "claude-sonnet", reasoning_effort: "high" },
+      { task_name: "null_effort", model: "claude-sonnet-5", reasoning_effort: null },
+    ]) {
+      await assert.rejects(() => runtime.spawnAgent({ ...exact, ...stale }));
+      assert.equal(runtime.store.listAgents().length, agents);
+      assert.equal(listStoredJobs(workspace).length, jobs);
+      assert.equal(transports, 1);
+    }
+  });
+
   it("rejects a missing model before readiness or Agent reservation", async () => {
     const { runtime } = setup();
     let readinessCalled = false;

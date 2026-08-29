@@ -438,6 +438,26 @@ describe("typed HarnessDock MCP server", () => {
     }
   });
 
+  it("forwards one explicit spawn tuple and rejects null effort before runtime invocation", async () => {
+    const calls = [];
+    const { client, server } = await inMemoryClient(() => runtimeMethods((name, input) => {
+      calls.push({ name, input });
+      return { accepted: true };
+    }));
+    closers.push(() => client.close(), () => server.close());
+    const tuple = {
+      task_name: "exact_tuple", message: "bounded task", harness: "claude-code",
+      model: "claude-sonnet-5", reasoning_effort: "high", topology: "leaf", write: false,
+    };
+    await client.callTool({ name: "spawn_agent", arguments: tuple, _meta: meta });
+    assert.deepEqual(calls, [{ name: "spawn_agent", input: tuple }]);
+    const rejected = await client.callTool({
+      name: "spawn_agent", arguments: { ...tuple, task_name: "null_effort", reasoning_effort: null }, _meta: meta,
+    });
+    assert.equal(rejected.isError, true);
+    assert.equal(calls.length, 1);
+  });
+
   it("forwards target_worktree only to spawn and never adds either path to its compact receipt", async () => {
     const target = "/tmp/harnessdock target/linked";
     const calls = [];

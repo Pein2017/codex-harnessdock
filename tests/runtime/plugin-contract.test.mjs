@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
 import { createAgentRuntime } from "../../runtime/index.mjs";
+import { acceptDriverRoute, createDriverScope, inspectDriverInstances } from "../../runtime/harness-registry.mjs";
+import { createFakeServiceDriver } from "./fixtures/fake-service-driver.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const releaseMetadata = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
@@ -284,16 +286,24 @@ describe("native plugin contract", () => {
     assert.doesNotMatch(text, /fork_turns|execution_profile/);
   });
 
-  it("does not need a guidance edit when a fake catalog replaces the admitted tuple", () => {
+  it("admits only the current fake inspection catalog without editing guidance", async () => {
     const file = path.join(root, "plugins", "codex-harnessdock", "skills", "spawn-agent", "SKILL.md");
     const before = fs.readFileSync(file);
     const catalog = { "fake/provider-a": ["opaque-effort-a"] };
-    const admits = (model, effort) => catalog[model]?.includes(effort) === true;
-    assert.equal(admits("fake/provider-a", "opaque-effort-a"), true);
+    const fixture = createFakeServiceDriver({ inspectInstances: () => [{
+      harnessId: "fake-service", instanceKey: "tenant-alpha", readiness: "ready", liveValidated: true,
+      maturity: "experimental", detailCode: "ready",
+      routes: { models: Object.keys(catalog), effortsByModel: catalog, configurationIdentity: "secret-catalog-origin" },
+      capabilityProvenance: fixture.capabilities.provenance, inspectionGeneration: "unavailable",
+    }] });
+    const inspect = () => inspectDriverInstances(fixture.driver, createDriverScope({ driver: fixture.driver, purpose: "inspect", env: {} }));
+    const request = (model, effort) => ({ harnessId: "fake-service", model, effort, topology: "leaf", authority: "behavioral_read_only" });
+    assert.equal(acceptDriverRoute(fixture.driver, request("fake/provider-a", "opaque-effort-a"), await inspect()).route.effort, "opaque-effort-a");
     delete catalog["fake/provider-a"];
     catalog["fake/provider-b"] = ["opaque-effort-b"];
-    assert.equal(admits("fake/provider-a", "opaque-effort-a"), false);
-    assert.equal(admits("fake/provider-b", "opaque-effort-b"), true);
+    const replaced = await inspect();
+    assert.throws(() => acceptDriverRoute(fixture.driver, request("fake/provider-a", "opaque-effort-a"), replaced));
+    assert.equal(acceptDriverRoute(fixture.driver, request("fake/provider-b", "opaque-effort-b"), await inspect()).route.effort, "opaque-effort-b");
     assert.deepEqual(fs.readFileSync(file), before);
     assert.equal(before.includes("fake/provider-b"), false);
   });

@@ -4,6 +4,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
+import { projectNativeRouteDiscovery } from "../../runtime/release-smoke.mjs";
+
 const root = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const skillRoot = path.join(root, "plugins", "codex-harnessdock", "skills");
 
@@ -22,18 +24,17 @@ const readSkill = (name) => fs.readFileSync(path.join(skillRoot, name, "SKILL.md
 const readMetadata = (name) => fs.readFileSync(path.join(skillRoot, name, "agents/openai.yaml"), "utf8");
 
 describe("HarnessDock Skill guidance neutrality", () => {
-  it("keeps checked-in guidance unchanged while a fake route catalog replaces listing and admission", () => {
+  it("keeps checked-in guidance unchanged while the release listing projection changes", () => {
     const guidance = skills.flatMap((name) => [readSkill(name), readMetadata(name)]);
     const bytes = guidance.map((text) => Buffer.from(text));
-    const catalog = { "fake/provider-a": ["opaque-effort-a"] };
-    const list = () => Object.entries(catalog).map(([model, efforts]) => ({ model, efforts }));
-    const admits = (model, effort) => catalog[model]?.includes(effort) === true;
-    assert.equal(admits("fake/provider-a", "opaque-effort-a"), true);
-    catalog["fake/provider-b"] = ["opaque-effort-b"];
-    delete catalog["fake/provider-a"];
-    assert.deepEqual(list(), [{ model: "fake/provider-b", efforts: ["opaque-effort-b"] }]);
-    assert.equal(admits("fake/provider-a", "opaque-effort-a"), false);
-    assert.equal(admits("fake/provider-b", "opaque-effort-b"), true);
+    const record = (model, effort) => [{ harness: "fake", maturity: "experimental", instances: [{
+      instance: "redacted", readiness: "ready", live_validated: true, maturity: "experimental",
+      routes: { models: [model], effortsByModel: { [model]: [effort] }, configurationIdentity: "secret-catalog-origin" },
+    }] }];
+    const first = projectNativeRouteDiscovery(record("fake/provider-a", "opaque-effort-a"));
+    const second = projectNativeRouteDiscovery(record("fake/provider-b", "opaque-effort-b"));
+    assert.notDeepEqual(first, second);
+    assert.equal(JSON.stringify(second).includes("secret-catalog-origin"), false);
     assert.deepEqual(guidance.map((text) => Buffer.from(text)), bytes);
     assert.equal(guidance.join("\n").includes("fake/provider-b"), false);
   });

@@ -27,6 +27,8 @@ import {
 } from "../../runtime/plugin-compatibility-shells.mjs";
 import { CANONICAL_RUNTIME_CHECKOUT, SOURCE_ROOT } from "../../runtime/version.mjs";
 import { runReleaseSmokeCli } from "../../scripts/release-smoke.mjs";
+import { acceptDriverRoute, createDriverScope, inspectDriverInstances } from "../../runtime/harness-registry.mjs";
+import { createFakeServiceDriver } from "./fixtures/fake-service-driver.mjs";
 
 const temporaryDirectories = [];
 
@@ -154,14 +156,38 @@ function productionWitnessDriver(runAttempt) {
 }
 
 describe("release smoke", () => {
-  it("projects a replaced fake native catalog without a turn or guidance identity", () => {
+  it("projects and admits a replaced fake catalog without a turn or configuration identity", async () => {
     const guidance = fs.readFileSync(path.join(SOURCE_ROOT, "plugins", "codex-harnessdock", "skills", "spawn-agent", "SKILL.md"));
-    const record = (model, effort) => [{ harness: "fake", maturity: "experimental", instances: [{ instance: "redacted", readiness: "ready", live_validated: true, maturity: "experimental", routes: { models: [model], effortsByModel: { [model]: [effort] } } }] }];
-    const first = projectNativeRouteDiscovery(record("fake/provider-a", "opaque-effort-a"));
-    const second = projectNativeRouteDiscovery(record("fake/provider-b", "opaque-effort-b"));
+    const catalog = { "fake/provider-a": ["opaque-effort-a"] };
+    const fixture = createFakeServiceDriver({ inspectInstances: () => [{
+      harnessId: "fake-service", instanceKey: "tenant-alpha", readiness: "ready", liveValidated: true,
+      maturity: "experimental", detailCode: "ready",
+      routes: { models: Object.keys(catalog), effortsByModel: catalog, configurationIdentity: "secret-catalog-origin" },
+      capabilityProvenance: fixture.capabilities.provenance, inspectionGeneration: "unavailable",
+    }] });
+    const inspect = async () => {
+      const [inspection] = await inspectDriverInstances(fixture.driver, createDriverScope({ driver: fixture.driver, purpose: "inspect", env: {} }));
+      return inspection;
+    };
+    const listing = (inspection) => projectNativeRouteDiscovery([{ harness: "fake-service", maturity: "experimental", instances: [{
+      instance: inspection.instanceKey, readiness: inspection.readiness, live_validated: inspection.liveValidated,
+      maturity: inspection.maturity, routes: inspection.routes,
+    }] }]);
+    const request = (model, effort) => ({ harnessId: "fake-service", model, effort, topology: "leaf", authority: "behavioral_read_only" });
+    const firstInspection = await inspect();
+    const first = listing(firstInspection);
+    assert.equal(acceptDriverRoute(fixture.driver, request("fake/provider-a", "opaque-effort-a"), [firstInspection]).route.effort, "opaque-effort-a");
+    delete catalog["fake/provider-a"];
+    catalog["fake/provider-b"] = ["opaque-effort-b"];
+    const secondInspection = await inspect();
+    const second = listing(secondInspection);
     assert.notDeepEqual(first, second);
+    assert.throws(() => acceptDriverRoute(fixture.driver, request("fake/provider-a", "opaque-effort-a"), [secondInspection]));
+    assert.equal(acceptDriverRoute(fixture.driver, request("fake/provider-b", "opaque-effort-b"), [secondInspection]).route.effort, "opaque-effort-b");
     assert.deepEqual(second[0].instances[0].effortsByModel, { "fake/provider-b": ["opaque-effort-b"] });
     assert.equal(guidance.includes("fake/provider-b"), false);
+    assert.equal(JSON.stringify(second).includes("secret-catalog-origin"), false);
+    assert.equal(fixture.control.service.prompts.length, 0);
   });
 
   it("reports a supplied differential matrix as non-promotable without changing default smoke behavior", async () => {

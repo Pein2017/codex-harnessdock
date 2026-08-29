@@ -242,6 +242,36 @@ describe("Harness Driver contract", () => {
     }
   });
 
+  it("keeps different exact effort sets attached to their own models", async () => {
+    const capabilities = routeCapabilities();
+    const catalog = { "first-model": ["first-effort"], "second-model": ["second-effort"] };
+    const fixture = createFakeServiceDriver({
+      inspectInstances: () => [{
+        harnessId: "fake-service", instanceKey: "tenant-alpha", readiness: "ready", liveValidated: true,
+        maturity: "experimental", detailCode: "ready",
+        routes: { models: Object.keys(catalog), effortsByModel: catalog },
+        capabilityProvenance: capabilities.provenance, inspectionGeneration: "unavailable",
+      }],
+    });
+    const inspections = await inspectDriverInstances(
+      fixture.driver, createDriverScope(scopeInput(fixture.driver, { purpose: "inspect" })),
+    );
+    assert.equal(
+      acceptDriverRoute(fixture.driver, {
+        harnessId: "fake-service", model: "second-model", effort: "second-effort",
+        topology: "leaf", authority: "behavioral_read_only",
+      }, inspections).route.effort,
+      "second-effort",
+    );
+    assert.throws(
+      () => acceptDriverRoute(fixture.driver, {
+        harnessId: "fake-service", model: "first-model", effort: "second-effort",
+        topology: "leaf", authority: "behavioral_read_only",
+      }, inspections),
+      /must be freshly advertised/,
+    );
+  });
+
   it("publishes one closed capability vocabulary and fails on anything outside it", () => {
     assert.deepEqual(HARNESS_CAPABILITY_NAMES, [
       "activeInput",
