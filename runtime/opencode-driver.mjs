@@ -685,6 +685,16 @@ export function createOpencodeDriver(options = {}) {
       );
     }
 
+    // Test-only differential evidence: typed part order is otherwise consumed
+    // at the result boundary and never belongs in a durable Driver receipt.
+    // Deliberately expose no part payload, native id, tool input, or output.
+    if (typeof options._test?.captureNativePromptEvidence === "function") {
+      const parts = Array.isArray(outcome.response?.parts) ? outcome.response.parts : [];
+      options._test.captureNativePromptEvidence(Object.freeze({
+        partTypes: Object.freeze(parts.map((part) => typeof part?.type === "string" ? part.type : "invalid")),
+      }));
+    }
+
     const selected = selectOpencodeExplorerFinalResult(outcome.response, {
       sessionId,
       parentMessageId: userMessageId,

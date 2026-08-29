@@ -1,0 +1,75 @@
+{
+  "rows": [
+    {
+      "dimension": "exact_model_effort_inventory",
+      "result": "pass"
+    },
+    {
+      "dimension": "request_transport_environment",
+      "result": "pass"
+    },
+    {
+      "dimension": "native_configuration_inheritance",
+      "result": "pass"
+    },
+    {
+      "dimension": "prompt_authority_native_input",
+      "result": "pass",
+      "authorities": [
+        "behavioral_read_only",
+        "behavioral_write"
+      ]
+    },
+    {
+      "dimension": "ordered_request_event_tool_observations",
+      "result": "pass"
+    },
+    {
+      "dimension": "terminal_classification",
+      "result": "pass"
+    },
+    {
+      "dimension": "provider_native_usage_source_fields",
+      "result": "pass"
+    },
+    {
+      "dimension": "session_process_lifecycle_cleanup",
+      "result": "pass"
+    },
+    {
+      "dimension": "route_drift",
+      "result": "pass"
+    },
+    {
+      "dimension": "interrupt",
+      "result": "not_applicable",
+      "capability": "interruptRequest",
+      "observed": "unsupported"
+    },
+    {
+      "dimension": "history",
+      "result": "not_applicable",
+      "capability": "history",
+      "observed": "unavailable"
+    },
+    {
+      "dimension": "exact_session_continuation",
+      "result": "not_applicable",
+      "capability": "continuation",
+      "observed": "fresh_only"
+    },
+    {
+      "dimension": "cross_process_turn_observation_or_reconciliation",
+      "result": "not_applicable",
+      "capability": "turnObservation",
+      "observed": "unavailable"
+    },
+    {
+      "dimension": "automatic_recovery_exact_session_transport",
+      "result": "not_applicable",
+      "capability": "automaticRecovery",
+      "observed": "none"
+    }
+  ],
+  "digest": "sha256:f795212eeb7d9019671c63c19d28f9091a8b45705efdbeeabb508f88e63f8686"
+}

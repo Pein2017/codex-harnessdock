@@ -94,7 +94,7 @@ export function createFakeOpencodeServer(scenario = {}) {
     // --- prompt -----------------------------------------------------------
     /**
      * `(request) => {status?, body?, malformed?, destroy?, delayMs?}` or a
-     * static object of the same shape. `request` carries `{sessionId, body}`.
+     * static object of the same shape. `request` carries `{sessionId, body, query}`.
      */
     prompt: scenario.prompt ?? null,
     promptDelayMs: scenario.promptDelayMs ?? 0,
@@ -250,7 +250,7 @@ export function createFakeOpencodeServer(scenario = {}) {
         record.body = body;
         record.sessionId = sessionId;
         const configured =
-          typeof state.prompt === "function" ? state.prompt({ sessionId, body }) : state.prompt ?? {};
+          typeof state.prompt === "function" ? state.prompt({ sessionId, body, query: record.query }) : state.prompt ?? {};
         if (state.promptHang || configured.hang) return;
         const respond = () => {
           if (state.promptDestroy || configured.destroy) {
