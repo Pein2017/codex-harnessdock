@@ -1,0 +1,24 @@
+## 1. Freeze zero-prompt native evidence
+
+- [ ] 1.1 After `enforce-exact-discovered-routes` and `discover-native-harness-routes` share the implementation base, add a disposable stream-json control probe at the existing Claude process seam with bounded stdin/stdout/stderr/deadline/process-group cleanup. Capture a sanitized native initialization/`list_models`-class receipt proving no user prompt, accepted turn, continuation, or model request.
+- [ ] 1.2 If that receipt lacks a complete exact full-model and per-model-effort projection, record the sanitized negative receipt and return `HOLD`; leave the shipped Claude catalog, aliases, defaults, and runtime behavior unchanged. Do not parse help/TUI text, scrape config, add an SDK/API dependency, or substitute a static fallback.
+- [ ] 1.3 Convert a successful bounded receipt into fake-control fixtures and RED cases in `tests/runtime/claude-driver-v2.test.mjs` and `tests/runtime/harness-claude-parity.test.mjs` for malformed/oversized/ambiguous rows, default/family aliases, missing effort, catalog replacement, no-prompt enforcement, and cleanup.
+
+## 2. Replace Claude catalog admission atomically
+
+- [ ] 2.1 Add the bounded Claude native-control inspection owner behind `runtime/claude-code-driver.mjs`, reusing `runtime/claude-headless-adapter.mjs` process/stream-json and identity-cleanup helpers without changing ordinary turn configuration or topology owners.
+- [ ] 2.2 Project only complete exact selectable rows into the shared `models`/`effortsByModel` inspection shape; reject default, display-only, alias, unresolved, and effortless rows. Inspection failure must produce a redacted unavailable Claude instance with no cache or prior-table merge.
+- [ ] 2.3 Remove `MODEL_ALIASES`, `EFFORT_ALIASES`, `DEFAULT_EFFORT_BY_MODEL`, and default resolution from new Claude route admission in `runtime/claude-headless-adapter.mjs` and `runtime/claude-code-driver.mjs` only after fake discovery proves a usable exact catalog. Preserve readable legacy records and refuse any new activation lacking persisted exact effort.
+- [ ] 2.4 Route list, spawn, and the immediate pre-submission check through fresh Claude inspection in `runtime/internal-runtime.mjs`, `runtime/agent-runtime.mjs`, and the Claude Driver. A disappeared or narrowed tuple must fail before session creation or prompt submission; existing accepted model/effort identity remains immutable.
+
+## 3. Preserve Claude ownership and diagnostics
+
+- [ ] 3.1 Keep `runtime/execution-profile.mjs`, terminal-parity behavior, prompt-only `write`, native-orchestrator eligibility, settings, plugin/MCP/skill ownership, and session/recovery transport unchanged; add focused parity cases that both discovery and ordinary turns use ordinary configured Claude state without enumerating it.
+- [ ] 3.2 Extend `runtime/operator-diagnostics.mjs` and `tests/runtime/operator-diagnostics.test.mjs` with closed, redacted classes for executable absence, control incompatibility, authentication unavailability, malformed model evidence, missing effort evidence, and exact route drift. Do not emit paths, config contents, account details, defaults, or configuration identities.
+- [ ] 3.3 Update `tests/runtime/mcp-server.test.mjs`, `tests/runtime/plugin-contract.test.mjs`, `tests/runtime/harnessdock-skill-guidance-neutrality.test.mjs`, and `tests/runtime/release-smoke.test.mjs` so listing exposes only fresh exact model-specific effort facts and static guidance remains inventory-neutral.
+
+## 4. Deterministic acceptance and optional witness boundary
+
+- [ ] 4.1 Sensitivity-check fake-control catalog replacement, an alias/default path, a missing effort row, and a pre-transport disappearance; each must make its stable test fail before restoring the candidate.
+- [ ] 4.2 Run `npm run test:focus -- tests/runtime/claude-driver-v2.test.mjs tests/runtime/harness-claude-parity.test.mjs tests/runtime/harness-driver-contract.test.mjs tests/runtime/mcp-server.test.mjs tests/runtime/operator-diagnostics.test.mjs tests/runtime/harnessdock-skill-guidance-neutrality.test.mjs tests/runtime/plugin-contract.test.mjs tests/runtime/release-smoke.test.mjs`, then `npm run check` and `openspec validate discover-claude-native-routes --strict`.
+- [ ] 4.3 Treat one zero-prompt live inspection and one minimal exact `claude-haiku-4-5` low-effort turn as a separately authorized, non-retrying gate only after 4.2. Stop on auth, quota, route, or protocol failure; retain a sanitized receipt and do not weaken deterministic acceptance.
