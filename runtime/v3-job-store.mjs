@@ -47,8 +47,8 @@ import {
   JOB_STATE_VERSION_V3,
   MAX_ROUTE_BYTES,
   assertVersionThreeWriteAllowed,
+  validateStoredVersionThreeRoute,
   validateVersionThreeRoute,
-  versionThreeRouteText,
 } from "./durable-state-v3.mjs";
 import {
   MAX_ABSENCE_REASON_CHARS,
@@ -442,7 +442,9 @@ function assertProjectionBinding(actual, expected, label) {
  * locator restated in another key order is still the same identity
  * (`durable-state-v3.mjs` and `native-reference.mjs` own those two forms).
  */
-function validateTerminalJob(value, label, { ownerRootId, agentId, jobId, attemptId, route, nativeTurnRef, status }) {
+function validateTerminalJob(value, label, {
+  ownerRootId, agentId, jobId, attemptId, route, nativeTurnRef, status, storedRoute,
+}) {
   if (value == null) return null;
   const bounded = boundedDurableTree(value, label);
   const bytes = Buffer.byteLength(JSON.stringify(bounded), "utf8");
@@ -458,9 +460,10 @@ function validateTerminalJob(value, label, { ownerRootId, agentId, jobId, attemp
   assertProjectionBinding(bounded.harnessId, route.harnessId, `${label} Harness identity`);
   assertProjectionBinding(bounded.harnessInstanceKey, route.instanceKey, `${label} logical instance`);
   assertProjectionBinding(bounded.driverVersion, route.driverVersion, `${label} Driver version`);
+  const validateRoute = storedRoute ? validateStoredVersionThreeRoute : validateVersionThreeRoute;
   assertProjectionBinding(
-    versionThreeRouteText(bounded.route, `${label} route`),
-    versionThreeRouteText(route, `${label} record route`),
+    JSON.stringify(validateRoute(bounded.route, `${label} route`)),
+    JSON.stringify(route),
     `${label} route`
   );
   const boundTurnRefText = canonicalNativeReferenceText(nativeTurnRef, `${label} record native turn reference`);
@@ -495,7 +498,7 @@ function validateTerminalJob(value, label, { ownerRootId, agentId, jobId, attemp
   return bounded;
 }
 
-function validateVersionThreeJobRecord(parsed) {
+function validateVersionThreeJobRecord(parsed, { storedRoute = false } = {}) {
   const label = "Version-three job record";
   const snapshot = plainRecordSnapshot(parsed, label);
   for (const field of Object.keys(snapshot)) {
@@ -522,7 +525,8 @@ function validateVersionThreeJobRecord(parsed) {
   }
   const identity = assertBindingIdentity(snapshot);
   const attemptId = assertIdentityText(snapshot.attemptId, `${label} attemptId`);
-  const route = validateVersionThreeRoute(snapshot.route, `${label} route`);
+  const validateRoute = storedRoute ? validateStoredVersionThreeRoute : validateVersionThreeRoute;
+  const route = validateRoute(snapshot.route, `${label} route`);
   const nativeTurnRef = canonicalNativeTurnRef(snapshot.nativeTurnRef, `${label} native turn reference`);
   if (nativeTurnRef.harnessId !== route.harnessId || nativeTurnRef.instanceKey !== route.instanceKey) {
     throw new Error(`${label} native turn reference does not belong to its own route.`);
@@ -539,7 +543,7 @@ function validateVersionThreeJobRecord(parsed) {
     throw new Error(`${label} may only carry uncertainty while its status is unknown.`);
   }
   const terminalJob = validateTerminalJob(snapshot.terminalJob, `${label} terminal projection`, {
-    ...identity, attemptId, route, nativeTurnRef, status: snapshot.status,
+    ...identity, attemptId, route, nativeTurnRef, status: snapshot.status, storedRoute,
   });
   if (isTerminal && terminalJob == null) {
     throw new Error(`${label} with a terminal status must carry its durable terminal projection.`);
@@ -592,7 +596,7 @@ function readRecordFile(filePath) {
     if (error?.code === "ENOENT") return null;
     throw taggedError("corrupt_record", `Version-three job record is unreadable: ${error.message}`);
   }
-  return validateVersionThreeJobRecord(parsed);
+  return validateVersionThreeJobRecord(parsed, { storedRoute: true });
 }
 
 /**
@@ -716,7 +720,7 @@ function persist(identity, generation, build) {
   try {
     const filePath = path.join(directory, jobFileName(identity.jobId));
     const previous = fs.existsSync(filePath) ? readRecordFile(filePath) : null;
-    const candidate = validateVersionThreeJobRecord(build(previous));
+    const candidate = validateVersionThreeJobRecord(build(previous), { storedRoute: previous != null });
     assertLifecycleAdvance(previous, candidate);
     writeAtomicJobFile(filePath, candidate);
     return candidate;

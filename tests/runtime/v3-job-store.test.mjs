@@ -411,6 +411,60 @@ describe("version-three job store: durable lifecycle", () => {
     assert.deepEqual(listed.records, []);
     assert.deepEqual(listed.unreadable, [{ code: "corrupt_record" }]);
   });
+
+  it("reads stored schema-v2 jobs without upgrading them but refuses schema-v2 creation", () => {
+    const downgradeStoredRoute = (context, { terminal = false } = {}) => {
+      const directory = resolveVersionThreeJobDirectory({ ownerRootId: context.ownerRootId });
+      const file = fs.readdirSync(directory).find((entry) => entry.endsWith(".json"));
+      const filePath = path.join(directory, file);
+      const stored = JSON.parse(fs.readFileSync(filePath, "utf8"));
+      const { provenance: _provenance, ...capabilities } = stored.route.capabilities;
+      const route = {
+        ...stored.route,
+        capabilitySchemaVersion: 2,
+        capabilities: { ...capabilities, capabilitySchemaVersion: 2 },
+      };
+      stored.route = route;
+      if (terminal) stored.terminalJob.route = route;
+      fs.writeFileSync(filePath, JSON.stringify(stored));
+      return route;
+    };
+
+    const uncertain = setup();
+    uncertain.running();
+    recordVersionThreeTurnUncertain({
+      generation: FUTURE_WRITE_GENERATION,
+      ...uncertain.identity,
+      attemptId: uncertain.attemptId,
+      reason: "driver_result_rejected",
+    });
+    const historicalRoute = downgradeStoredRoute(uncertain);
+    assert.equal(uncertain.record().route.capabilitySchemaVersion, 2);
+
+    const terminal = setup();
+    terminal.running();
+    recordVersionThreeTurnTerminal({
+      generation: FUTURE_WRITE_GENERATION,
+      ...terminal.identity,
+      attemptId: terminal.attemptId,
+      terminalJob: terminal.terminalJob(),
+    });
+    downgradeStoredRoute(terminal, { terminal: true });
+    assert.equal(terminal.record().route.capabilitySchemaVersion, 2);
+
+    const fresh = setup();
+    assert.throws(
+      () => recordVersionThreeTurnRunning({
+        generation: FUTURE_WRITE_GENERATION,
+        ...fresh.identity,
+        attemptId: fresh.attemptId,
+        workspaceRoot,
+        route: historicalRoute,
+        nativeTurnRef: nativeTurnRef(historicalRoute),
+      }),
+      /capability schema version/,
+    );
+  });
 });
 
 describe("version-three job store: separation from the public queue", () => {

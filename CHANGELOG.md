@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.25.3 - 2026-08-30
+
+- Keep capability-schema-v2 version-three jobs readable across upgrades without
+  widening or rewriting their frozen routes, while new jobs still require the
+  current schema. This prevents historical owner-root state from aborting a new
+  target-worktree writer admission before native submission.
+
 ## 0.25.2 - 2026-08-30
 
 - Resolve Pi RPC dialogs with unattended continuation defaults instead of
