@@ -97,14 +97,14 @@ async function opencodeRouteCapabilities() {
 }
 
 describe("native Harness differential parity", () => {
-  it("composes all 39 cells from local evidence and freezes sanitized receipts", async () => {
+  it("composes all 42 cells from local evidence and freezes sanitized receipts", async () => {
     const inputs = localReceipts();
     const receipt = composeNativeHarnessDifferentialParity(inputs);
     const assessment = assessNativeHarnessDifferentialParity(receipt);
-    assert.deepEqual(assessment.counts, { pass: 29, fail: 0, hold: 3, not_applicable: 7 });
+    assert.deepEqual(assessment.counts, { pass: 31, fail: 0, hold: 1, not_applicable: 10 });
     assert.equal(assessment.status, "hold");
     assert.equal(assessment.promotionEligible, false);
-    assert.equal(receipt.cells.length, 39);
+    assert.equal(receipt.cells.length, 42);
     assert.equal(renderNativeHarnessDifferentialParityReceipt(receipt), fs.readFileSync(RECEIPT_PATH, "utf8"));
     assert.equal(renderNativeHarnessDifferentialParityMarkdown(receipt, assessment), fs.readFileSync(MARKDOWN_PATH, "utf8"));
     assertNativeHarnessDifferentialParityComposition(read("native-harness-differential-parity.receipt.json"), inputs);

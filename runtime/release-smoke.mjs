@@ -541,6 +541,7 @@ const DIFFERENTIAL_PARITY_DIMENSIONS = Object.freeze([
   "exact_session_continuation",
   "cross_process_turn_observation_or_reconciliation",
   "automatic_recovery_exact_session_transport",
+  "same_session_recovery_prompt",
   "terminal_classification",
   "route_drift",
   "native_usage_provenance",

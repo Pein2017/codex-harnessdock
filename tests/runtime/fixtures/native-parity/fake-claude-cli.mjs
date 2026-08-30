@@ -40,15 +40,15 @@ function emit(event) {
   process.stdout.write(`${JSON.stringify(event)}\n`);
 }
 
-function emitSuccess(sessionId) {
+function emitSuccess(sessionId, { assistantMessageId, resultId }) {
   emit({ type: "system", subtype: "init", session_id: sessionId, claude_code_version: "2.1.250", model: "claude-sonnet-5" });
-  emit({ type: "stream_event", session_id: sessionId, event: { type: "message_start", message: { role: "assistant" } } });
+  emit({ type: "stream_event", session_id: sessionId, event: { type: "message_start", message: { role: "assistant", id: assistantMessageId } } });
   emit({ type: "stream_event", session_id: sessionId, event: { type: "content_block_start", content_block: { type: "tool_use", name: "Read", input: { file_path: "fixture.txt" } } } });
   emit({ type: "stream_event", session_id: sessionId, event: { type: "content_block_start", content_block: { type: "tool_use", name: "Grep", input: { pattern: "needle" } } } });
   emit({ type: "stream_event", session_id: sessionId, event: { type: "content_block_delta", delta: { type: "text_delta", text: "native result" } } });
   emit({ type: "stream_event", session_id: sessionId, event: { type: "message_stop" } });
   emit({
-    type: "result", subtype: "success", session_id: sessionId, result: "native result",
+    type: "result", subtype: "success", session_id: sessionId, uuid: resultId, result: "native result",
     duration_ms: 8, duration_api_ms: 5, num_turns: 1, total_cost_usd: 0,
     usage: { input_tokens: 3, output_tokens: 2, cache_creation_input_tokens: 1, cache_read_input_tokens: 0 },
   });
@@ -104,7 +104,11 @@ async function main() {
   const inputText = input?.message?.content?.[0]?.text;
   const resume = flag("--resume");
   const sessionId = scenario === "drift" && resume ? "native-session-drift" : (resume ?? sessionBase);
-  record({ kind: "turn", args, env: selectedEnv(), configWitness: configWitness(), input: inputText, resume, sessionId });
+  const userMessageId = resume ? "native-user-t2" : "native-user-t1";
+  const assistantMessageId = resume ? "native-assistant-t2" : "native-assistant-t1";
+  const resultId = resume ? "native-result-t2" : "native-result-t1";
+  record({ kind: "turn", args, env: selectedEnv(), configWitness: configWitness(), input: inputText, resume, sessionId, userMessageId, assistantMessageId, resultId });
+  emit({ type: "user", uuid: userMessageId, session_id: sessionId, message: { role: "user", content: [{ type: "text", text: inputText }] } });
   turnStarted = true;
 
   if (scenario === "interrupt") {
@@ -128,7 +132,7 @@ async function main() {
     process.stderr.write("usage limit reached\n");
     process.exit(1);
   }
-  emitSuccess(sessionId);
+  emitSuccess(sessionId, { assistantMessageId, resultId });
 }
 
 process.on("SIGINT", () => {

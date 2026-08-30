@@ -235,6 +235,7 @@ async function evidence() {
       row("lifecycle_process_cleanup", directLifecycle, harnessLifecycle, () => { assert.ok(directLifecycle.every(Boolean)); assert.ok(harnessLifecycle.every(Boolean)); assertAllClosed(current); }),
       unavailable("cross_process_turn_observation_or_reconciliation", "turnObservation", inventory.routes.turnObservation, () => { assert.equal(inventory.routes.turnObservation, "unavailable"); assert.equal(typeof inventoryHarness.driver.observeTurn, "undefined"); }),
       unavailable("automatic_recovery_exact_session_transport", "automaticRecovery", inventory.routes.automaticRecovery, () => assert.equal(inventory.routes.automaticRecovery, "none")),
+      unavailable("same_session_recovery_prompt", "automaticRecovery", inventory.routes.automaticRecovery, () => assert.equal(inventory.routes.automaticRecovery, "none")),
     ];
     for (const entry of rows.filter((item) => item.result === "pass")) {
       assert.match(entry.artifactDigest, /^sha256:[0-9a-f]{64}$/);
@@ -266,7 +267,7 @@ describe("Pi direct-native differential parity", () => {
     const first = await evidence(); const second = await evidence();
     assert.deepEqual(second, first, "repeated zero-model evidence must be byte-identical");
     assert.deepEqual(JSON.parse(fs.readFileSync(RECEIPT, "utf8")), first);
-    assert.deepEqual(first.rows.map((entry) => entry.result), ["pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass", "not_applicable", "not_applicable"]);
+    assert.deepEqual(first.rows.map((entry) => entry.result), ["pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass", "not_applicable", "not_applicable", "not_applicable"]);
     assert.deepEqual(first.unprovenRows, [{ dimension: "real_user_configuration_loading", reason: "deterministic fake-native config witness only; real Pi user configuration was not loaded" }]);
   });
 

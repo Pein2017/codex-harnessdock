@@ -130,6 +130,17 @@
       "capability": "automaticRecovery",
       "observed": "none",
       "artifactDigest": "sha256:30a0924a3360be687d1df9fcbbfdff62c01bc0fd14036ab9076cf7f451568666"
+    },
+    {
+      "dimension": "same_session_recovery_prompt",
+      "directSource": "accepted Pi capability snapshot",
+      "harnessdockSource": "Pi Driver inspection receipt",
+      "mode": "capability-derived",
+      "comparator": "executed capability-derived unavailability check",
+      "result": "not_applicable",
+      "capability": "automaticRecovery",
+      "observed": "none",
+      "artifactDigest": "sha256:30a0924a3360be687d1df9fcbbfdff62c01bc0fd14036ab9076cf7f451568666"
     }
   ]
 }

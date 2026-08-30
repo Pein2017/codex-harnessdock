@@ -83,8 +83,14 @@
       "result": "not_applicable",
       "capability": "automaticRecovery",
       "observed": "none"
+    },
+    {
+      "dimension": "same_session_recovery_prompt",
+      "result": "not_applicable",
+      "capability": "automaticRecovery",
+      "observed": "none"
     }
   ],
   "unprovenRows": [],
-  "digest": "sha256:6d5e6d41a9c13759d4159fe458a8fa5d5a5df3b55a98bcaa4ebdacf7f7c7d00b"
+  "digest": "sha256:0d5cca50c63033fe9ca2be852d662a13aa967e1fb4fc2d44e4c571fde3637415"
 }

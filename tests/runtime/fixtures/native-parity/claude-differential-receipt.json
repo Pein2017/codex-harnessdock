@@ -13,6 +13,8 @@
     "write_authority_delta",
     "ordered_stream_tool_events",
     "interrupt_behavior",
+    "exact_session_continuation",
+    "same_session_recovery_prompt",
     "terminal_classification",
     "route_drift",
     "provider_native_usage_source_fields",
@@ -26,16 +28,8 @@
     "staticCatalogUsed": false
   },
   "notApplicable": {
-    "oldTurnObservation": "turnObservation is unavailable in the current Claude route capability snapshot"
+    "oldTurnObservation": "turnObservation is unavailable in the current Claude route capability snapshot",
+    "oldExactSessionTransportRecovery": "automaticRecovery is same_session_recovery_prompt, not exact_session_transport"
   },
-  "unprovenRows": [
-    {
-      "row": "exact_resume_same_session_fresh_process_mechanics",
-      "reason": "the fake protocol exposes no provider-native persistent turn key; a distinct child PID is not native turn identity"
-    },
-    {
-      "row": "exact_session_transport_recovery_without_duplicate_input",
-      "reason": "same session and non-duplicated input lack a provider-defined accepted-turn or recovery binding"
-    }
-  ]
+  "unprovenRows": []
 }

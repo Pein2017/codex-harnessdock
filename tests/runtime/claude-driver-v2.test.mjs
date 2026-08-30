@@ -395,7 +395,7 @@ describe("Claude Code canonical route validation", () => {
       history: "assistant_messages",
       interruptRequest: "supported",
       turnObservation: "unavailable",
-      automaticRecovery: "exact_session_transport",
+      automaticRecovery: "same_session_recovery_prompt",
       // terminal-parity always passes the dangerous bypass, so write intent
       // stays a prompt-level authority boundary, never a process sandbox.
       authorityEnforcement: "prompt_only",

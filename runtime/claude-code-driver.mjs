@@ -81,7 +81,7 @@ export const CLAUDE_CODE_CAPABILITIES = Object.freeze({
   continuation: "exact_resume",
   history: "assistant_messages",
   interrupt: "graceful_flush_proven",
-  automaticRecovery: "exact_session_transport",
+  automaticRecovery: "same_session_recovery_prompt",
   authorityEnforcement: "prompt_only",
   leafEnforcement: "effective_tool_denial",
   nativeOrchestration: "opaque_bounded",
@@ -407,6 +407,7 @@ export function createClaudeCodeDriver(_options = {}) {
           cwd,
           prompt,
           write: Boolean(route.write),
+          automaticRecovery: CLAUDE_CODE_CAPABILITIES.automaticRecovery,
           ...(retryPolicy ? { retryPolicy } : {}),
           claudeOptions: {
             ...profile.claudeOptions,
@@ -579,7 +580,7 @@ export function claudeRouteCapabilities(topology) {
       history: "assistant_messages",
       interruptRequest: "supported",
       turnObservation: "unavailable",
-      automaticRecovery: "exact_session_transport",
+      automaticRecovery: "same_session_recovery_prompt",
       authorityEnforcement: "prompt_only",
       leafEnforcement: orchestrator ? "unsupported" : "effective_tool_denial",
       nativeOrchestration: orchestrator ? "opaque_bounded" : "disabled",
@@ -1382,6 +1383,7 @@ export function createClaudeCodeDriverV2(options = {}) {
         cwd: workspaceRoot,
         prompt: envelope.taskInput,
         write,
+        automaticRecovery: route.capabilities.values.automaticRecovery,
         ...(delegationMode === "claude_orchestrator" ? { retryPolicy: { maxReconnectAttempts: 0 } } : {}),
         claudeOptions: {
           ...profile.claudeOptions,

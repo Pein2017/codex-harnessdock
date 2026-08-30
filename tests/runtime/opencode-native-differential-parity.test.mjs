@@ -353,6 +353,7 @@ function capabilityNotApplicableRows(capabilities) {
     ["exact_session_continuation", "continuation", "fresh_only"],
     ["cross_process_turn_observation_or_reconciliation", "turnObservation", "unavailable"],
     ["automatic_recovery_exact_session_transport", "automaticRecovery", "none"],
+    ["same_session_recovery_prompt", "automaticRecovery", "none"],
   ];
   return requirements.map(([dimension, capability, requiredValue]) => {
     const observed = capabilities?.values?.[capability];

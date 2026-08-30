@@ -13,6 +13,7 @@ export const NATIVE_HARNESS_DIFFERENTIAL_DIMENSIONS = Object.freeze([
   "exact_session_continuation",
   "cross_process_turn_observation_or_reconciliation",
   "automatic_recovery_exact_session_transport",
+  "same_session_recovery_prompt",
   "terminal_classification",
   "route_drift",
   "native_usage_provenance",
@@ -87,6 +88,9 @@ function validateClaudeReceipt(receipt) {
   if (receipt?.hold?.result !== "HOLD") fail("Claude local inventory prerequisite must remain HOLD");
   if (receipt?.notApplicable?.oldTurnObservation !== "turnObservation is unavailable in the current Claude route capability snapshot") {
     fail("Claude old-turn capability receipt changed");
+  }
+  if (receipt?.notApplicable?.oldExactSessionTransportRecovery !== "automaticRecovery is same_session_recovery_prompt, not exact_session_transport") {
+    fail("Claude exact-session transport capability receipt changed");
   }
   return { proven: new Set(proven), unproven };
 }
@@ -194,7 +198,7 @@ export function composeNativeHarnessDifferentialParity({ claudeReceipt, piReceip
   claudePass("prompt_authority_delta", ["task_native_input", "closed_harnessdock_policy_delta", "write_authority_delta"], "bounded task and authority-only native delta comparison");
   claudePass("event_tool_order", ["ordered_stream_tool_events"], "ordered native stream and tool comparison");
   claudePass("interrupt", ["interrupt_behavior"], "native interrupt terminal comparison");
-  claudeUnproven("exact_session_continuation", "exact_resume_same_session_fresh_process_mechanics", "provider-native session and distinct continuation turn binding");
+  claudePass("exact_session_continuation", ["exact_session_continuation"], "same native session and distinct provider-native continuation message/result identities");
   {
     const evidence = [localReference(claudeFile, "notApplicable/oldTurnObservation", claudeReceipt)];
     cells.push(cell({
@@ -203,7 +207,15 @@ export function composeNativeHarnessDifferentialParity({ claudeReceipt, piReceip
     notApplicableBasis: { capability: "turnObservation", observed: "unavailable" },
     }));
   }
-  claudeUnproven("automatic_recovery_exact_session_transport", "exact_session_transport_recovery_without_duplicate_input", "provider-defined interrupted-turn recovery binding");
+  {
+    const evidence = [localReference(claudeFile, "notApplicable/oldExactSessionTransportRecovery", claudeReceipt)];
+    cells.push(cell({
+    harness: "claude-code", dimension: "automatic_recovery_exact_session_transport", evidence, ...claudeSources(evidence),
+    mode: "capability-derived", comparator: "capability snapshot unavailability", result: "not_applicable",
+    notApplicableBasis: { capability: "automaticRecovery", observed: "same_session_recovery_prompt" },
+    }));
+  }
+  claudePass("same_session_recovery_prompt", ["same_session_recovery_prompt"], "same session, one generated recovery prompt, no duplicate original input, and distinct native message/result identities");
   claudePass("terminal_classification", ["terminal_classification"], "closed native terminal comparison");
   claudePass("route_drift", ["route_drift"], "fresh native route drift refusal");
   claudePass("native_usage_provenance", ["provider_native_usage_source_fields"], "provider-native usage source comparison");
@@ -223,7 +235,7 @@ export function composeNativeHarnessDifferentialParity({ claudeReceipt, piReceip
   piPass("event_tool_order", "ordered_events", "ordered native event comparison");
   piPass("interrupt", "interrupt_request_behavior", "native interrupt request comparison");
   piPass("exact_session_continuation", "exact_session_continuation", "same native session and distinct provider-native history identities");
-  for (const dimension of ["cross_process_turn_observation_or_reconciliation", "automatic_recovery_exact_session_transport"]) {
+  for (const dimension of ["cross_process_turn_observation_or_reconciliation", "automatic_recovery_exact_session_transport", "same_session_recovery_prompt"]) {
     const { evidence, row, basis } = notApplicableEvidence(piReceipt, piFile, piRows, dimension);
     cells.push(cell({ harness: "pi", dimension, evidence: [evidence], ...piSources(row), mode: "capability-derived", comparator: "capability snapshot unavailability", result: "not_applicable", notApplicableBasis: basis }));
   }
@@ -244,7 +256,7 @@ export function composeNativeHarnessDifferentialParity({ claudeReceipt, piReceip
   opencodePass("native_configuration_inheritance", "native_configuration_inheritance", "independent native config and resolved Agent witness comparison");
   opencodePass("prompt_authority_delta", "driver_authority_non_prompt_invariance", "authority-only non-prompt request comparison");
   opencodePass("event_tool_order", "ordered_request_event_tool_observations", "ordered native request event and tool comparison");
-  for (const dimension of ["interrupt", "exact_session_continuation", "cross_process_turn_observation_or_reconciliation", "automatic_recovery_exact_session_transport"]) {
+  for (const dimension of ["interrupt", "exact_session_continuation", "cross_process_turn_observation_or_reconciliation", "automatic_recovery_exact_session_transport", "same_session_recovery_prompt"]) {
     const { evidence, basis } = notApplicableEvidence(opencodeReceipt, opencodeFile, opencode.notApplicable, dimension);
     cells.push(cell({ harness: "opencode", dimension, evidence: [evidence], ...opencodeSources([evidence]), mode: "capability-derived", comparator: "capability snapshot unavailability", result: "not_applicable", notApplicableBasis: basis }));
   }

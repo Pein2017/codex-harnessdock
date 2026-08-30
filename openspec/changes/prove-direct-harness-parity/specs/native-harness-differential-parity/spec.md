@@ -5,7 +5,7 @@ Defines independent evidence that HarnessDock preserves each supported Harness's
 ## ADDED Requirements
 
 ### Requirement: Every admitted Harness has a capability-qualified differential matrix
-The checkout SHALL define one direct-native versus HarnessDock matrix for each admitted Harness. It SHALL cover exact model and per-model effort inventory, launch argv/environment, native configuration inheritance, prompt delta, authority parity, event order, tool surface, interrupt, `exact_session_continuation`, `cross_process_turn_observation_or_reconciliation`, `automatic_recovery_exact_session_transport`, terminal classification, route drift, native usage provenance, and process lifecycle. Every cell SHALL record exactly one of `pass`, regression `fail`, prerequisite `hold`, or capability-derived `not_applicable`. A cell may be `not_applicable` only when the accepted capability snapshot makes the operation unavailable.
+The checkout SHALL define one direct-native versus HarnessDock matrix for each admitted Harness. It SHALL cover exact model and per-model effort inventory, launch argv/environment, native configuration inheritance, prompt delta, authority parity, event order, tool surface, interrupt, `exact_session_continuation`, `cross_process_turn_observation_or_reconciliation`, `automatic_recovery_exact_session_transport`, `same_session_recovery_prompt`, terminal classification, route drift, native usage provenance, and process lifecycle. Every cell SHALL record exactly one of `pass`, regression `fail`, prerequisite `hold`, or capability-derived `not_applicable`. A cell may be `not_applicable` only when the accepted capability snapshot makes the operation unavailable.
 
 #### Scenario: Expected external prerequisite HOLD is deterministically tested
 - **WHEN** a zero-model test correctly detects and records a required external prerequisite as `hold`
@@ -57,6 +57,13 @@ Every route claiming `automaticRecovery=exact_session_transport` SHALL have a se
 #### Scenario: Recovery reconnect duplicates accepted input
 - **WHEN** transport recovery resubmits a prompt/input that was already accepted, creates an unbound replacement turn, or exceeds the provider-declared reconnect bound
 - **THEN** the automatic-recovery row fails and the route cannot claim `automaticRecovery=exact_session_transport`
+
+### Requirement: Same-session recovery prompts are distinct new turns
+Every route claiming `automaticRecovery=same_session_recovery_prompt` SHALL have a separate `same_session_recovery_prompt` row. Starting from one recoverable disconnect after native session `S` is captured, the row SHALL prove the reconnect resumes `S`, submits exactly one generated recovery prompt without duplicating original input, and accepts a distinct native new-message/result identity where the provider fixture exposes one. It SHALL NOT claim old-turn observation, `T1` continuation, or exact-session transport recovery. A route that does not claim `automaticRecovery=same_session_recovery_prompt` SHALL record this row as capability-derived `not_applicable`.
+
+#### Scenario: Recovery prompt regresses to replay or the wrong session
+- **WHEN** recovery uses another session, sends zero or multiple generated recovery prompts, duplicates original input, or reuses the new message/result identity
+- **THEN** the same-session recovery-prompt row fails and the route cannot claim `automaticRecovery=same_session_recovery_prompt`
 
 ### Requirement: Live differential witnesses are bounded and optional
 Deterministic fake-native comparisons SHALL run without model usage. A live witness SHALL require separate authorization, run only after deterministic gates, execute at most one minimal low-effort turn per Harness with no automatic retry, stop on authentication, quota, route, or protocol failure, and record sanitized source-specific usage fields without cost inference.

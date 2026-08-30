@@ -77,7 +77,7 @@ describe("claude-code Driver preserves established Claude execution semantics", 
       continuation: "exact_resume",
       history: "assistant_messages",
       interrupt: "graceful_flush_proven",
-      automaticRecovery: "exact_session_transport",
+      automaticRecovery: "same_session_recovery_prompt",
       // terminal-parity always passes the dangerous bypass, so write intent is
       // a prompt-level authority boundary rather than a process control.
       authorityEnforcement: "prompt_only",

@@ -238,7 +238,13 @@ export async function runClaudeTaskSession({
   retryPolicy = {},
   sleep = defaultSleep,
   random = Math.random,
+  automaticRecovery = "same_session_recovery_prompt",
 }) {
+  if (automaticRecovery !== "same_session_recovery_prompt") {
+    throw new Error(
+      `Claude supervisor recovery is unavailable for automaticRecovery=${JSON.stringify(automaticRecovery)}.`
+    );
+  }
   /** @type {{ env?: NodeJS.ProcessEnv, resumeSessionId?: string | null, [key: string]: unknown }} */
   const optionBag = claudeOptions;
   // The Driver owns its native instance identity; the version-1 fallback keeps

@@ -23,7 +23,7 @@ import {
 } from "../../runtime/harness-contract.mjs";
 import { createDriverScope, acceptDriverRoute, inspectDriverInstances } from "../../runtime/harness-registry.mjs";
 import { transitionJob, writeJobFile } from "../../runtime/job-store.mjs";
-import { runClaudeTaskSession } from "../../runtime/job-supervisor.mjs";
+import { buildRecoveryPrompt, runClaudeTaskSession } from "../../runtime/job-supervisor.mjs";
 
 const ROOTS = [];
 const PRIOR_RUNTIME_HOME = process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
@@ -46,23 +46,17 @@ const PROVEN_ROWS = [
   "write_authority_delta",
   "ordered_stream_tool_events",
   "interrupt_behavior",
+  "exact_session_continuation",
+  "same_session_recovery_prompt",
   "terminal_classification",
   "route_drift",
   "provider_native_usage_source_fields",
   "process_lifecycle_cleanup",
 ];
-const UNPROVEN_ROWS = [
-  {
-    row: "exact_resume_same_session_fresh_process_mechanics",
-    reason: "the fake protocol exposes no provider-native persistent turn key; a distinct child PID is not native turn identity",
-  },
-  {
-    row: "exact_session_transport_recovery_without_duplicate_input",
-    reason: "same session and non-duplicated input lack a provider-defined accepted-turn or recovery binding",
-  },
-];
+const UNPROVEN_ROWS = [];
 const NOT_APPLICABLE = {
   oldTurnObservation: "turnObservation is unavailable in the current Claude route capability snapshot",
+  oldExactSessionTransportRecovery: "automaticRecovery is same_session_recovery_prompt, not exact_session_transport",
 };
 const HOLD = {
   dimension: "exact_dynamic_claude_model_effort_inventory",
@@ -402,6 +396,30 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function recoveryObservation(logs, originalInput) {
+  const recoveryInputs = logs.filter((entry) => entry.input !== originalInput);
+  return {
+    session: logs.map((entry) => entry.sessionId),
+    resume: logs[1]?.resume ?? null,
+    originalInputCount: logs.filter((entry) => entry.input === originalInput).length,
+    recoveryPromptCount: recoveryInputs.length,
+    recoveryPromptDiffers: recoveryInputs[0]?.input !== originalInput,
+    userMessageIds: logs.map((entry) => entry.userMessageId),
+    resultIds: logs.map((entry) => entry.resultId),
+  };
+}
+
+function assertSameSessionRecoveryPrompt(control, harness) {
+  assert.deepEqual(control, harness, "same-session recovery prompt");
+  assert.equal(harness.session[0], harness.session[1], "recovery preserves the native session");
+  assert.equal(harness.resume, harness.session[0], "recovery resumes that native session");
+  assert.equal(harness.originalInputCount, 1, "recovery never duplicates the original input");
+  assert.equal(harness.recoveryPromptCount, 1, "recovery sends exactly one new prompt");
+  assert.equal(harness.recoveryPromptDiffers, true, "recovery prompt is distinct new input");
+  assert.notEqual(harness.userMessageIds[0], harness.userMessageIds[1], "recovery has a distinct native user message");
+  assert.notEqual(harness.resultIds[0], harness.resultIds[1], "recovery has a distinct native result");
+}
+
 function renderReceipt(rows) {
   return `${JSON.stringify({
     schema: "harnessdock.claude-native-differential-parity.v1",
@@ -516,8 +534,8 @@ describe("Claude native differential parity", () => {
     routeMutation.nativeAttempted = true;
     assertRejectsMutation("route drift", () => assertRouteDrift(controlRouteDrift, routeMutation));
 
-    // This observes same-session/fresh-process mechanics only. A child PID is
-    // not a provider-native turn key, so this remains explicitly unproven.
+    // A fresh native process resumes stable session S and accepts distinct
+    // provider-native T2 identities; the PID proves freshness, not identity.
     test.clearLog();
     const directFirst = await runDirectClaude({
       executable: FAKE_CLAUDE,
@@ -538,6 +556,8 @@ describe("Claude native differential parity", () => {
       session: [directFirst.sessionId, directSecond.sessionId],
       resume: directContinuationLogs[1].resume,
       freshProcess: directFirst.pid !== directSecond.pid,
+      userMessageIds: directContinuationLogs.map((entry) => entry.userMessageId),
+      resultIds: directContinuationLogs.map((entry) => entry.resultId),
     };
     test.clearLog();
     const driverFirst = await launchDriver(test, { scenario: "normal", taskInput: TASK_INPUT });
@@ -559,20 +579,30 @@ describe("Claude native differential parity", () => {
       ],
       resume: driverContinuationLogs[1].resume,
       freshProcess: driverFirstLog.pid !== driverContinuationLogs[1].pid,
+      userMessageIds: driverContinuationLogs.map((entry) => entry.userMessageId),
+      resultIds: driverContinuationLogs.map((entry) => entry.resultId),
     };
-    assert.deepEqual(controlContinuation, harnessContinuation, "same-session/fresh-process mechanics");
+    assert.deepEqual(controlContinuation, harnessContinuation, "same-session fresh-process continuation");
+    assert.equal(harnessContinuation.session[0], harnessContinuation.session[1]);
+    assert.equal(harnessContinuation.resume, harnessContinuation.session[0]);
+    assert.equal(harnessContinuation.freshProcess, true);
+    assert.notEqual(harnessContinuation.userMessageIds[0], harnessContinuation.userMessageIds[1]);
+    assert.notEqual(harnessContinuation.resultIds[0], harnessContinuation.resultIds[1]);
     const continuationMutation = clone(harnessContinuation);
     continuationMutation.session[1] = "wrong-session";
     assertRejectsMutation("session/new-turn identity", () =>
-      assert.deepEqual(controlContinuation, continuationMutation, "same-session/fresh-process mechanics"));
+      assert.deepEqual(controlContinuation, continuationMutation, "same-session fresh-process continuation"));
     const processMutation = clone(harnessContinuation);
     processMutation.freshProcess = false;
     assertRejectsMutation("fresh-process is not turn identity", () =>
-      assert.deepEqual(controlContinuation, processMutation, "same-session/fresh-process mechanics"));
+      assert.deepEqual(controlContinuation, processMutation, "same-session fresh-process continuation"));
+    const continuationIdentityMutation = clone(harnessContinuation);
+    continuationIdentityMutation.userMessageIds[1] = continuationIdentityMutation.userMessageIds[0];
+    assertRejectsMutation("continuation new-turn identity", () =>
+      assert.deepEqual(controlContinuation, continuationIdentityMutation, "same-session fresh-process continuation"));
 
-    // The protocol demonstrates input-count mechanics only. It has no
-    // provider-defined accepted-turn/recovery binding, so receipt status is
-    // unproven even though the Driver path is production supervisor/adapter.
+    // Recovery is a distinct generated input in the preserved native session,
+    // not provider-native continuation of the interrupted turn.
     test.clearLog();
     const directRecoveryFirst = await runDirectClaude({
       executable: FAKE_CLAUDE,
@@ -589,29 +619,33 @@ describe("Claude native differential parity", () => {
       input: CONTROL_RECOVERY_INPUT,
     });
     const directRecoveryLogs = turnLogs(test);
-    const controlRecovery = {
-      session: [directRecoveryFirst.sessionId, directRecoverySecond.sessionId],
-      originalInputCount: directRecoveryLogs.filter((entry) => entry.input === TASK_INPUT).length,
-      resume: directRecoveryLogs[1].resume,
-      recoveryInputDiffers: directRecoveryLogs[1].input !== TASK_INPUT,
-    };
+    const controlRecovery = recoveryObservation(directRecoveryLogs, TASK_INPUT);
     test.clearLog();
     const driverRecovery = await launchDriver(test, { scenario: "recover", taskInput: TASK_INPUT });
     const driverRecoveryResult = await driverRecovery.wrapper.result;
     settleDriverJob(test, driverRecovery, driverRecoveryResult);
     const driverRecoveryLogs = turnLogs(test);
-    const harnessRecovery = {
-      session: [SESSION, driverRecoveryResult.continuation.nativeSessionRef.locator.sessionId],
-      originalInputCount: driverRecoveryLogs.filter((entry) => entry.input === TASK_INPUT).length,
-      resume: driverRecoveryLogs[1].resume,
-      recoveryInputDiffers: driverRecoveryLogs[1].input !== TASK_INPUT,
-    };
-    assert.deepEqual(controlRecovery, harnessRecovery, "exact-session transport recovery");
+    const harnessRecovery = recoveryObservation(driverRecoveryLogs, TASK_INPUT);
+    assertSameSessionRecoveryPrompt(controlRecovery, harnessRecovery);
+    assert.equal(driverRecovery.route.capabilities.values.automaticRecovery, "same_session_recovery_prompt");
+    assert.equal(
+      driverRecoveryLogs[1].input,
+      buildRecoveryPrompt({ jobId: driverRecovery.turnId, reconnectAttempt: 1 }),
+      "the one recovery prompt is the supervisor-generated new input",
+    );
     assert.equal(driverRecoveryResult.progress.recoveryAttempts, 1);
-    const recoveryMutation = clone(harnessRecovery);
-    recoveryMutation.originalInputCount = 2;
-    assertRejectsMutation("duplicate-input recovery", () =>
-      assert.deepEqual(controlRecovery, recoveryMutation, "exact-session transport recovery"));
+    for (const [label, mutate] of [
+      ["wrong recovery session", (value) => { value.session[1] = "wrong-session"; }],
+      ["zero recovery prompts", (value) => { value.recoveryPromptCount = 0; }],
+      ["two recovery prompts", (value) => { value.recoveryPromptCount = 2; }],
+      ["duplicate original input", (value) => { value.originalInputCount = 2; }],
+      ["same recovery user message", (value) => { value.userMessageIds[1] = value.userMessageIds[0]; }],
+      ["same recovery result", (value) => { value.resultIds[1] = value.resultIds[0]; }],
+    ]) {
+      const mutation = clone(harnessRecovery);
+      mutate(mutation);
+      assertRejectsMutation(label, () => assertSameSessionRecoveryPrompt(controlRecovery, mutation));
+    }
 
     // Direct SIGINT and the production requestInterrupt path both settle one
     // classified interrupted terminal turn; neither infers a hidden observer.
