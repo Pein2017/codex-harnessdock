@@ -1,0 +1,25 @@
+{
+  "probe": "claude-native-route-control",
+  "schema": "claude-native-route-probe-v1",
+  "cliVersionClass": "unknown",
+  "counts": {
+    "frames": 5,
+    "rowsSeen": 5,
+    "candidates": 0,
+    "failureClasses": 5
+  },
+  "failureClasses": [
+    "cleanup_ambiguous",
+    "default_or_disabled",
+    "initialization_missing",
+    "no_complete_candidate",
+    "unresolved_or_alias"
+  ],
+  "noUserPrompt": true,
+  "noAcceptedTurn": true,
+  "noGeneration": true,
+  "noSessionContinuation": true,
+  "noModelRequest": true,
+  "processCleaned": false,
+  "result": "HOLD"
+}
