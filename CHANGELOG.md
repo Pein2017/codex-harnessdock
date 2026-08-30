@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.25.0 - 2026-08-30
+
+- Bind every admitted turn to an explicit target worktree and exact freshly
+  discovered model/effort route, with capability provenance and launch claims
+  preventing route, execution-root, or writer-lease drift before prompt submission.
+- Discover Claude Code model/effort routes through the official Agent SDK using
+  the operator's native configuration, revalidate the exact tuple before launch,
+  and recover a disconnect by resuming the same session with one new recovery prompt.
+- Add direct-native differential parity and release gating across Claude, Pi, and
+  OpenCode; keep managed OpenCode turns fully unattended (including doom-loop
+  confirmation) and compact model-facing discovery guidance without losing schema.
+
 ## 0.24.1 - 2026-08-29
 
 - Keep focused OpenCode turn tests inside disposable Plugin-data roots, accept
