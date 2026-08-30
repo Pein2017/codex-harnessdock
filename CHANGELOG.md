@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.25.4 - 2026-08-30
+
+- Give a complete OpenCode Agent turn the same fixed one-hour window as the
+  model-facing join instead of declaring a still-running native turn unknown
+  after two minutes.
+
 ## 0.25.3 - 2026-08-30
 
 - Keep capability-schema-v2 version-three jobs readable across upgrades without

@@ -38,7 +38,7 @@ export const OPENCODE_DEADLINES_MS = Object.freeze({
   connect: 5_000,
   discovery: 10_000,
   acceptance: 15_000,
-  turn: 120_000,
+  turn: 3_600_000,
 });
 
 // Absolute ceiling on a single discovery response body, enforced at the fetch

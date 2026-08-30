@@ -974,6 +974,10 @@ describe("opencode-client: sanitized audit summarization", () => {
 });
 
 describe("opencode-client: deadline and response-size constants", () => {
+  it("gives one complete Agent turn the fixed one-hour observation window", () => {
+    assert.equal(OPENCODE_DEADLINES_MS.turn, 3_600_000);
+  });
+
   it("exposes closed, positive, ascending connect/discovery/acceptance/turn bounds", () => {
     assert.ok(OPENCODE_DEADLINES_MS.connect > 0);
     assert.ok(OPENCODE_DEADLINES_MS.discovery >= OPENCODE_DEADLINES_MS.connect);
