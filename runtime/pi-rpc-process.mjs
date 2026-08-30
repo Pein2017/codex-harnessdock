@@ -11,6 +11,7 @@ import { StringDecoder } from "node:string_decoder";
 
 export const PI_RPC_MAX_LINE_BYTES = 1024 * 1024;
 export const PI_RPC_RESPONSE_TIMEOUT_MS = 10_000;
+const PI_RPC_DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"]);
 
 export class PiRpcProcessError extends Error {
   constructor(code, message) {
@@ -105,6 +106,20 @@ export function createPiRpcProcess(options) {
         request.reject(new PiRpcProcessError("request_rejected", safeText(value.error)));
       } else {
         request.resolve(value);
+      }
+      return;
+    }
+    if (value.type === "extension_ui_request" && PI_RPC_DIALOG_METHODS.has(value.method)) {
+      if (typeof value.id !== "string" || !value.id || value.id.length > 512 || value.id.includes("\0")) {
+        fail("invalid_response", "Pi RPC emitted an invalid extension UI request.");
+        return;
+      }
+      try {
+        child.stdin.write(`${JSON.stringify({ type: "extension_ui_response", id: value.id, cancelled: true })}\n`, "utf8", (error) => {
+          if (error) fail("stdin_error", "Pi RPC extension UI cancellation failed.");
+        });
+      } catch {
+        fail("stdin_error", "Pi RPC extension UI cancellation failed.");
       }
       return;
     }

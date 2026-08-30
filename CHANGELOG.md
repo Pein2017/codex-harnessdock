@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.25.1 - 2026-08-30
+
+- Keep Pi RPC turns unattended when a native extension requests a dialog:
+  cancel `select`, `confirm`, `input`, and `editor` immediately instead of
+  waiting for a main-thread reply that HarnessDock cannot deliver.
+
 ## 0.25.0 - 2026-08-30
 
 - Bind every admitted turn to an explicit target worktree and exact freshly

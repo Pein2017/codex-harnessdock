@@ -279,6 +279,22 @@ describe("Pi Driver v2", () => {
 });
 
 describe("Pi RPC process hardening", () => {
+  it("cancels blocking extension UI requests instead of waiting for an unavailable host reply", async () => {
+    const fake = fakePi();
+    const rpc = createPiRpcProcess({ argv: [], cwd: "/tmp", env: {}, _test: { spawn: () => fake.child } });
+    for (const method of ["select", "confirm", "input", "editor"]) {
+      fake.child.stdout.write(`${JSON.stringify({ type: "extension_ui_request", id: `ask-${method}`, method })}\n`);
+    }
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(
+      fake.state.commands.filter((command) => command.type === "extension_ui_response"),
+      ["select", "confirm", "input", "editor"].map((method) => ({
+        type: "extension_ui_response", id: `ask-${method}`, cancelled: true,
+      })),
+    );
+    await rpc.dispose();
+  });
+
   it("preserves strict LF framing/cursors and rejects invalid or oversized responses with cleanup", async () => {
     const fake = fakePi();
     const rpc = createPiRpcProcess({ argv: [], cwd: "/tmp", env: {}, _test: { spawn: () => fake.child } });
