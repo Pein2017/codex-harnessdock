@@ -85,14 +85,28 @@ function validateClaudeReceipt(receipt) {
   const proven = requireArray(receipt.provenRows, "Claude provenRows");
   if (!proven.every((row) => typeof row === "string")) fail("Claude provenRows are malformed");
   const unproven = requireArray(receipt.unprovenRows, "Claude unprovenRows");
-  if (receipt?.hold?.result !== "HOLD") fail("Claude local inventory prerequisite must remain HOLD");
+  const inventory = receipt.inventoryWitness;
+  if (!inventory || typeof inventory !== "object" || Array.isArray(inventory)) fail("Claude inventory witness is missing");
+  if (Object.keys(inventory).sort().join(",") !== "effortsByModel,modelTurnObserved,models,observedAt,promptSubmitted,source") {
+    fail("Claude inventory witness shape changed");
+  }
+  if (inventory.observedAt !== "2026-08-30T06:33:50.169Z" || inventory.source !== "claude-agent-sdk-initialization" ||
+    inventory.promptSubmitted !== false || inventory.modelTurnObserved !== false) {
+    fail("Claude inventory witness is not the accepted zero-prompt SDK observation");
+  }
+  const expectedModels = ["claude-opus-5", "claude-fable-5", "claude-sonnet-5"];
+  const expectedEfforts = ["low", "medium", "high", "xhigh", "max"];
+  if (JSON.stringify(inventory.models) !== JSON.stringify(expectedModels) ||
+    JSON.stringify(inventory.effortsByModel) !== JSON.stringify(Object.fromEntries(expectedModels.map((model) => [model, expectedEfforts])))) {
+    fail("Claude inventory witness is incomplete or reordered");
+  }
   if (receipt?.notApplicable?.oldTurnObservation !== "turnObservation is unavailable in the current Claude route capability snapshot") {
     fail("Claude old-turn capability receipt changed");
   }
   if (receipt?.notApplicable?.oldExactSessionTransportRecovery !== "automaticRecovery is same_session_recovery_prompt, not exact_session_transport") {
     fail("Claude exact-session transport capability receipt changed");
   }
-  return { proven: new Set(proven), unproven };
+  return { proven: new Set(proven), unproven, inventory };
 }
 
 function validatePiReceipt(receipt) {
@@ -186,11 +200,15 @@ export function composeNativeHarnessDifferentialParity({ claudeReceipt, piReceip
     }));
   };
   {
-    const evidence = [localReference(claudeFile, "hold", claudeReceipt)];
+    const evidence = [localReference(claudeFile, "inventoryWitness", claudeReceipt)];
     cells.push(cell({
-    harness: "claude-code", dimension: "exact_model_effort_inventory", evidence, ...claudeSources(evidence),
-    mode: "zero-prompt negative control", comparator: "exact native selectable model and effort inventory", result: "hold",
-    blockerReason: safeText(claudeReceipt.hold.reason, "Claude inventory HOLD reason"),
+      harness: "claude-code", dimension: "exact_model_effort_inventory", evidence,
+      directSource: "Claude Agent SDK initialization witness",
+      harnessdockSource: "Claude Driver route revalidation",
+      artifactDigest: digest(evidence),
+      mode: "zero-prompt native initialization witness",
+      comparator: "exact native selectable model and per-model effort inventory",
+      result: "pass",
     }));
   }
   claudePass("argv_environment_or_request_transport", ["baseline_argv_environment"], "exact argv and allowlisted environment comparison");

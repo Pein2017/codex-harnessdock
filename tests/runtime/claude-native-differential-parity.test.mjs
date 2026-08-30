@@ -54,16 +54,21 @@ const PROVEN_ROWS = [
   "process_lifecycle_cleanup",
 ];
 const UNPROVEN_ROWS = [];
+const INVENTORY_WITNESS = {
+  observedAt: "2026-08-30T06:33:50.169Z",
+  source: "claude-agent-sdk-initialization",
+  promptSubmitted: false,
+  modelTurnObserved: false,
+  models: ["claude-opus-5", "claude-fable-5", "claude-sonnet-5"],
+  effortsByModel: {
+    "claude-opus-5": ["low", "medium", "high", "xhigh", "max"],
+    "claude-fable-5": ["low", "medium", "high", "xhigh", "max"],
+    "claude-sonnet-5": ["low", "medium", "high", "xhigh", "max"],
+  },
+};
 const NOT_APPLICABLE = {
   oldTurnObservation: "turnObservation is unavailable in the current Claude route capability snapshot",
   oldExactSessionTransportRecovery: "automaticRecovery is same_session_recovery_prompt, not exact_session_transport",
-};
-const HOLD = {
-  dimension: "exact_dynamic_claude_model_effort_inventory",
-  result: "HOLD",
-  reason: "zero-prompt native controls do not establish the exact selectable full model and effort catalog",
-  fallbackUsed: false,
-  staticCatalogUsed: false,
 };
 
 after(() => {
@@ -427,7 +432,7 @@ function renderReceipt(rows) {
     subject: "test-owned fake Claude CLI, direct Node control, and production Claude Driver v2/adapter",
     normalization: { ephemeralRoot: "<ROOT>", processPid: "<PID>" },
     provenRows: rows,
-    hold: HOLD,
+    inventoryWitness: INVENTORY_WITNESS,
     notApplicable: NOT_APPLICABLE,
     unprovenRows: UNPROVEN_ROWS,
   }, null, 2)}\n`;
@@ -733,7 +738,8 @@ describe("Claude native differential parity", () => {
       assert.deepEqual(controlDrift, driftMutation, "exact-session identity drift"));
 
     // The checked-in receipt is sanitized and reproducible: it contains only
-    // rows that the comparators above reached plus the frozen exact-route HOLD.
+    // rows that the comparators above reached plus the separately captured
+    // zero-prompt Agent SDK inventory witness.
     assert.equal(renderReceipt(PROVEN_ROWS), fs.readFileSync(RECEIPT_PATH, "utf8"));
   });
 

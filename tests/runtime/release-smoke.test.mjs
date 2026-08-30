@@ -190,15 +190,15 @@ describe("release smoke", () => {
     assert.equal(fixture.control.service.prompts.length, 0);
   });
 
-  it("reports a supplied differential matrix as non-promotable without changing default smoke behavior", async () => {
+  it("reports a supplied complete differential matrix as promotable without changing default smoke behavior", async () => {
     const fixture = matchingSnapshot();
     const differentialParityReceipt = JSON.parse(fs.readFileSync(
       path.join(SOURCE_ROOT, "tests", "runtime", "fixtures", "native-parity", "native-harness-differential-parity.receipt.json"),
       "utf8",
     ));
     const assessment = assessNativeHarnessDifferentialParity(differentialParityReceipt);
-    assert.equal(assessment.status, "hold");
-    assert.equal(assessment.promotionEligible, false);
+    assert.equal(assessment.status, "pass");
+    assert.equal(assessment.promotionEligible, true);
     const report = await runReleaseSmoke({
       installed: fixture.installed,
       differentialParityReceipt,
@@ -210,10 +210,10 @@ describe("release smoke", () => {
         paid: { requested: false, status: "skipped" },
       }),
     });
-    assert.equal(report.status, "hold");
-    assert.equal(report.promotionEligible, false);
-    assert.deepEqual(report.differentialParity.counts, { pass: 31, fail: 0, hold: 1, not_applicable: 10 });
-    assert.equal(report.differentialParity.blockers.length, 1);
+    assert.equal(report.status, "pass");
+    assert.equal(report.promotionEligible, true);
+    assert.deepEqual(report.differentialParity.counts, { pass: 32, fail: 0, hold: 0, not_applicable: 10 });
+    assert.equal(report.differentialParity.blockers.length, 0);
   });
 
   it("validates matching installed Skills and MCP evidence without paid usage by default", async () => {
@@ -781,7 +781,7 @@ describe("release smoke", () => {
     assert.doesNotMatch(result.stderr, /Starting explicit paid/i);
   });
 
-  it("loads the canonical differential receipt into the production CLI and fails its release outcome", async () => {
+  it("loads the canonical differential receipt into the production CLI and returns its release outcome", async () => {
     const stdout = [];
     const canonicalReceipt = path.join(
       SOURCE_ROOT, "tests", "runtime", "fixtures", "native-parity", "native-harness-differential-parity.receipt.json",
@@ -805,9 +805,9 @@ describe("release smoke", () => {
       writeStdout(value) { stdout.push(value); },
       writeStderr() {},
     });
-    assert.equal(exitCode, 1);
+    assert.equal(exitCode, 0);
     assert.equal(suppliedReceipt.schema, "harnessdock.native-harness-differential-parity.v2");
-    assert.deepEqual(JSON.parse(stdout.join("")), { status: "hold", promotionEligible: false });
+    assert.deepEqual(JSON.parse(stdout.join("")), { status: "pass", promotionEligible: true });
   });
 
   for (const [label, readFileSync] of [

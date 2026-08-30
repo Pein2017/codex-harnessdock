@@ -1,10 +1,10 @@
 # Native Harness Differential Parity
 
-Status: `hold`; promotion eligible: `false`.
+Status: `pass`; promotion eligible: `true`.
 
 | Harness | Dimension | Result | Evidence |
 | --- | --- | --- | --- |
-| claude-code | exact_model_effort_inventory | hold | claude-differential-receipt.json#hold |
+| claude-code | exact_model_effort_inventory | pass | claude-differential-receipt.json#inventoryWitness |
 | claude-code | argv_environment_or_request_transport | pass | claude-differential-receipt.json#provenRows/baseline_argv_environment |
 | claude-code | native_configuration_inheritance | pass | claude-differential-receipt.json#provenRows/benign_config_inheritance_witness |
 | claude-code | prompt_authority_delta | pass | claude-differential-receipt.json#provenRows/task_native_input, claude-differential-receipt.json#provenRows/closed_harnessdock_policy_delta, claude-differential-receipt.json#provenRows/write_authority_delta |
@@ -46,7 +46,3 @@ Status: `hold`; promotion eligible: `false`.
 | opencode | route_drift | pass | opencode-native-differential-parity.receipt.json#provenRows/route_drift |
 | opencode | native_usage_provenance | pass | opencode-native-differential-parity.receipt.json#provenRows/provider_native_usage_source_fields |
 | opencode | process_lifecycle | pass | opencode-native-differential-parity.receipt.json#provenRows/direct_executable_process_lifecycle_comparison, opencode-native-differential-parity.receipt.json#provenRows/managed_service_process_lifecycle |
-
-## Blockers
-
-- claude-code/exact_model_effort_inventory: hold — zero-prompt native controls do not establish the exact selectable full model and effort catalog

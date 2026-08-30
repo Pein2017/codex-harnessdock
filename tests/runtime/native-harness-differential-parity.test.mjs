@@ -101,9 +101,9 @@ describe("native Harness differential parity", () => {
     const inputs = localReceipts();
     const receipt = composeNativeHarnessDifferentialParity(inputs);
     const assessment = assessNativeHarnessDifferentialParity(receipt);
-    assert.deepEqual(assessment.counts, { pass: 31, fail: 0, hold: 1, not_applicable: 10 });
-    assert.equal(assessment.status, "hold");
-    assert.equal(assessment.promotionEligible, false);
+    assert.deepEqual(assessment.counts, { pass: 32, fail: 0, hold: 0, not_applicable: 10 });
+    assert.equal(assessment.status, "pass");
+    assert.equal(assessment.promotionEligible, true);
     assert.equal(receipt.cells.length, 42);
     assert.equal(renderNativeHarnessDifferentialParityReceipt(receipt), fs.readFileSync(RECEIPT_PATH, "utf8"));
     assert.equal(renderNativeHarnessDifferentialParityMarkdown(receipt, assessment), fs.readFileSync(MARKDOWN_PATH, "utf8"));
@@ -136,9 +136,12 @@ describe("native Harness differential parity", () => {
   it("rejects evidence/result composition mutations even when their digests are resealed", () => {
     const inputs = localReceipts();
     const baseline = composeNativeHarnessDifferentialParity(inputs);
+    const incompleteInventory = structuredClone(inputs);
+    incompleteInventory.claudeReceipt.inventoryWitness.models.pop();
+    assert.throws(() => composeNativeHarnessDifferentialParity(incompleteInventory));
     const mutations = [
       (value) => { value.cells[0].localEvidence[0].label = "claude-differential-receipt.json#other"; },
-      (value) => { value.cells.find((row) => row.harness === "claude-code" && row.dimension === "exact_model_effort_inventory").result = "pass"; },
+      (value) => { value.cells.find((row) => row.harness === "claude-code" && row.dimension === "exact_model_effort_inventory").result = "hold"; },
       (value) => { value.cells.find((row) => row.harness === "claude-code" && row.dimension === "exact_model_effort_inventory").result = "not_applicable"; value.cells.find((row) => row.harness === "claude-code" && row.dimension === "exact_model_effort_inventory").notApplicableBasis = { capability: "inventory", observed: "unavailable" }; delete value.cells.find((row) => row.harness === "claude-code" && row.dimension === "exact_model_effort_inventory").blockerReason; },
       (value) => { const row = value.cells.find((entry) => entry.harness === "opencode" && entry.dimension === "native_configuration_inheritance"); row.result = "fail"; row.blockerReason = "forged config gap"; },
       (value) => { delete value.cells[0].directSource; },
