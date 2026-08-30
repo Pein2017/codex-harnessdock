@@ -291,7 +291,7 @@
       "localEvidence": [
         {
           "label": "pi-native-differential-receipt.json#provenRows/exact_model_per_model_effort_inventory",
-          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+          "digest": "sha256:93a75c7be65fdbc2cf6011908b30cca082e8e08b152d364145b5da483691bb13"
         }
       ],
       "directSource": "manual Pi JSONL client",
@@ -300,7 +300,7 @@
       "mode": "zero-model deterministic native comparison",
       "comparator": "exact native model and effort inventory comparison",
       "result": "pass",
-      "contentDigest": "sha256:60b97d406fd4fa275de7b8a9a9d4d22a4e601b314dc3e913115882e247da36d3"
+      "contentDigest": "sha256:4dd3f995c60f5b354d5d9e08230dd265c85b370a5121c588ca4ce85a1931013a"
     },
     {
       "harness": "pi",
@@ -310,7 +310,7 @@
       "localEvidence": [
         {
           "label": "pi-native-differential-receipt.json#provenRows/argv_environment",
-          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+          "digest": "sha256:93a75c7be65fdbc2cf6011908b30cca082e8e08b152d364145b5da483691bb13"
         }
       ],
       "directSource": "manual Pi JSONL client",
@@ -319,7 +319,7 @@
       "mode": "zero-model deterministic native comparison",
       "comparator": "exact argv and environment comparison",
       "result": "pass",
-      "contentDigest": "sha256:d1489587d0f4058503bb6e753cab6f614598a6ad92cacdf1550b76ae9c00ebfc"
+      "contentDigest": "sha256:a1ec67d8846343d0b8b152b0494dae94db0269111f722c6d0624ae353f25fc58"
     },
     {
       "harness": "pi",
@@ -329,7 +329,7 @@
       "localEvidence": [
         {
           "label": "pi-native-differential-receipt.json#provenRows/configuration_inheritance_witness",
-          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+          "digest": "sha256:93a75c7be65fdbc2cf6011908b30cca082e8e08b152d364145b5da483691bb13"
         }
       ],
       "directSource": "manual Pi JSONL client",
@@ -338,7 +338,7 @@
       "mode": "zero-model deterministic native comparison",
       "comparator": "deterministic native configuration sentinel comparison",
       "result": "pass",
-      "contentDigest": "sha256:02fe955a3e0de29ea5b618ca400caaa9083fec888b29d6ea47708d9882abf6e4"
+      "contentDigest": "sha256:dccd2bef6554c6d19dfc8a21d679b3edad07e0b433e8060b0089653de6ba88f8"
     },
     {
       "harness": "pi",
@@ -348,16 +348,16 @@
       "localEvidence": [
         {
           "label": "pi-native-differential-receipt.json#provenRows/prompt_authority_native_input",
-          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+          "digest": "sha256:93a75c7be65fdbc2cf6011908b30cca082e8e08b152d364145b5da483691bb13"
         }
       ],
       "directSource": "Pi Driver behavioral_read_only native capture",
       "harnessdockSource": "Pi Driver behavioral_write native capture",
-      "artifactDigest": "sha256:d7739414cb769de4cac13b1a93d6a0a347cbb847c1335d0848f9bcc31a4d21c2",
+      "artifactDigest": "sha256:f8f8aa6cfc8005d935467cf9d813e326bb692b0ef32cf8b8c439ff2f7de6a390",
       "mode": "zero-model deterministic native comparison",
       "comparator": "authority-only native input comparison",
       "result": "pass",
-      "contentDigest": "sha256:3b3cc2329d908f51760159ddfbfb9cf290d4abde834090eb28c54d6806f8d688"
+      "contentDigest": "sha256:19bdd08c1e944bee402c0d8080990d76236b59b1ec86560f07c878065a3c63f2"
     },
     {
       "harness": "pi",
@@ -367,7 +367,7 @@
       "localEvidence": [
         {
           "label": "pi-native-differential-receipt.json#provenRows/ordered_events",
-          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+          "digest": "sha256:93a75c7be65fdbc2cf6011908b30cca082e8e08b152d364145b5da483691bb13"
         }
       ],
       "directSource": "manual Pi JSONL client",
@@ -376,7 +376,7 @@
       "mode": "zero-model deterministic native comparison",
       "comparator": "ordered native event comparison",
       "result": "pass",
-      "contentDigest": "sha256:54ea0276014041f2479cc22822b01b1746810c32a86199bd4b84e451f3679fdd"
+      "contentDigest": "sha256:46110131243e6f1ad3552bcf57168240269a9dff84dbc38d23544b86bacb98ec"
     },
     {
       "harness": "pi",
@@ -386,7 +386,7 @@
       "localEvidence": [
         {
           "label": "pi-native-differential-receipt.json#provenRows/interrupt_request_behavior",
-          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+          "digest": "sha256:93a75c7be65fdbc2cf6011908b30cca082e8e08b152d364145b5da483691bb13"
         }
       ],
       "directSource": "manual Pi JSONL client",
@@ -395,7 +395,7 @@
       "mode": "zero-model deterministic native comparison",
       "comparator": "native interrupt request comparison",
       "result": "pass",
-      "contentDigest": "sha256:37c1c09f90fc05bed41cfa8572d2492e25e639b9d77797406da06f3a418b9782"
+      "contentDigest": "sha256:0a5a5875ce401e5fff7c01bca93ab8ef3fdd8cecee1dd18e9190575f0f3cdfcd"
     },
     {
       "harness": "pi",
@@ -405,7 +405,7 @@
       "localEvidence": [
         {
           "label": "pi-native-differential-receipt.json#provenRows/exact_session_continuation",
-          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+          "digest": "sha256:93a75c7be65fdbc2cf6011908b30cca082e8e08b152d364145b5da483691bb13"
         }
       ],
       "directSource": "manual Pi JSONL client",
@@ -414,7 +414,7 @@
       "mode": "zero-model deterministic native comparison",
       "comparator": "same native session and distinct provider-native history identities",
       "result": "pass",
-      "contentDigest": "sha256:6bd48434287a74f9f7e1108d00ddb4bb894d3783b531d63ebbbe32a2caab1055"
+      "contentDigest": "sha256:20e302259b238c440c4fe8401f684ad73461069ab99c2340dd408d05d8e2f2e1"
     },
     {
       "harness": "pi",
@@ -424,7 +424,7 @@
       "localEvidence": [
         {
           "label": "pi-native-differential-receipt.json#notApplicableRows/cross_process_turn_observation_or_reconciliation",
-          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+          "digest": "sha256:93a75c7be65fdbc2cf6011908b30cca082e8e08b152d364145b5da483691bb13"
         }
       ],
       "directSource": "accepted Pi capability snapshot",
@@ -437,7 +437,7 @@
         "capability": "turnObservation",
         "observed": "unavailable"
       },
-      "contentDigest": "sha256:d96c16f4f513fac351af8f9e9d70551350691f790b2c34f3fe5a50bc262e3dcd"
+      "contentDigest": "sha256:235e8bfc5ac6c30a9b5b453ca02b547480701deca9a50a8d25362f4cb1b0756b"
     },
     {
       "harness": "pi",
@@ -447,7 +447,7 @@
       "localEvidence": [
         {
           "label": "pi-native-differential-receipt.json#notApplicableRows/automatic_recovery_exact_session_transport",
-          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+          "digest": "sha256:93a75c7be65fdbc2cf6011908b30cca082e8e08b152d364145b5da483691bb13"
         }
       ],
       "directSource": "accepted Pi capability snapshot",
@@ -460,7 +460,7 @@
         "capability": "automaticRecovery",
         "observed": "none"
       },
-      "contentDigest": "sha256:a67f65346fb034b2e51b3d76339878b53e279316b42c82a63bce63ab2b4e0347"
+      "contentDigest": "sha256:cb1c721c68dfb3c652db4353c57547de0ad2a33049ff40db346849528694f738"
     },
     {
       "harness": "pi",
@@ -470,7 +470,7 @@
       "localEvidence": [
         {
           "label": "pi-native-differential-receipt.json#notApplicableRows/same_session_recovery_prompt",
-          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+          "digest": "sha256:93a75c7be65fdbc2cf6011908b30cca082e8e08b152d364145b5da483691bb13"
         }
       ],
       "directSource": "accepted Pi capability snapshot",
@@ -483,7 +483,7 @@
         "capability": "automaticRecovery",
         "observed": "none"
       },
-      "contentDigest": "sha256:5e843be6113284242805f1ecd6b873738e0c52dd084ace735624a9e9dfa4b3b2"
+      "contentDigest": "sha256:2d0773cccd14f7e82c52f3b15979fbd4792ed0f27f369323f2f39163c42e579c"
     },
     {
       "harness": "pi",
@@ -493,7 +493,7 @@
       "localEvidence": [
         {
           "label": "pi-native-differential-receipt.json#provenRows/terminal_classification",
-          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+          "digest": "sha256:93a75c7be65fdbc2cf6011908b30cca082e8e08b152d364145b5da483691bb13"
         }
       ],
       "directSource": "manual Pi JSONL client",
@@ -502,7 +502,7 @@
       "mode": "zero-model deterministic native comparison",
       "comparator": "closed native terminal comparison",
       "result": "pass",
-      "contentDigest": "sha256:94180d78f288254a64fcd7207da8308bda809701669d4782866f54d432f8d6fe"
+      "contentDigest": "sha256:7e80e5026d1954ec37c10e4974879e2a4e2cc425c3e59c889e4b6e03ab876756"
     },
     {
       "harness": "pi",
@@ -512,7 +512,7 @@
       "localEvidence": [
         {
           "label": "pi-native-differential-receipt.json#provenRows/route_drift",
-          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+          "digest": "sha256:93a75c7be65fdbc2cf6011908b30cca082e8e08b152d364145b5da483691bb13"
         }
       ],
       "directSource": "manual Pi JSONL client",
@@ -521,7 +521,7 @@
       "mode": "zero-model deterministic native comparison",
       "comparator": "fresh native route drift refusal",
       "result": "pass",
-      "contentDigest": "sha256:1636aca862f807338e3f2f0bf4368607dda460db9115b7384e2e35a336543230"
+      "contentDigest": "sha256:e0d8a95b4074075712b313b2b00219e5aaa088907f55f25ab409199620cf9290"
     },
     {
       "harness": "pi",
@@ -531,7 +531,7 @@
       "localEvidence": [
         {
           "label": "pi-native-differential-receipt.json#provenRows/native_usage_source_fields",
-          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+          "digest": "sha256:93a75c7be65fdbc2cf6011908b30cca082e8e08b152d364145b5da483691bb13"
         }
       ],
       "directSource": "manual Pi JSONL client",
@@ -540,7 +540,7 @@
       "mode": "zero-model deterministic native comparison",
       "comparator": "provider-native usage source comparison",
       "result": "pass",
-      "contentDigest": "sha256:3b29fe9fb860a089975516dcb70d88972ac9fedc9b23975a065c184f87261669"
+      "contentDigest": "sha256:bbecfc8dad3dfa4e155780d0e3d14ae1a5f05b426ef92c4d46a5773b3c15d331"
     },
     {
       "harness": "pi",
@@ -550,7 +550,7 @@
       "localEvidence": [
         {
           "label": "pi-native-differential-receipt.json#provenRows/lifecycle_process_cleanup",
-          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+          "digest": "sha256:93a75c7be65fdbc2cf6011908b30cca082e8e08b152d364145b5da483691bb13"
         }
       ],
       "directSource": "manual Pi JSONL client",
@@ -559,7 +559,7 @@
       "mode": "zero-model deterministic native comparison",
       "comparator": "native process cleanup comparison",
       "result": "pass",
-      "contentDigest": "sha256:665dd941cadbfb9016a20417bb2ed78860f6ec67b77ed747b2d4d43848f3686e"
+      "contentDigest": "sha256:a892bbb4628dbda392fabc9055f0ee94a78169b5b56c1472cd03c052b57bfc71"
     },
     {
       "harness": "opencode",
@@ -852,5 +852,5 @@
       "contentDigest": "sha256:a9140ce65ce9846bb4e2a75183b373fad4444e68cc4f3da2a530ac358f0639f7"
     }
   ],
-  "digest": "sha256:070c2f118085ddaddbafc6bbd05581832b34c46ee61c15603ad6b25956aa7b72"
+  "digest": "sha256:d37d385f1808bac2be99044a7a21fc57cb35d56462a6b421372c967240e84d46"
 }

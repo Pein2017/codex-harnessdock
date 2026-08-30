@@ -170,6 +170,7 @@ function fixedPrompt(envelope) {
     "HarnessDock route contract:",
     `- ${authority}`,
     "- Work as one leaf Agent. Do not delegate, spawn another agent, or start another harness.",
+    "- Do not ask the user for input; decide and continue.",
     "- Return one final assistant message to the Codex lead.",
     "",
     "Task:",

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.25.2 - 2026-08-30
+
+- Resolve Pi RPC dialogs with unattended continuation defaults instead of
+  cancellation, and instruct Pi Agents to decide without asking the user.
+
 ## 0.25.1 - 2026-08-30
 
 - Keep Pi RPC turns unattended when a native extension requests a dialog:

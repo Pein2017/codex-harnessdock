@@ -111,7 +111,7 @@ describe("Pi Driver v2", () => {
     });
     assert.equal(result.metrics.plugin_observed.tool_call_count, 2);
     assert.deepEqual(fake.state.commands.slice(0, 8).map((command) => command.type), ["get_state", "get_entries", "get_session_stats", "set_auto_retry", "set_auto_compaction", "set_steering_mode", "set_follow_up_mode", "prompt"]);
-    assert.match(fake.state.commands.find((command) => command.type === "prompt").message, /HarnessDock route contract:[\s\S]*Read only[\s\S]*Task:\ninspect/);
+    assert.match(fake.state.commands.find((command) => command.type === "prompt").message, /HarnessDock route contract:[\s\S]*Read only[\s\S]*Do not ask the user for input; decide and continue[\s\S]*Task:\ninspect/);
     assert.deepEqual(fake.state.argv.slice(0, 8), ["--mode", "rpc", "--session-dir", "/tmp/pi-driver-fixture", "--provider", "openai-codex", "--model", "gpt-5.6-luna"]);
     assert.equal(fake.state.argv.includes("--offline"), false);
     assert.equal(fake.state.argv.includes("--no-approve"), false);
@@ -279,18 +279,22 @@ describe("Pi Driver v2", () => {
 });
 
 describe("Pi RPC process hardening", () => {
-  it("cancels blocking extension UI requests instead of waiting for an unavailable host reply", async () => {
+  it("resolves blocking extension UI requests instead of waiting for an unavailable host reply", async () => {
     const fake = fakePi();
     const rpc = createPiRpcProcess({ argv: [], cwd: "/tmp", env: {}, _test: { spawn: () => fake.child } });
-    for (const method of ["select", "confirm", "input", "editor"]) {
-      fake.child.stdout.write(`${JSON.stringify({ type: "extension_ui_request", id: `ask-${method}`, method })}\n`);
-    }
+    fake.child.stdout.write(`${JSON.stringify({ type: "extension_ui_request", id: "ask-select", method: "select", options: ["first", "second"] })}\n`);
+    fake.child.stdout.write(`${JSON.stringify({ type: "extension_ui_request", id: "ask-confirm", method: "confirm" })}\n`);
+    fake.child.stdout.write(`${JSON.stringify({ type: "extension_ui_request", id: "ask-input", method: "input" })}\n`);
+    fake.child.stdout.write(`${JSON.stringify({ type: "extension_ui_request", id: "ask-editor", method: "editor", prefill: "keep me" })}\n`);
     await new Promise((resolve) => setImmediate(resolve));
     assert.deepEqual(
       fake.state.commands.filter((command) => command.type === "extension_ui_response"),
-      ["select", "confirm", "input", "editor"].map((method) => ({
-        type: "extension_ui_response", id: `ask-${method}`, cancelled: true,
-      })),
+      [
+        { type: "extension_ui_response", id: "ask-select", value: "first" },
+        { type: "extension_ui_response", id: "ask-confirm", confirmed: true },
+        { type: "extension_ui_response", id: "ask-input", value: "" },
+        { type: "extension_ui_response", id: "ask-editor", value: "keep me" },
+      ],
     );
     await rpc.dispose();
   });

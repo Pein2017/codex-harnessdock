@@ -1,6 +1,6 @@
 {
   "name": "codex-harnessdock",
-  "version": "0.25.1+codex.20260830083426",
+  "version": "0.25.2+codex.20260830084057",
   "description": "HarnessDock for Codex is an unofficial third-party checkout-owned multi-Harness Agent runtime for Claude Code, OpenCode, and Pi with durable roots, completion delivery, native history, interruption, and exact-session follow-up where supported; it is not affiliated with or endorsed by OpenAI.",
   "author": {
     "name": "Pein2017",

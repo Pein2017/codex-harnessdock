@@ -44,7 +44,7 @@
       "mode": "zero-model deterministic fake native",
       "comparator": "executed independent behavioral comparison",
       "result": "pass",
-      "artifactDigest": "sha256:d7739414cb769de4cac13b1a93d6a0a347cbb847c1335d0848f9bcc31a4d21c2"
+      "artifactDigest": "sha256:f8f8aa6cfc8005d935467cf9d813e326bb692b0ef32cf8b8c439ff2f7de6a390"
     },
     {
       "dimension": "ordered_events",

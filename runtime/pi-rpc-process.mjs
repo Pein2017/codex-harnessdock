@@ -114,12 +114,23 @@ export function createPiRpcProcess(options) {
         fail("invalid_response", "Pi RPC emitted an invalid extension UI request.");
         return;
       }
+      if (value.method === "select" && (!Array.isArray(value.options) || typeof value.options[0] !== "string")) {
+        fail("invalid_response", "Pi RPC emitted a select request without a first option.");
+        return;
+      }
+      if (value.method === "editor" && value.prefill != null && typeof value.prefill !== "string") {
+        fail("invalid_response", "Pi RPC emitted an invalid editor prefill.");
+        return;
+      }
+      const response = value.method === "confirm"
+        ? { confirmed: true }
+        : { value: value.method === "select" ? value.options[0] : value.method === "editor" ? value.prefill ?? "" : "" };
       try {
-        child.stdin.write(`${JSON.stringify({ type: "extension_ui_response", id: value.id, cancelled: true })}\n`, "utf8", (error) => {
-          if (error) fail("stdin_error", "Pi RPC extension UI cancellation failed.");
+        child.stdin.write(`${JSON.stringify({ type: "extension_ui_response", id: value.id, ...response })}\n`, "utf8", (error) => {
+          if (error) fail("stdin_error", "Pi RPC extension UI response failed.");
         });
       } catch {
-        fail("stdin_error", "Pi RPC extension UI cancellation failed.");
+        fail("stdin_error", "Pi RPC extension UI response failed.");
       }
       return;
     }
