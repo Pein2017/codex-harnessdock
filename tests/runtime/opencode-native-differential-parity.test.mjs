@@ -140,8 +140,14 @@ async function startServer(directory, prompt = nativePromptResponse(directory)) 
     prompt,
   });
   const url = await server.listen();
-  cleanups.push(() => server.close());
-  return { server, url };
+  let open = true;
+  const close = async () => {
+    if (!open) return;
+    open = false;
+    await server.close();
+  };
+  cleanups.push(close);
+  return { server, url, close };
 }
 
 function requestOrder(requests) {
@@ -433,6 +439,7 @@ async function assertNativeConfigurationSensitivity(directory) {
     undefined,
     "a native default-Agent configuration mutation must fail the behavioral comparator",
   );
+  await baselineServer.close();
 
   const policyServer = await startServer(directory);
   const direct = await runRawHttpOpenCodeOracle({
@@ -446,6 +453,7 @@ async function assertNativeConfigurationSensitivity(directory) {
     undefined,
     "a native resolved-policy mutation must fail the behavioral comparator",
   );
+  await policyServer.close();
 }
 
 function assertAuthoritySensitivity(readOnly, write) {
@@ -470,17 +478,18 @@ async function assertNativeResponseSensitivity(directory) {
     ["terminal status", (response) => { response.body.info.finish = "error"; }],
   ]) {
     const base = nativePromptResponse(directory);
-    const { server, url } = await startServer(directory, (input) => {
+    const fixture = await startServer(directory, (input) => {
       const response = base(input);
       mutate(response);
       return response;
     });
     const direct = await runRawHttpOpenCodeOracle({
-      serverUrl: url, selection: NATIVE_INPUT, taskInput: NATIVE_INPUT.taskInput,
+      serverUrl: fixture.url, selection: NATIVE_INPUT, taskInput: NATIVE_INPUT.taskInput,
       directory, configurationWitness: NATIVE_INPUT.configurationWitness,
     });
-    const harness = await runHarnessDockTurn({ server, url, directory });
+    const harness = await runHarnessDockTurn({ server: fixture.server, url: fixture.url, directory });
     assert.throws(() => compareEvidence(direct, harness), undefined, `${label} must fail the behavioral comparator`);
+    await fixture.close();
   }
 }
 
