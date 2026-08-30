@@ -20,4 +20,4 @@
 
 - [x] 4.1 Demonstrate sensitivity by restoring an omitted-effort acceptance or a stale/merged catalog path and observing the corresponding focused contract/admission test fail, then restore the candidate implementation.
 - [x] 4.2 Run `npm run test:focus -- tests/runtime/harness-driver-contract.test.mjs tests/runtime/pi-driver.test.mjs tests/runtime/opencode-driver.test.mjs tests/runtime/mcp-server.test.mjs tests/runtime/agent-launch-boundary.test.mjs tests/runtime/harnessdock-skill-guidance-neutrality.test.mjs tests/runtime/plugin-contract.test.mjs tests/runtime/release-smoke.test.mjs` and record the passing deterministic receipt.
-- [ ] 4.3 Run `npm run check` and `openspec validate enforce-exact-discovered-routes --strict`; do not install, release, archive, refresh, or run a provider/model turn.
+- [x] 4.3 Run `npm run check` and `openspec validate enforce-exact-discovered-routes --strict`; do not install, release, archive, refresh, or run a provider/model turn.
