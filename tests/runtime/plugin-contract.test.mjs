@@ -483,20 +483,14 @@ describe("native plugin contract", () => {
     assert.match(read("send-message"), /queue/i);
   });
 
-  it("documents Pi as a first-class exact-session route and removes DeepSeek from current routes", () => {
+  it("documents Pi and OpenCode as native-discovered routes and removes DeepSeek from current routes", () => {
     const readme = fs.readFileSync(path.join(root, "README.md"), "utf8");
-    assert.match(readme, /Three Harnesses are admitted[\s\S]*Experimental \*\*Pi\*\*/i);
-    for (const model of [
-      "openai-codex/gpt-5.6-luna",
-      "openai-codex/gpt-5.6-terra",
-      "openai-codex/gpt-5.6-sol",
-      "openai/gpt-5.6-luna",
-      "openai/gpt-5.6-terra",
-      "openai/gpt-5.6-sol",
-    ]) assert.match(readme, new RegExp(model.replace("/", "\\/")));
+    assert.match(readme, /## Supported Harnesses[\s\S]*\*\*Pi\*\*[\s\S]*\*\*OpenCode\*\*/i);
+    assert.match(readme, /Pi routes come from the local RPC model catalog/i);
+    assert.match(readme, /Models and efforts are imported[\s\S]*live OpenCode provider[\s\S]*catalog/i);
     assert.match(readme, /Pi resumes that exact session only[\s\S]*asynchronous assistant history/i);
     assert.match(readme, /`settlement_unknown`/);
-    const openCodeStart = readme.indexOf("## OpenCode Explorer (Experimental)");
+    const openCodeStart = readme.indexOf("## OpenCode (Experimental)");
     const openCodeSection = readme.slice(openCodeStart, readme.indexOf("## Route refusal is Codex-led", openCodeStart));
     assert.doesNotMatch(openCodeSection, /deepseek|opencode-go/i);
     assert.match(readme, /\*\*DeepSeek Harness\*\*[\s\S]*later, independent probes/i);

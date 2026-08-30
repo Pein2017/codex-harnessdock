@@ -1,49 +1,115 @@
-# HarnessDock for Codex: durable multi-Harness Agents for Codex
+<h1 align="center">HarnessDock for Codex</h1>
 
-The Plugin visual identity uses two interlocking relay tracks around one signal
-node: the Codex lead and Claude worker remain distinct while exchanging durable,
-recoverable work. The manifest declares a compact composer icon and a larger
-matching logo from `plugins/codex-harnessdock/assets/` with brand color `#312E81`.
+<p align="center">
+  <img src="plugins/codex-harnessdock/assets/harnessdock-logo.svg" width="150" alt="HarnessDock relay logo">
+</p>
 
-HarnessDock for Codex is an unofficial third-party project and is not affiliated
-with or endorsed by OpenAI. The public maintainer is Pein2017:
-https://github.com/Pein2017.
+<p align="center"><strong>Let Codex lead durable Agents across Claude Code, Pi, and OpenCode.</strong></p>
 
-HarnessDock for Codex is a checkout-owned Codex Plugin with one durable Agent supervisor
-and a static Harness Driver seam. Three Harnesses are admitted: **Claude Code**,
-which runs in headless stream-json mode; Experimental **Pi**, a native
-`openai-codex` session Harness; and the Experimental **OpenCode Explorer**, a
-read-only repository scout served by an operator-owned loopback Server. Each
-Harness remains responsible for its own authentication,
-configuration, sessions, and tool execution. A caller states the whole route --
-Harness, full model, topology, and behavioral authority -- on every spawn; there
-is no default Harness and nothing is inferred. A further Harness requires its
-own accepted OpenSpec and Driver; none is a public placeholder in the current
-API.
+<p align="center">
+  <a href="https://github.com/Pein2017/codex-harnessdock/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Pein2017/codex-harnessdock/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Status: experimental" src="https://img.shields.io/badge/status-experimental-f59e0b">
+  <img alt="Platform: Linux" src="https://img.shields.io/badge/platform-Linux-0f172a?logo=linux&logoColor=white">
+  <img alt="Node.js 20.19 or newer" src="https://img.shields.io/badge/node-%E2%89%A520.19-339933?logo=nodedotjs&logoColor=white">
+  <a href="LICENSE"><img alt="License: Apache 2.0" src="https://img.shields.io/badge/license-Apache--2.0-2563eb"></a>
+</p>
 
-> **Experimental feature:** the eight HarnessDock Agent skills are an evolving local
-> orchestration surface. They preserve durable Agent work, but cannot make an
-> idle Codex parent start a new model turn after it has already ended. A parent
-> that needs a child result must keep the join obligation inside its active
-> turn.
+<p align="center">
+  <a href="#quick-start">Quick start</a> ·
+  <a href="#supported-harnesses">Harnesses</a> ·
+  <a href="#typed-mcp-lifecycle">API</a> ·
+  <a href="#operator-doctor-and-release-smoke">Doctor</a> ·
+  <a href="#local-development-and-installation">Development</a>
+</p>
 
-A named Agent—not an internal job ID—is the public object. A native turn is
-temporary. An Agent has a stable root-scoped identity, immutable Harness/model
-route, native session pointer when safe, durable message queue, and nonresident
-logical history after its worker exits.
+HarnessDock is an experimental, checkout-owned Codex Plugin. It gives the Codex
+lead one typed MCP lifecycle for starting, messaging, joining, interrupting, and
+reusing coding Agents while each native Harness keeps ownership of its own
+authentication, models, tools, plugins, MCP servers, and sessions.
 
-The runtime has no source or runtime dependency on Sendbird, upstream
-installers, Codex forwarding hooks, or a versioned plugin Cache. Codex caches a
-minimal descriptor/bootstrap for discovery, but that bootstrap fails closed
-unless it delegates to the fixed `/data/CoordExp/codex-harnessdock` checkout.
-Executable runtime source never comes from a development worktree or selectable
-environment variable. `/data/CoordExp/external/cc-plugin-codex` is a read-only
-reference and is never a runtime, install, Git-object, remote, merge, or
-worktree dependency.
+```text
+                                 ┌─ Claude Code  (stream-json)
+Codex lead ── typed MCP ── HarnessDock ─┤─ Pi           (RPC)
+                                 └─ OpenCode     (managed local server)
+                                      │
+                                      └─ durable Agent state
+```
 
-The supported platform is Linux with Node.js 20.19 or newer. Any surviving
-macOS or native Windows defensive branches are best-effort only and are not a
-compatibility or release guarantee.
+## Why HarnessDock
+
+- **One explicit route contract.** Every spawn names the Harness, full native
+  model, reasoning effort, topology, and behavioral authority. Nothing silently
+  falls back to another route.
+- **Durable Agent identity.** Work is addressed by a stable Agent name rather
+  than an internal process or job ID. Messages, completion, and safe native
+  continuation survive worker exit.
+- **Native configuration stays native.** Pi and OpenCode routes are discovered
+  from their live local configuration; HarnessDock does not maintain a second
+  model catalog for them.
+- **No babysitting terminals.** Detached workers and the managed OpenCode
+  service are started by the Plugin. Pi and OpenCode run with zero-wait
+  interaction policies instead of blocking the Codex lead for terminal input.
+- **Fail closed, with receipts.** Route drift, stale policy, unsupported
+  continuation, and missing native evidence are reported rather than guessed.
+
+## Supported Harnesses
+
+| Harness | Native surface | Durable behavior | Current boundary |
+| --- | --- | --- | --- |
+| **Claude Code** | Headless `stream-json` CLI | Exact-session follow-up, history, messages, interruption; experimental native orchestration on admitted routes | Explicit configured model and effort; no automatic model fallback |
+| **Pi** | `--mode rpc` | Exact-session follow-up, history, active input, interruption | Dynamic native models/efforts; leaf only; unattended UI decisions |
+| **OpenCode** | Managed loopback `opencode serve` | Fresh turns with durable HarnessDock completion | Dynamic native models/efforts; leaf only; no native history or interruption |
+
+All three Harnesses remain Experimental. `write: false` and `write: true` are
+prompt-level behavioral authorities, not OS sandboxes. Run untrusted work only
+inside an isolation boundary you control.
+
+## Quick start
+
+The current local build is intentionally bound to the canonical checkout
+`/data/CoordExp/codex-harnessdock` and supports Linux with Node.js 20.19 or newer.
+
+```bash
+git clone https://github.com/Pein2017/codex-harnessdock.git /data/CoordExp/codex-harnessdock
+cd /data/CoordExp/codex-harnessdock
+npm ci
+npm run install:local
+npm run doctor
+npm run smoke:release
+```
+
+Reload Codex and start a new task. Discover the routes that are actually ready:
+
+```text
+$codex-harnessdock:list-harnesses
+```
+
+Then start one explicit Agent and join it:
+
+```text
+spawn_agent({
+  task_name: "review_auth",
+  message: "Review the authentication flow and report concrete defects.",
+  harness: "pi",
+  model: "openai-codex/gpt-5.6-luna",
+  reasoning_effort: "low",
+  topology: "leaf",
+  write: false
+})
+
+wait_agent({ targets: ["/root/review_auth"] })
+```
+
+Use only a model/effort tuple returned by the fresh `list_harnesses` call. The
+Agent starts asynchronously; no background terminal is required.
+
+> [!IMPORTANT]
+> HarnessDock cannot restart an already-ended Codex model turn. If the parent
+> needs the result, it must call `wait_agent` before ending its active turn.
+
+HarnessDock is an unofficial third-party project maintained by
+[Pein2017](https://github.com/Pein2017). It is not affiliated with or endorsed
+by OpenAI, Anthropic, Pi, or OpenCode.
 
 ## Typed MCP lifecycle
 
@@ -145,18 +211,17 @@ arguments, and `x-high` maps to `xhigh`. Older model IDs, dated backend snapshot
 IDs, and other Claude models fail before Claude launches. Follow-up turns
 inherit the Agent's selected model.
 
-`pi` admits only provider `openai-codex` and exact models
-`openai-codex/gpt-5.6-luna`, `openai-codex/gpt-5.6-terra`, and
-`openai-codex/gpt-5.6-sol`. Every new Pi turn, including an exact-session
-follow-up, explicitly supplies `low`, `medium`, `high`, `xhigh`, or `max`;
-there is no default effort, model substitution, or automatic recovery.
+Pi routes come from the local RPC model catalog. Every new Pi turn, including
+an exact-session follow-up, explicitly supplies one freshly discovered full
+model and supported effort; there is no default effort, model substitution, or
+automatic recovery.
 
 Every Agent states an immutable `topology`. A `leaf` Agent runs its own task;
 for Claude that maps to the runtime's `delegation_mode: "leaf"`, which appends a
 bounded Codex-lead role envelope and denies Claude Code's native `Agent` and
 `Workflow` tools. Only exact `claude-opus-5` or `claude-fable-5` with
 `topology: "native_orchestrator"` may act as an experimental Native Agent Team
-lead; Pi and the OpenCode Explorer admit `leaf` only; Pi native orchestration is
+lead; Pi and OpenCode admit `leaf` only; Pi native orchestration is
 disabled. The public registry stays flat: only
 the durable parent is a HarnessDock Agent. Initialization definition/tool names are
 necessary, but transport is live-validated only after a named member launches
@@ -438,12 +503,19 @@ node plugins/codex-harnessdock/bootstrap/harnessdock-runtime.mjs readiness
 
 ## Pi (Experimental)
 
-Pi is a first-class native-session Harness. It starts no provider other than
-`openai-codex`, and admits only `openai-codex/gpt-5.6-luna`,
-`openai-codex/gpt-5.6-terra`, and `openai-codex/gpt-5.6-sol` with `leaf`.
-Each new turn requires explicit `low`, `medium`, `high`, `xhigh`, or `max`
-reasoning effort. `write: false` permits only `read`, `grep`, `find`, and `ls`;
-`write: true` additionally permits `bash`, `edit`, and `write`.
+Pi is a first-class native-session Harness. At discovery time, HarnessDock asks
+the local Pi RPC process for its available provider/model routes and the
+thinking levels supported by each route. Every new turn still names one freshly
+advertised full model and effort explicitly; HarnessDock supplies neither a
+default nor a substitute. Pi is `leaf` only.
+
+Both `write: false` and `write: true` preserve Pi's native tools and local
+configuration. The difference is an explicit prompt-level behavioral contract,
+not a process-permission switch. The turn prompt also tells Pi to make a
+reasonable decision instead of asking the user. If an extension nevertheless
+opens RPC UI, HarnessDock resolves it without waiting: confirms continue,
+selects use the first option, and text/editor requests use their prefill or an
+empty value.
 
 There is no global Pi capacity ceiling, but the same exact native session is
 serialized. Pi resumes that exact session only, acknowledges active input, and
@@ -452,31 +524,35 @@ It has no automatic recovery and no native orchestration. An interrupt request
 is nonterminal and may return `settlement_unknown`; wait for settlement before
 another turn.
 
-## OpenCode Explorer (Experimental)
+## OpenCode (Experimental)
 
-The OpenCode Explorer is a read-only repository scout. Everything it needs
-is operator-owned; the Plugin starts, installs, configures, and repairs nothing.
+OpenCode is a native local-server Harness. HarnessDock can start the configured
+`opencode` executable when the fixed endpoint is absent; it does not install
+OpenCode, authenticate accounts, or rewrite the user's provider/model
+configuration.
 
 - **Server.** One loopback Server, named by `OPENCODE_SERVER_URL` in the tracked
   environment file (default `http://127.0.0.1:4096`). The Driver admits only a
   literal loopback origin, never a DNS name, and refuses proxy routing for it.
-  The operator starts and stops that Server.
+  A healthy compatible Server is reused; otherwise the Plugin starts an exact
+  owned process with a receipt. A proven owned Server is eligible for idle
+  cleanup after one hour by default; Agent records and results are retained.
 - **Authentication.** Optional Basic-auth credentials are read only from the
   operator process environment through an exact allowlist
   (`OPENCODE_SERVER_USERNAME`, `OPENCODE_SERVER_PASSWORD`). They are never
   tracked in the environment file and never appear in receipts, errors, logs,
   instance keys, or any model-facing listing.
-- **Profile.** `config/opencode/codex-explorer.md` is the reviewed operator
-  template for the `codex-explorer` profile: deny-by-default permissions with
-  read/list/glob/grep/lsp allowed, dotenv reads denied, and external-directory
-  access denied. The Driver validates the Server's own resolved policy against
-  that contract and refuses a route whose policy has drifted.
-- **Route.** Exact `openai/gpt-5.6-luna`, `openai/gpt-5.6-terra`, or
-  `openai/gpt-5.6-sol`; `leaf` only, `write: false` only, no reasoning effort,
-  no HarnessDock capacity ceiling, and `fresh_only` continuation. Interruption and
-  assistant history are unsupported and answer with a receipt rather than an
-  error. No `-fast` variants are admitted. Driver and capability maturity are
-  Experimental.
+- **Interaction policy.** The managed child and every created session use a
+  zero-wait policy: ordinary permissions and `doom_loop` are allowed, while
+  `question`, `plan_exit`, and nested `task` requests are denied. The Driver
+  validates the live primary Agent policy and blocks the Harness if it drifts
+  back to an interactive path.
+- **Route.** Models and efforts are imported from the live OpenCode provider
+  catalog. Each spawn must name one freshly advertised exact tuple, `leaf`, and
+  either behavioral authority. There is no HarnessDock capacity ceiling and
+  continuation is `fresh_only`. Interruption and assistant history are
+  unsupported and answer with a receipt rather than an error. Driver and
+  capability maturity remain Experimental.
 - **CLI attach is diagnostic only.** Attaching to the Server with the OpenCode
   CLI is an operator debugging aid. It is never a runtime dependency, never a
   fallback path, and no Skill or MCP tool may invoke it. TUI automation is
@@ -642,7 +718,7 @@ than pretending to honor it.
 The fixed file is parsed as literal `KEY=VALUE`, never evaluated as shell code.
 It authoritatively pins `CLAUDE_NATIVE_CONFIG_DIR`, `CLAUDE_CONFIG_DIR`,
 Claude native Auto Memory enabled with `CLAUDE_CODE_DISABLE_AUTO_MEMORY=0`,
-`CONDA_EXE`, the Claude binary, the OpenCode Explorer's loopback
+`CONDA_EXE`, the Claude binary, OpenCode's loopback
 `OPENCODE_SERVER_URL`, lower- and upper-case 9090 proxy variables, and localhost
 bypasses. Those values overlay conflicting inherited values; valid unrelated
 host state such as `PATH`, Codex root identity, and runtime-state location is
@@ -790,7 +866,7 @@ one `codex_harnessdock` MCP server whose descriptor-only bootstrap delegates onl
 ## Activation runbook
 
 Production promotion, identity/data cutover, install/refresh, Codex restart, the
-installed smoke, and the three authorized live Explorer examples are operator
+installed smoke, and the three authorized live OpenCode examples are operator
 steps, not repository steps. They are sequenced, each with its verification and
 its rollback note, in [`docs/activation-runbook.md`](docs/activation-runbook.md).
 
@@ -820,3 +896,14 @@ The initial runtime ideas were evaluated against the Apache-2.0 Sendbird
 plugin. Current public architecture, lifecycle, environment contract, and
 runtime source are locally owned. Historical upstream material is reference
 only and is not an active compatibility contract.
+
+## Support and contributing
+
+Use [GitHub Issues](https://github.com/Pein2017/codex-harnessdock/issues) for
+questions, reproducible defects, and focused proposals. Please run
+`npm run check` before submitting a pull request. Report vulnerabilities through
+the process in [`SECURITY.md`](SECURITY.md), not a public issue.
+
+## License
+
+Apache-2.0. See [`LICENSE`](LICENSE).
