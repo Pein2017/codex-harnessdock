@@ -212,8 +212,8 @@ describe("release smoke", () => {
     });
     assert.equal(report.status, "hold");
     assert.equal(report.promotionEligible, false);
-    assert.deepEqual(report.differentialParity.counts, { pass: 29, fail: 0, hold: 3, not_applicable: 7 });
-    assert.equal(report.differentialParity.blockers.length, 3);
+    assert.deepEqual(report.differentialParity.counts, { pass: 31, fail: 0, hold: 1, not_applicable: 10 });
+    assert.equal(report.differentialParity.blockers.length, 1);
   });
 
   it("validates matching installed Skills and MCP evidence without paid usage by default", async () => {

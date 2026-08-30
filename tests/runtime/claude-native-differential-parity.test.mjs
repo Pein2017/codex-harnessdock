@@ -197,6 +197,7 @@ async function launchDriver(test, {
   const env = test.env(scenario);
   const nativeDriver = createClaudeCodeDriverV2({
     env,
+    inspectRoutes: async () => ({ models: [MODEL], effortsByModel: { [MODEL]: [EFFORT] } }),
     runTurnSession: (request) => runClaudeTaskSession({
       ...request,
       onProgress(event) {

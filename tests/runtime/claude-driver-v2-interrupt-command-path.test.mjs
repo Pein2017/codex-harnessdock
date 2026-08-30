@@ -46,6 +46,10 @@ let sequence = 0;
 
 const PROMPT = "Inspect only.\n\nReturn one bounded finding.";
 const EXECUTABLE = "/usr/local/bin/claude";
+const DISCOVERED_ROUTES = {
+  models: ["claude-sonnet-5"],
+  effortsByModel: { "claude-sonnet-5": ["high"] },
+};
 
 function fixedEnv(configDir) {
   return { CLAUDE_CONFIG_DIR: configDir, PATH: "/usr/bin" };
@@ -125,6 +129,7 @@ async function setup(options = {}) {
   const session = options.session ?? fakeSession();
   const driver = createClaudeCodeDriverV2({
     env,
+    inspectRoutes: async () => DISCOVERED_ROUTES,
     runTurnSession: session.run,
     // The real `requestClaudeInterrupt` validates a real OS process identity,
     // which a fake pid can never satisfy. Tests that care about that exact

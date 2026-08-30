@@ -368,7 +368,7 @@ describe("Task 7 — the Explorer route refuses every model it does not serve", 
     seamClaudeReadiness(runtime);
     await assert.rejects(
       runtime.spawnAgent(explorerRequest({ harness: "claude-code" })),
-      /Unsupported Claude model|Harness claude-code does not serve model/
+      /exact discovered full model/
     );
     assert.equal(runtime.store.listAgents().length, 0);
   });

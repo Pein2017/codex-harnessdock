@@ -34,6 +34,10 @@ import { isProcessAlive } from "../../runtime/process-control.mjs";
 
 const priorRuntimeHome = process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
 const roots = [];
+const DISCOVERED_ROUTES = {
+  models: [PHASE_A_MODEL],
+  effortsByModel: { [PHASE_A_MODEL]: [PHASE_A_EFFORT] },
+};
 
 after(() => {
   if (priorRuntimeHome == null) delete process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
@@ -186,20 +190,24 @@ function fixture(mode = "ok") {
     // Claude call on the production path.
     invocationCount: () => invocationRecords().length,
     fencePath: () => path.join(root, `fence-${(fenceSequence += 1)}`),
-    options: (overrides = {}) => ({
-      authorized: true,
-      sourceRoot,
-      fenceFile: path.join(root, `fence-${(fenceSequence += 1)}`),
-      env: {
-        PATH: process.env.PATH,
-        HOME: root,
-        CODEX_HARNESSDOCK_RUNTIME_ENV_FILE: envFile,
-        PHASE_A_FAKE_MODE: mode,
-        PHASE_A_FAKE_INVOCATION_FILE: invocations,
-        PHASE_A_FAKE_SOURCE_TARGET: untracked,
-      },
-      ...overrides,
-    }),
+    options(overrides = {}) {
+      const { driverSeams = {}, ...rest } = overrides;
+      return {
+        authorized: true,
+        sourceRoot,
+        fenceFile: path.join(root, `fence-${(fenceSequence += 1)}`),
+        env: {
+          PATH: process.env.PATH,
+          HOME: root,
+          CODEX_HARNESSDOCK_RUNTIME_ENV_FILE: envFile,
+          PHASE_A_FAKE_MODE: mode,
+          PHASE_A_FAKE_INVOCATION_FILE: invocations,
+          PHASE_A_FAKE_SOURCE_TARGET: untracked,
+        },
+        driverSeams: { inspectRoutes: async () => DISCOVERED_ROUTES, ...driverSeams },
+        ...rest,
+      };
+    },
   };
 }
 

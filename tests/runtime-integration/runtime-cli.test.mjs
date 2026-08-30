@@ -72,6 +72,31 @@ async function main() {
   if (args[0] === "--version") return process.stdout.write("2.1.220 (Claude Code)\\n");
   if (args[0] === "--help") return process.stdout.write("-p --output-format --verbose --include-partial-messages --input-format --replay-user-messages --include-hook-events --name --model --effort --session-id --resume --allowedTools --disallowedTools --append-system-prompt --agents --settings --permission-mode --dangerously-skip-permissions stream-json low medium high xhigh max dontAsk bypassPermissions\\n");
   if (args[0] === "auth" && args[1] === "status") return process.stdout.write("authenticated\\n");
+  if (args[0] === "--output-format") {
+    const request = await firstEvent();
+    if (request.type !== "control_request" || request.request?.subtype !== "initialize") {
+      throw new Error("unexpected SDK request " + JSON.stringify(request));
+    }
+    const efforts = ["low", "medium", "high", "xhigh", "max"];
+    process.stdout.write(JSON.stringify({
+      type: "control_response",
+      response: {
+        subtype: "success",
+        request_id: request.request_id,
+        response: {
+          commands: [], agents: [], output_style: "default", available_output_styles: [], account: {},
+          models: [
+            { value: "default", resolvedModel: "claude-sonnet-5", supportsEffort: true, supportedEffortLevels: efforts },
+            { value: "claude-haiku-4-5", supportsEffort: true, supportedEffortLevels: ["low", "high"] },
+            ...["claude-sonnet-5", "claude-opus-5", "claude-fable-5"].map((model) => ({
+              value: model, supportsEffort: true, supportedEffortLevels: efforts,
+            })),
+          ],
+        },
+      },
+    }) + "\\n");
+    return new Promise(() => {});
+  }
   if (args[0] !== "-p") throw new Error("unexpected args " + JSON.stringify(args));
   const initial = await firstEvent();
   const prompt = textOf(initial);
@@ -924,7 +949,7 @@ describe("canonical Agent runtime CLI", () => {
       "--json", "must fail before Claude starts",
     ]);
     assert.equal(unsupportedModel.status, 1);
-    assert.match(unsupportedModel.stderr, /Unsupported Claude model/);
+    assert.match(unsupportedModel.stderr, /exact discovered full model/);
 
     for (const unsupported of ["haiku-4-5", "claude-haiku-4-5-20251001"]) {
       const rejected = command(test, [
@@ -934,7 +959,7 @@ describe("canonical Agent runtime CLI", () => {
         "--json", "dated or partial IDs are not public inputs",
       ]);
       assert.equal(rejected.status, 1);
-      assert.match(rejected.stderr, /Unsupported Claude model/);
+      assert.match(rejected.stderr, /exact discovered full model/);
     }
 
     const missingModel = command(test, [

@@ -163,7 +163,7 @@ describe("Agent durable launch boundary", () => {
       {
         name: "effort",
         input: { reasoning_effort: "not-an-effort" },
-        error: /Unsupported effort/,
+        error: /exact discovered effort/,
       },
       {
         name: "removed profile",
@@ -190,7 +190,7 @@ describe("Agent durable launch boundary", () => {
         // a shorthand the route resolves.
         name: "alias model",
         input: { model: "fable" },
-        error: /exact model claude-fable-5.*alias "fable"/,
+        error: /exact discovered full model/,
       },
       {
         name: "retired tool allowlist",

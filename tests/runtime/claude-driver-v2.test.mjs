@@ -449,6 +449,27 @@ describe("Claude Code canonical route validation", () => {
 });
 
 describe("Claude Code prepared turn", () => {
+  it("uses the Driver's fixed environment for route discovery and pre-prompt revalidation", async () => {
+    const env = fixedEnv({ CLAUDE_ACCOUNT: "fixture" });
+    const observations = [];
+    const { driver } = makeDriver({
+      env,
+      inspectRoutes: async (options) => {
+        observations.push(options);
+        return DISCOVERED_ROUTES;
+      },
+    });
+    const route = await acceptRoute(driver);
+    const taskInput = "read the module";
+    const prepared = driver.prepareTurn({ route, taskInput });
+    await driver.revalidatePreparedTurn(prepared, turnScope(driver, route));
+    assert.equal(observations.length, 2);
+    for (const observation of observations) {
+      assert.equal(observation.executable, EXECUTABLE);
+      assert.equal(observation.environment, env);
+    }
+  });
+
   it("adds only the authority, topology, and return facts it actually sends", async () => {
     const { driver } = makeDriver();
     const route = await acceptRoute(driver);

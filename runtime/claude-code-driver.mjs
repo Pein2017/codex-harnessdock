@@ -1082,7 +1082,11 @@ export function createClaudeCodeDriverV2(options = {}) {
         }];
       }
       try {
-        const discovered = await inspectRoutes({ cwd: observedCwd, executable: host.compatibility.executable });
+        const discovered = await inspectRoutes({
+          cwd: observedCwd,
+          executable: host.compatibility.executable,
+          environment: fixedEnv,
+        });
         return [{
           harnessId: CLAUDE_CODE_HARNESS_ID, instanceKey, readiness: "ready",
           liveValidated: true, maturity: "experimental", detailCode: "ready",
@@ -1224,7 +1228,7 @@ export function createClaudeCodeDriverV2(options = {}) {
       );
       let discovered;
       try {
-        discovered = await inspectRoutes({ cwd, executable: compatibility.executable });
+        discovered = await inspectRoutes({ cwd, executable: compatibility.executable, environment: fixedEnv });
       } catch {
         throw new Error("Claude exact-route revalidation is unavailable before prompt submission.");
       }
