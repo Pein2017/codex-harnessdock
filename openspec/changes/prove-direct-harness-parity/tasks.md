@@ -13,6 +13,12 @@
 ## 3. Separate session continuation, old-turn observation, and transport recovery
 
 - [ ] 3.1 For each route claiming `exact_resume`, add a fresh-process `exact_session_continuation` fixture that records stable `nativeSessionRef` `S` and accepted `T1`, destroys the Driver/process, constructs a new Driver, passes `S` with new continuation input, and proves the accepted `T2` remains in `S` and differs from `T1`. Separately, for each `terminal_observable` claim, add a no-prompt fresh-process row that binds `T1` by the same persistent provider-native turn identity or exactly one authoritative pre/post history delta. For each `automaticRecovery=exact_session_transport` claim, add a distinct interrupted-turn fixture that exercises only provider-declared bounded reconnect semantics and proves no duplicate prompt/input or replay plus the same logical/native accepted turn or provider-defined recovery binding. Reject PID/request/job/index/replay/scope-local/synthetic identities and ambiguity. Make Pi's current `scope.turnId` plus latest-result `terminal_observable` claim a deterministic fail-closed counterexample requiring a production correction; do not downgrade Pi's separate session-continuation or automatic-recovery claim by assumption.
+
+  `HOLD` disposition: the canonical matrix proves Pi's applicable continuation
+  and fail-closed capability-derived rows, but Claude supplies neither a
+  provider-native continuation-turn identity nor a provider-defined recovery
+  binding. On 2026-08-30 the user chose to preserve current Claude behavior and
+  retain this task as an explicit HOLD rather than downgrade public capability.
 - [x] 3.2 Record OpenCode interrupt, `exact_session_continuation`, `cross_process_turn_observation_or_reconciliation`, and `automatic_recovery_exact_session_transport` cells as `not_applicable` only when the accepted capability snapshot says unsupported; do not omit or call them parity.
 
 ## 4. Deterministic acceptance and optional live boundary
