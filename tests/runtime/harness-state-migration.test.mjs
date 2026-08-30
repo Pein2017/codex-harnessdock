@@ -17,8 +17,10 @@ import {
   PUBLIC_WRITE_GENERATION,
   UNDERSTOOD_JOB_STATE_VERSIONS,
   V3_ROUTE_FIELDS,
+  sameDurableRouteSemantics,
   assertUnderstoodJobRecord,
   assertVersionThreeWriteAllowed,
+  validateStoredVersionThreeRoute,
   validateVersionThreeRoute,
 } from "../../runtime/durable-state-v3.mjs";
 import {
@@ -669,7 +671,7 @@ describe("Version-three route identity", () => {
     assert.equal(canonical.driverVersion, V3_DRIVER_VERSION);
     assert.equal(canonical.topology, "leaf");
     assert.equal(canonical.authority, "behavioral_read_only");
-    assert.equal(canonical.capabilitySchemaVersion, 2);
+    assert.equal(canonical.capabilitySchemaVersion, 3);
     assert.equal(canonical.capabilities.values.continuation, "exact_resume");
 
     // The snapshot is deep-frozen and deep-copied: no route fact may stay
@@ -912,7 +914,7 @@ describe("Version-three route identity", () => {
     );
     assert.throws(
       () => validateVersionThreeRoute(versionThreeRoute({
-        capabilities: versionThreeCapabilities({ capabilitySchemaVersion: 3 }),
+        capabilities: versionThreeCapabilities({ capabilitySchemaVersion: 2 }),
       })),
       /capability schema version/,
     );
@@ -932,6 +934,35 @@ describe("Version-three route identity", () => {
       () => validateVersionThreeRoute(versionThreeRoute({ driverVersion: "  " })),
       /driverVersion/,
     );
+  });
+
+  it("reads a stored schema-v2 route without upgrading it, but refuses it for a new write", () => {
+    const current = versionThreeRoute();
+    const { provenance: _provenance, ...v2Capabilities } = current.capabilities;
+    const v2Route = {
+      ...current,
+      capabilitySchemaVersion: 2,
+      capabilities: { ...v2Capabilities, capabilitySchemaVersion: 2 },
+    };
+    assert.deepEqual(validateStoredVersionThreeRoute(v2Route), v2Route);
+    assert.throws(() => validateVersionThreeRoute(v2Route), /capability schema version/);
+  });
+
+  it("compares a stored v2 route to a fresh v3 execution route without widening a value or maturity", () => {
+    const current = versionThreeRoute();
+    const { provenance: _provenance, ...v2Capabilities } = current.capabilities;
+    const historical = {
+      ...current,
+      capabilitySchemaVersion: 2,
+      capabilities: { ...v2Capabilities, capabilitySchemaVersion: 2 },
+    };
+    assert.equal(sameDurableRouteSemantics(historical, current), true);
+    assert.equal(sameDurableRouteSemantics(historical, versionThreeRoute({
+      capabilities: versionThreeCapabilities({ values: { continuation: "fresh_only" } }),
+    })), false);
+    assert.equal(sameDurableRouteSemantics(historical, versionThreeRoute({
+      capabilities: versionThreeCapabilities({ maturity: { continuation: "validated" } }),
+    })), false);
   });
 
   it("refuses legacy Claude vocabulary as version-three identity", () => {

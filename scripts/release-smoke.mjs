@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 /** SPDX-License-Identifier: Apache-2.0 */
+import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
@@ -7,6 +8,9 @@ import { fileURLToPath } from "node:url";
 import { assertCheckoutDependencies } from "../plugins/codex-harnessdock/bootstrap/dependency-preflight.mjs";
 
 const sourceRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const DIFFERENTIAL_PARITY_RECEIPT = path.join(
+  "tests", "runtime", "fixtures", "native-parity", "native-harness-differential-parity.receipt.json",
+);
 
 function parseArguments(argv) {
   let json = false;
@@ -40,7 +44,8 @@ export async function runReleaseSmokeCli(argv, dependencies = {}) {
   const writeStderr = dependencies.writeStderr ?? ((value) => process.stderr.write(value));
   try {
     const options = parseArguments(argv);
-    (dependencies.assertCheckoutDependencies ?? assertCheckoutDependencies)(sourceRoot);
+    const checkoutRoot = dependencies.sourceRoot ?? sourceRoot;
+    (dependencies.assertCheckoutDependencies ?? assertCheckoutDependencies)(checkoutRoot);
     let report;
     if (options.nativeTeamWitness) {
       writeStderr("Starting explicit paid native-team witness: claude-opus-5, effort=low, write=false.\n");
@@ -54,9 +59,14 @@ export async function runReleaseSmokeCli(argv, dependencies = {}) {
     } else {
       const runReleaseSmoke = dependencies.runReleaseSmoke
         ?? (await import("../runtime/release-smoke.mjs")).runReleaseSmoke;
+      const differentialParityReceipt = JSON.parse((dependencies.readFileSync ?? fs.readFileSync)(
+        path.join(checkoutRoot, DIFFERENTIAL_PARITY_RECEIPT),
+        "utf8",
+      ));
       report = await runReleaseSmoke({
         workspace: options.workspace,
         realClaude: options.realClaude,
+        differentialParityReceipt,
         onPaidStart(receipt) {
           writeStderr(
             `Starting explicit paid smoke: ${receipt.model}, effort=${receipt.reasoningEffort}, write=${receipt.write}.\n`,
@@ -65,7 +75,8 @@ export async function runReleaseSmokeCli(argv, dependencies = {}) {
       });
     }
     writeStdout(`${JSON.stringify(report, null, options.json ? 2 : 2)}\n`);
-    return options.nativeTeamWitness && report?.liveVerified !== true ? 1 : 0;
+    if (options.nativeTeamWitness) return report?.liveVerified === true ? 0 : 1;
+    return report?.status === "pass" && report?.promotionEligible === true ? 0 : 1;
   } catch (error) {
     writeStderr(`${error instanceof Error ? error.message : String(error)}\n`);
     return 1;

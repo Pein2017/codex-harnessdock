@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { DRIVER_CONTRACT_VERSION_V2, assertNativeReferenceEnvelope, boundedDriverReceipt, driverPreTransportRejection, isBoundedRouteAtom, isBoundedRouteText, splitFullModelRoute } from "./harness-contract.mjs";
-import { ROUTE_CAPABILITY_SCHEMA_VERSION } from "./harness-capabilities.mjs";
+import { ROUTE_CAPABILITY_NAMES, ROUTE_CAPABILITY_SCHEMA_VERSION } from "./harness-capabilities.mjs";
 import { NATIVE_REFERENCE_ENVELOPE_VERSION } from "./native-reference.mjs";
 import { resolvePluginRuntimeRoot } from "./paths.mjs";
 import { plainDataTree } from "./plain-record.mjs";
@@ -139,8 +139,9 @@ function resultFor({ nativeTurnRef, nativeSessionRef, baseline, after, outcome, 
 }
 function routeCapabilities() {
   return Object.freeze({ capabilitySchemaVersion: ROUTE_CAPABILITY_SCHEMA_VERSION, driverMaturity: "experimental",
-    values: Object.freeze({ interaction: "noninteractive_fixed_policy", activeInput: "acknowledged_active_stream", continuation: "exact_resume", history: "assistant_messages", interruptRequest: "supported", turnObservation: "terminal_observable", automaticRecovery: "none", authorityEnforcement: "prompt_only", leafEnforcement: "prompt_only", nativeOrchestration: "opaque_bounded" }),
+    values: Object.freeze({ interaction: "noninteractive_fixed_policy", activeInput: "acknowledged_active_stream", continuation: "exact_resume", history: "assistant_messages", interruptRequest: "supported", turnObservation: "unavailable", automaticRecovery: "none", authorityEnforcement: "prompt_only", leafEnforcement: "prompt_only", nativeOrchestration: "opaque_bounded" }),
     maturity: Object.freeze(Object.fromEntries(["interaction", "activeInput", "continuation", "history", "interruptRequest", "turnObservation", "automaticRecovery", "authorityEnforcement", "leafEnforcement", "nativeOrchestration"].map((key) => [key, "experimental"]))),
+    provenance: Object.freeze(Object.fromEntries(ROUTE_CAPABILITY_NAMES.map((key) => [key, "checkout_declared"]))),
   });
 }
 
@@ -148,14 +149,13 @@ function inspectionRouteFacts(models, effortsByModel) {
   return Object.freeze({
     models: Object.freeze([...models]),
     topologies: Object.freeze(["leaf"]),
-    reasoningEfforts: Object.freeze([...new Set(Object.values(effortsByModel).flat())]),
     effortsByModel: Object.freeze(Object.fromEntries(Object.entries(effortsByModel).map(([model, efforts]) => [model, Object.freeze([...efforts])]))),
     interaction: "noninteractive_fixed_policy",
     activeInput: "acknowledged_active_stream",
     continuation: "exact_resume",
     history: "assistant_messages",
     interruptRequest: "supported",
-    turnObservation: "terminal_observable",
+    turnObservation: "unavailable",
     automaticRecovery: "none",
     nativeOrchestration: "opaque_bounded",
     authorities: Object.freeze({ behavioral_read_only: Object.freeze({ authorityEnforcement: "prompt_only", leafEnforcement: "prompt_only" }), behavioral_write: Object.freeze({ authorityEnforcement: "prompt_only", leafEnforcement: "prompt_only" }) }),
@@ -191,6 +191,9 @@ export function createPiDriver(options = {}) {
   const fixedEnv = options.env ?? process.env;
   const test = options._test ?? null;
   const sessionRoot = test?.sessionRoot ?? path.join(resolvePluginRuntimeRoot(), "pi-sessions");
+  const inspectionGeneration = () => typeof test?.inspectionGeneration === "function"
+    ? test.inspectionGeneration()
+    : (test?.inspectionGeneration ?? "unavailable");
   function modelList(value) {
     const rows = Array.isArray(value?.models) ? value.models : (Array.isArray(value) ? value : []);
     if (rows.length === 0 || rows.length > MAX_DISCOVERED_MODELS) throw new Error("Pi RPC returned no bounded available models.");
@@ -269,9 +272,9 @@ export function createPiDriver(options = {}) {
       try {
         const facts = await discover(scope);
         const routes = inspectionRouteFacts(facts.models, facts.effortsByModel);
-        return [{ harnessId: PI_HARNESS_ID, instanceKey: INSTANCE_KEY, readiness: "ready", liveValidated: true, maturity: "experimental", detailCode: "ready", routes: Object.freeze(routes) }];
+        return [{ harnessId: PI_HARNESS_ID, instanceKey: INSTANCE_KEY, readiness: "ready", liveValidated: true, maturity: "experimental", detailCode: "ready", routes: Object.freeze(routes), capabilityProvenance: routeCapabilities().provenance, inspectionGeneration: inspectionGeneration() }];
       } catch (error) {
-        return [{ harnessId: PI_HARNESS_ID, instanceKey: INSTANCE_KEY, readiness: "unavailable", liveValidated: true, maturity: "experimental", detailCode: piDiscoveryFailure(error), routes: null }];
+        return [{ harnessId: PI_HARNESS_ID, instanceKey: INSTANCE_KEY, readiness: "unavailable", liveValidated: true, maturity: "experimental", detailCode: piDiscoveryFailure(error), routes: null, capabilityProvenance: routeCapabilities().provenance, inspectionGeneration: inspectionGeneration() }];
       }
     },
     validateRoute(request, inspection) {
@@ -321,22 +324,6 @@ export function createPiDriver(options = {}) {
         const messages = newest.slice(start, start + limit).map(({ messageId, timestamp, text }) => ({ messageId, timestamp, text }));
         return { messages, nextBefore: start + messages.length < newest.length && messages.length ? messages.at(-1).messageId : null };
       } finally { await rpc.dispose(); }
-    },
-    async observeTurn(nativeTurnRef, scope) {
-      let route; let ref;
-      try { route = assertRoute(scope?.route, "Pi observation route"); ref = assertNativeReferenceEnvelope(nativeTurnRef, { driver, route, kind: "turn" }); } catch { return { nativeTurn: "unknown", terminalResult: null }; }
-      if (scope?.signal?.aborted) return { nativeTurn: "unknown", terminalResult: null };
-      await proveCurrentRoute(route, scope);
-      let rpc;
-      try {
-        rpc = makeProcess({ route, sessionId: ref.locator.sessionId, resumeOnly: true, cwd: scope?.workspaceRoot ?? process.cwd() });
-        const entries = await rpc.getEntries(ref.locator.baselineLeafId);
-        const after = nativeStats((await rpc.getSessionStats()).data, "Pi observed post-turn stats");
-        const outcome = [...(entries.data?.entries ?? [])].reverse().map(messageOutcome).find(Boolean) ?? null;
-        if (!outcome) return { nativeTurn: "unknown", terminalResult: null };
-        const baseline = { leafId: ref.locator.baselineLeafId, stats: assertNativeStats(ref.locator.baselineStats, "Pi observation baseline") };
-        return { nativeTurn: "terminal", terminalResult: resultFor({ nativeTurnRef: ref, nativeSessionRef: sessionRefFor(route, ref.locator.sessionId), baseline, after, outcome, leafId: entries.data?.leafId ?? null }) };
-      } catch { return { nativeTurn: "unknown", terminalResult: null }; } finally { await rpc?.dispose(); }
     },
     async startTurn(input) {
       const scope = input?.scope; let route; let effort; let sessionId; let resumed = false;

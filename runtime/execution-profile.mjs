@@ -124,9 +124,10 @@ export function validateExecutionProfileOptions(options = {}) {
       "Claude execution requires an explicit Haiku, Sonnet, Opus, or Fable model."
     );
   }
-  const model = resolveModel(requestedModel);
+  const exactDiscovered = options.exactDiscovered === true;
+  const model = exactDiscovered ? requestedModel : resolveModel(requestedModel);
   const delegationMode = normalizeDelegationMode(options.delegationMode);
-  if (delegationMode === "claude_orchestrator" && requestedModel !== model) {
+  if (!exactDiscovered && delegationMode === "claude_orchestrator" && requestedModel !== model) {
     throw new Error(
       "claude_orchestrator delegation requires exact model claude-opus-5 or claude-fable-5."
     );
@@ -160,9 +161,15 @@ export function validateExecutionProfileOptions(options = {}) {
     );
   }
 
-  const effort = name === "terminal-parity"
-    ? resolveEffort(options.effort)
-    : resolveEffort(resolveDefaultEffort(model, options.effort));
+  const effort = exactDiscovered
+    ? (typeof options.effort === "string" && options.effort.trim() === options.effort && options.effort
+      ? options.effort : null)
+    : name === "terminal-parity"
+      ? resolveEffort(options.effort)
+      : resolveEffort(resolveDefaultEffort(model, options.effort));
+  if (exactDiscovered && !effort) {
+    throw new Error("Claude execution requires an explicit discovered effort.");
+  }
   const dangerouslySkipPermissions = name === "terminal-parity";
   return { name, model, effort, delegationMode, dangerouslySkipPermissions };
 }
@@ -170,6 +177,7 @@ export function validateExecutionProfileOptions(options = {}) {
 export function createExecutionProfile(options = {}) {
   const validated = validateExecutionProfileOptions(options);
   const { name, model, effort, delegationMode } = validated;
+  const exactDiscovered = options.exactDiscovered === true;
   const policy = resolveNativeTeamPolicy({
     model,
     delegationMode,
@@ -185,6 +193,7 @@ export function createExecutionProfile(options = {}) {
       model,
       appendSystemPrompt: delegationPrompt(policy, Boolean(options.write)),
     };
+    if (exactDiscovered) claudeOptions.exactDiscovered = true;
     claudeOptions.disallowedTools = policy.deniedToolNames;
     applyNativeTeamProfile(claudeOptions, env, policy);
     claudeOptions.dangerouslySkipPermissions = true;
@@ -215,6 +224,7 @@ export function createExecutionProfile(options = {}) {
       ? runningAsRoot ? undefined : "bypassPermissions"
       : "dontAsk"),
   };
+  if (exactDiscovered) claudeOptions.exactDiscovered = true;
   claudeOptions.disallowedTools = policy.deniedToolNames;
   applyNativeTeamProfile(claudeOptions, env, policy);
   if (Array.isArray(options.allowedTools) && options.allowedTools.length > 0) {

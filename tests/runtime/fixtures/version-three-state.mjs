@@ -50,6 +50,13 @@ export function versionThreeCapabilities(overrides = {}) {
       nativeOrchestration: "validated",
       ...(overrides.maturity ?? {}),
     },
+    provenance: {
+      ...Object.fromEntries([
+        "interaction", "activeInput", "continuation", "history", "interruptRequest", "turnObservation",
+        "automaticRecovery", "authorityEnforcement", "leafEnforcement", "nativeOrchestration",
+      ].map((name) => [name, "checkout_declared"])),
+      ...(overrides.provenance ?? {}),
+    },
   };
 }
 

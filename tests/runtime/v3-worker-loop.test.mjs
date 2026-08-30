@@ -16,6 +16,7 @@ import {
   resolveCompletionInboxFile,
 } from "../../runtime/completion-inbox.mjs";
 import { FUTURE_WRITE_GENERATION } from "../../runtime/durable-state-v3.mjs";
+import { projectAgentCard } from "../../runtime/agent-card.mjs";
 import {
   MAX_DRIVER_RECEIPT_BYTES,
   MAX_FINAL_MESSAGE_CHARS,
@@ -154,6 +155,7 @@ function setup(options = {}) {
     assignedMessageIds,
     preparedInput: PROMPT,
     turnOptions: null,
+    inspectionEvidence: { generation: "unavailable", capabilities: route.capabilities },
   });
 
   return {
@@ -239,12 +241,46 @@ describe("version-three worker loop: durable turn lifecycle", () => {
     assert.equal(agent.status, "completed");
     assert.equal(agent.activeJobId, null);
     assert.equal(agent.latestJobId, context.jobId);
+    const record = context.v3Record();
+    const card = projectAgentCard(agent, {
+      id: record.jobId,
+      ownerRootId: record.ownerRootId,
+      agentId: record.agentId,
+      attemptId: record.attemptId,
+      route: record.route,
+      status: record.status,
+    });
+    assert.equal(card.inspection_generation, "unavailable");
+    assert.deepEqual(card.capability_provenance, record.route.capabilities.provenance);
 
     const event = context.events().find((candidate) => candidate.jobId === context.jobId);
     assert.ok(event, "completion event was published");
     assert.equal(event.terminalStatus, "completed");
     assert.equal(event.agentId, context.agentId);
     assert.equal(context.leaseHeld(), false);
+  });
+
+  it("finalizes a stored v2 Agent from its matching v3 execution job without rewriting route history", async () => {
+    const context = setup();
+    const filePath = registryFile(context.ownerRootId);
+    const registry = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    const stored = registry.agents[context.agentId];
+    const { provenance: _provenance, ...v2Capabilities } = stored.route.capabilities;
+    stored.route = {
+      ...stored.route,
+      capabilitySchemaVersion: 2,
+      capabilities: { ...v2Capabilities, capabilitySchemaVersion: 2 },
+    };
+    const historicalRoute = JSON.stringify(stored.route);
+    fs.writeFileSync(filePath, JSON.stringify(registry));
+
+    context.complete("completed");
+    const result = await runVersionThreeWorkerLoop(context.input);
+    assert.equal(result.status, "completed");
+    assert.equal(context.agent().status, "completed");
+    assert.equal(context.v3Record().route.capabilitySchemaVersion, 3);
+    const after = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    assert.equal(JSON.stringify(after.agents[context.agentId].route), historicalRoute);
   });
 
   it("keeps blank and NUL final messages intact while deriving a valid completion summary", async () => {
@@ -445,6 +481,7 @@ describe("version-three worker loop: mailbox delivery", () => {
       assignedMessageIds,
       preparedInput: PROMPT,
       turnOptions: null,
+      inspectionEvidence: { generation: "unavailable", capabilities: route.capabilities },
     });
 
     setTimeout(() => {

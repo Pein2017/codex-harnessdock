@@ -49,7 +49,7 @@ import {
 import { classifyTurnSettlement, isPublishableTerminal } from "../../runtime/turn-settlement.mjs";
 import { createExecutionProfile } from "../../runtime/execution-profile.mjs";
 import { writeJobFile } from "../../runtime/job-store.mjs";
-import { DEFAULT_EFFORT_BY_MODEL, VALID_EFFORTS } from "../../runtime/claude-headless-adapter.mjs";
+import { DEFAULT_EFFORT_BY_MODEL, MODEL_ALIASES, VALID_EFFORTS } from "../../runtime/claude-headless-adapter.mjs";
 
 const priorHome = process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;
 const roots = [];
@@ -71,6 +71,13 @@ function scratch(label) {
 
 const CONFIG_DIR = "/data/fixture/.claude";
 const EXECUTABLE = "/usr/local/bin/claude";
+const DISCOVERED_ROUTES = Object.freeze({
+  models: ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5"],
+  effortsByModel: {
+    "claude-haiku-4-5": ["low", "high"], "claude-sonnet-5": ["low", "medium", "high", "xhigh", "max"],
+    "claude-opus-5": ["low", "medium", "high", "xhigh", "max"], "claude-fable-5": ["low", "medium", "high", "xhigh", "max"],
+  },
+});
 
 function fixedEnv(overrides = {}) {
   return { CLAUDE_CONFIG_DIR: CONFIG_DIR, PATH: "/usr/bin", ...overrides };
@@ -156,6 +163,7 @@ function makeDriver(overrides = {}) {
     runTurnSession: session.run,
     requestInterrupt: overrides.requestInterrupt ?? (() => ({ requested: true, requestFailure: null })),
     recordCompatibilityObservation: () => ({ recorded: true, compatibility: { version: "2.0.0" } }),
+    inspectRoutes: overrides.inspectRoutes ?? (async () => DISCOVERED_ROUTES),
     ...hostSeams(overrides.host ?? {}),
   });
   return { driver, session };
@@ -179,7 +187,7 @@ async function acceptRoute(driver, request = {}) {
     model: "claude-sonnet-5",
     topology: "leaf",
     authority: "behavioral_read_only",
-    effort: request.effort ?? DEFAULT_EFFORT_BY_MODEL.get(request.model ?? "claude-sonnet-5"),
+    effort: request.effort ?? "high",
     ...request,
   }, inspections).route;
 }
@@ -236,7 +244,7 @@ describe("Claude Code Driver Contract v2 admission", () => {
 
     const description = admittedDriverDescription(driver);
     assert.equal(description.contractVersion, DRIVER_CONTRACT_VERSION_V2);
-    assert.equal(description.capabilitySchemaVersion, 2);
+    assert.equal(description.capabilitySchemaVersion, 3);
     assert.deepEqual(description.environmentKeys, ["CLAUDE_CONFIG_DIR"]);
     assert.equal(description.maturity, "experimental");
 
@@ -297,6 +305,40 @@ describe("Claude Code logical instance inspection", () => {
     assert.notEqual(claudeCodeInstanceKey(CONFIG_DIR), claudeCodeInstanceKey("/data/other/.claude"));
   });
 
+  it("projects only the current SDK-discovered route catalog", async () => {
+    const { driver } = makeDriver();
+    const [inspection] = await inspectDriverInstances(driver, inspectScope(driver));
+    assert.deepEqual(inspection.routes.models, DISCOVERED_ROUTES.models);
+    assert.deepEqual(inspection.routes.effortsByModel, DISCOVERED_ROUTES.effortsByModel);
+    const route = driver.validateRoute({
+      harnessId: CLAUDE_CODE_HARNESS_ID,
+      model: "claude-sonnet-5",
+      topology: "leaf",
+      authority: "behavioral_read_only",
+      effort: "high",
+    }, inspection);
+    assert.equal(inspection.inspectionGeneration, "unavailable");
+    assert.equal(new Set(Object.values(inspection.capabilityProvenance)).size, 1);
+    assert.equal(Object.values(inspection.capabilityProvenance)[0], "checkout_declared");
+    for (const claimed of ["inspection_proven", "session_negotiated"]) {
+      const forged = {
+        ...route,
+        capabilities: {
+          ...route.capabilities,
+          provenance: { ...route.capabilities.provenance, continuation: claimed },
+        },
+      };
+      assert.throws(
+        () => validateCanonicalRoute(forged, {
+          driver,
+          inspection,
+          request: { harnessId: CLAUDE_CODE_HARNESS_ID, model: route.model, topology: route.topology, authority: route.authority, effort: route.effort },
+        }),
+        /provenance does not match|session-negotiated/,
+      );
+    }
+  });
+
   it("reports each unready host fact with its own closed detail code", async () => {
     const cases = [
       [{ observeAvailability: () => ({ available: false, detail: "not found" }) }, "unavailable", "executable_missing"],
@@ -335,6 +377,14 @@ describe("Claude Code logical instance inspection", () => {
 });
 
 describe("Claude Code canonical route validation", () => {
+  it("admits a non-static exact model only when the SDK just advertised it", async () => {
+    const discovered = { models: ["claude-account-native-20260830"], effortsByModel: { "claude-account-native-20260830": ["high"] } };
+    const { driver } = makeDriver({ inspectRoutes: async () => discovered });
+    const route = await acceptRoute(driver, { model: "claude-account-native-20260830", effort: "high" });
+    assert.equal(route.model, "claude-account-native-20260830");
+    assert.equal(driver.prepareTurn({ route, taskInput: "read" }).turnOptions.effort, "high");
+  });
+
   it("returns the caller's exact explicit route with a closed capability snapshot", async () => {
     const { driver } = makeDriver();
     const route = await acceptRoute(driver);
@@ -345,7 +395,7 @@ describe("Claude Code canonical route validation", () => {
       history: "assistant_messages",
       interruptRequest: "supported",
       turnObservation: "unavailable",
-      automaticRecovery: "exact_session_transport",
+      automaticRecovery: "same_session_recovery_prompt",
       // terminal-parity always passes the dangerous bypass, so write intent
       // stays a prompt-level authority boundary, never a process sandbox.
       authorityEnforcement: "prompt_only",
@@ -372,8 +422,8 @@ describe("Claude Code canonical route validation", () => {
 
   it("never resolves an alias, an unsupported model, or an unsupported native team route", async () => {
     const { driver } = makeDriver();
-    await assert.rejects(async () => acceptRoute(driver, { model: "opus" }), /exact model/);
-    await assert.rejects(async () => acceptRoute(driver, { model: "gpt-5", effort: "high" }), /Unsupported Claude model/);
+    await assert.rejects(async () => acceptRoute(driver, { model: "opus" }), /exact discovered full model/);
+    await assert.rejects(async () => acceptRoute(driver, { model: "gpt-5", effort: "high" }), /exact discovered full model/);
     await assert.rejects(
       async () => acceptRoute(driver, { model: "claude-sonnet-5", topology: "native_orchestrator" }),
       /claude_orchestrator delegation requires exact model/,
@@ -388,6 +438,7 @@ describe("Claude Code canonical route validation", () => {
       model: "claude-haiku-4-5",
       topology: "leaf",
       authority: "behavioral_read_only",
+      effort: "high",
     };
     const route = validateCanonicalRoute(
       driver.validateRoute(request, inspections[0]),
@@ -398,6 +449,27 @@ describe("Claude Code canonical route validation", () => {
 });
 
 describe("Claude Code prepared turn", () => {
+  it("uses the Driver's fixed environment for route discovery and pre-prompt revalidation", async () => {
+    const env = fixedEnv({ CLAUDE_ACCOUNT: "fixture" });
+    const observations = [];
+    const { driver } = makeDriver({
+      env,
+      inspectRoutes: async (options) => {
+        observations.push(options);
+        return DISCOVERED_ROUTES;
+      },
+    });
+    const route = await acceptRoute(driver);
+    const taskInput = "read the module";
+    const prepared = driver.prepareTurn({ route, taskInput });
+    await driver.revalidatePreparedTurn(prepared, turnScope(driver, route));
+    assert.equal(observations.length, 2);
+    for (const observation of observations) {
+      assert.equal(observation.executable, EXECUTABLE);
+      assert.equal(observation.environment, env);
+    }
+  });
+
   it("adds only the authority, topology, and return facts it actually sends", async () => {
     const { driver } = makeDriver();
     const route = await acceptRoute(driver);
@@ -415,6 +487,7 @@ describe("Claude Code prepared turn", () => {
     // exact delegation prompt `execution-profile.mjs` sends to the CLI.
     const profile = createExecutionProfile({
       model: route.model,
+      effort: route.effort,
       delegationMode: "leaf",
       write: false,
       env: fixedEnv(),
@@ -466,6 +539,23 @@ describe("Claude Code prepared turn", () => {
     );
   });
 
+  it("refuses route drift before prompt submission", async () => {
+    let currentRoutes = DISCOVERED_ROUTES;
+    const { driver } = makeDriver({
+      inspectRoutes: async () => currentRoutes,
+    });
+    const route = await acceptRoute(driver);
+    const prepared = validatePreparedTurn(
+      driver.prepareTurn({ route, taskInput: "read the module" }),
+      { driver, route, taskInput: "read the module" },
+    );
+    currentRoutes = { models: ["claude-sonnet-5"], effortsByModel: { "claude-sonnet-5": ["low"] } };
+    await assert.rejects(
+      () => driver.revalidatePreparedTurn(prepared, turnScope(driver, route)),
+      /exact route disappeared or narrowed/,
+    );
+  });
+
   it("refuses a prepared turn that belongs to another logical instance", async () => {
     const { driver } = makeDriver();
     const route = await acceptRoute(driver);
@@ -491,18 +581,18 @@ describe("Claude Code turn-scoped effort", () => {
     for (const effort of VALID_EFFORTS) {
       const session = fakeSession({ autoSettle: false });
       const { driver } = makeDriver({ session });
-      const { wrapper } = await startTurn(driver, { turnOptions: { effort } });
+      const { wrapper } = await startTurn(driver, { request: { effort } });
       assert.equal(session.state.requests[0].claudeOptions.effort, effort);
       session.state.settle(claudeResult());
       await wrapper.result;
     }
   });
 
-  it("defaults turn-scoped effort per model instead of silently inheriting the host default", async () => {
+  it("uses the immutable admitted effort when no turn override is supplied", async () => {
     const session = fakeSession({ autoSettle: false });
     const { driver } = makeDriver({ session });
     const { wrapper, route } = await startTurn(driver);
-    assert.equal(session.state.requests[0].claudeOptions.effort, DEFAULT_EFFORT_BY_MODEL.get(route.model));
+    assert.equal(session.state.requests[0].claudeOptions.effort, route.effort);
     session.state.settle(claudeResult());
     await wrapper.result;
   });
@@ -512,7 +602,7 @@ describe("Claude Code turn-scoped effort", () => {
     const route = await acceptRoute(driver);
     assert.throws(
       () => driver.prepareTurn({ route, taskInput: "read the module", turnOptions: { effort: "extreme" } }),
-      /Unsupported effort/,
+      /immutable admitted effort/,
     );
     assert.throws(
       () => driver.prepareTurn({ route, taskInput: "read the module", turnOptions: { model: "haiku" } }),
@@ -583,25 +673,20 @@ describe("Claude Code turn-scoped effort", () => {
     const { driver } = makeDriver();
     const route = await acceptRoute(driver);
     const taskInput = "read the module and report";
-    const turnOptions = { effort: "low" };
+    const turnOptions = { effort: "high" };
     const prepared = driver.prepareTurn({ route, taskInput, turnOptions });
     // Mutating the caller's own object after preparation must never reach the
     // already-captured value: the Driver read it exactly once.
     turnOptions.effort = "high";
-    const repeat = driver.prepareTurn({ route, taskInput, turnOptions: { effort: "low" } });
+    const repeat = driver.prepareTurn({ route, taskInput, turnOptions: { effort: "high" } });
     assert.equal(prepared.inputDigest, repeat.inputDigest);
   });
 
-  it("binds a different turn-scoped effort to a different prepared digest", async () => {
+  it("refuses a different turn effort from the immutable admitted route", async () => {
     const { driver } = makeDriver();
     const route = await acceptRoute(driver);
     const taskInput = "read the module and report";
-    const low = driver.prepareTurn({ route, taskInput, turnOptions: { effort: "low" } });
-    const high = driver.prepareTurn({ route, taskInput, turnOptions: { effort: "high" } });
-    const repeatLow = driver.prepareTurn({ route, taskInput, turnOptions: { effort: "low" } });
-    assert.match(low.inputDigest, /^sha256:[0-9a-f]{64}$/);
-    assert.notEqual(low.inputDigest, high.inputDigest);
-    assert.equal(low.inputDigest, repeatLow.inputDigest);
+    assert.throws(() => driver.prepareTurn({ route, taskInput, turnOptions: { effort: "low" } }), /immutable admitted effort/);
   });
 
   it("refuses to start a turn whose scope requests a different effort than its prepared digest (TOCTOU)", async () => {
@@ -610,16 +695,16 @@ describe("Claude Code turn-scoped effort", () => {
     const route = await acceptRoute(driver);
     const taskInput = "read the module and report";
     const preparedTurn = validatePreparedTurn(
-      driver.prepareTurn({ route, taskInput, turnOptions: { effort: "low" } }),
+      driver.prepareTurn({ route, taskInput, turnOptions: { effort: "high" } }),
       { driver, route, taskInput },
     );
-    const scope = turnScope(driver, route, { taskInput, turnOptions: { effort: "high" } });
+    const scope = turnScope(driver, route, { taskInput, turnOptions: { effort: "low" } });
     const launchContext = await driver.revalidatePreparedTurn(preparedTurn, scope);
     await assert.rejects(
       async () => driver.startTurn({ scope, preparedTurn, launchContext }),
       (error) => {
         assert.equal(isDriverPreTransportRejection(error), true);
-        return /different effort cannot reuse the same prepared turn/.test(error.cause?.message ?? "");
+        return /immutable admitted effort/.test(error.cause?.message ?? "");
       },
     );
     assert.deepEqual(session.state.requests, []);
@@ -1246,6 +1331,7 @@ describe("Claude Code Driver v2 — one host observation states both facts", () 
     const counts = { availability: 0, auth: 0, compatibility: 0 };
     const driver = createClaudeCodeDriverV2({
       env: fixedEnv(),
+      inspectRoutes: async () => DISCOVERED_ROUTES,
       ...hostSeams({
         observeAvailability: () => {
           counts.availability += 1;

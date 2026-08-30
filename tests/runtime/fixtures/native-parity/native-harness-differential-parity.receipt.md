@@ -1,0 +1,48 @@
+# Native Harness Differential Parity
+
+Status: `pass`; promotion eligible: `true`.
+
+| Harness | Dimension | Result | Evidence |
+| --- | --- | --- | --- |
+| claude-code | exact_model_effort_inventory | pass | claude-differential-receipt.json#inventoryWitness |
+| claude-code | argv_environment_or_request_transport | pass | claude-differential-receipt.json#provenRows/baseline_argv_environment |
+| claude-code | native_configuration_inheritance | pass | claude-differential-receipt.json#provenRows/benign_config_inheritance_witness |
+| claude-code | prompt_authority_delta | pass | claude-differential-receipt.json#provenRows/task_native_input, claude-differential-receipt.json#provenRows/closed_harnessdock_policy_delta, claude-differential-receipt.json#provenRows/write_authority_delta |
+| claude-code | event_tool_order | pass | claude-differential-receipt.json#provenRows/ordered_stream_tool_events |
+| claude-code | interrupt | pass | claude-differential-receipt.json#provenRows/interrupt_behavior |
+| claude-code | exact_session_continuation | pass | claude-differential-receipt.json#provenRows/exact_session_continuation |
+| claude-code | cross_process_turn_observation_or_reconciliation | not_applicable | claude-differential-receipt.json#notApplicable/oldTurnObservation |
+| claude-code | automatic_recovery_exact_session_transport | not_applicable | claude-differential-receipt.json#notApplicable/oldExactSessionTransportRecovery |
+| claude-code | same_session_recovery_prompt | pass | claude-differential-receipt.json#provenRows/same_session_recovery_prompt |
+| claude-code | terminal_classification | pass | claude-differential-receipt.json#provenRows/terminal_classification |
+| claude-code | route_drift | pass | claude-differential-receipt.json#provenRows/route_drift |
+| claude-code | native_usage_provenance | pass | claude-differential-receipt.json#provenRows/provider_native_usage_source_fields |
+| claude-code | process_lifecycle | pass | claude-differential-receipt.json#provenRows/process_lifecycle_cleanup |
+| pi | exact_model_effort_inventory | pass | pi-native-differential-receipt.json#provenRows/exact_model_per_model_effort_inventory |
+| pi | argv_environment_or_request_transport | pass | pi-native-differential-receipt.json#provenRows/argv_environment |
+| pi | native_configuration_inheritance | pass | pi-native-differential-receipt.json#provenRows/configuration_inheritance_witness |
+| pi | prompt_authority_delta | pass | pi-native-differential-receipt.json#provenRows/prompt_authority_native_input |
+| pi | event_tool_order | pass | pi-native-differential-receipt.json#provenRows/ordered_events |
+| pi | interrupt | pass | pi-native-differential-receipt.json#provenRows/interrupt_request_behavior |
+| pi | exact_session_continuation | pass | pi-native-differential-receipt.json#provenRows/exact_session_continuation |
+| pi | cross_process_turn_observation_or_reconciliation | not_applicable | pi-native-differential-receipt.json#notApplicableRows/cross_process_turn_observation_or_reconciliation |
+| pi | automatic_recovery_exact_session_transport | not_applicable | pi-native-differential-receipt.json#notApplicableRows/automatic_recovery_exact_session_transport |
+| pi | same_session_recovery_prompt | not_applicable | pi-native-differential-receipt.json#notApplicableRows/same_session_recovery_prompt |
+| pi | terminal_classification | pass | pi-native-differential-receipt.json#provenRows/terminal_classification |
+| pi | route_drift | pass | pi-native-differential-receipt.json#provenRows/route_drift |
+| pi | native_usage_provenance | pass | pi-native-differential-receipt.json#provenRows/native_usage_source_fields |
+| pi | process_lifecycle | pass | pi-native-differential-receipt.json#provenRows/lifecycle_process_cleanup |
+| opencode | exact_model_effort_inventory | pass | opencode-native-differential-parity.receipt.json#provenRows/exact_model_effort_inventory |
+| opencode | argv_environment_or_request_transport | pass | opencode-native-differential-parity.receipt.json#provenRows/request_transport_environment |
+| opencode | native_configuration_inheritance | pass | opencode-native-differential-parity.receipt.json#provenRows/native_configuration_inheritance |
+| opencode | prompt_authority_delta | pass | opencode-native-differential-parity.receipt.json#provenRows/driver_authority_non_prompt_invariance |
+| opencode | event_tool_order | pass | opencode-native-differential-parity.receipt.json#provenRows/ordered_request_event_tool_observations |
+| opencode | interrupt | not_applicable | opencode-native-differential-parity.receipt.json#notApplicableRows/interrupt |
+| opencode | exact_session_continuation | not_applicable | opencode-native-differential-parity.receipt.json#notApplicableRows/exact_session_continuation |
+| opencode | cross_process_turn_observation_or_reconciliation | not_applicable | opencode-native-differential-parity.receipt.json#notApplicableRows/cross_process_turn_observation_or_reconciliation |
+| opencode | automatic_recovery_exact_session_transport | not_applicable | opencode-native-differential-parity.receipt.json#notApplicableRows/automatic_recovery_exact_session_transport |
+| opencode | same_session_recovery_prompt | not_applicable | opencode-native-differential-parity.receipt.json#notApplicableRows/same_session_recovery_prompt |
+| opencode | terminal_classification | pass | opencode-native-differential-parity.receipt.json#provenRows/terminal_classification |
+| opencode | route_drift | pass | opencode-native-differential-parity.receipt.json#provenRows/route_drift |
+| opencode | native_usage_provenance | pass | opencode-native-differential-parity.receipt.json#provenRows/provider_native_usage_source_fields |
+| opencode | process_lifecycle | pass | opencode-native-differential-parity.receipt.json#provenRows/direct_executable_process_lifecycle_comparison, opencode-native-differential-parity.receipt.json#provenRows/managed_service_process_lifecycle |

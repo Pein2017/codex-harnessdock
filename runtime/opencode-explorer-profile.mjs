@@ -117,7 +117,7 @@ export const OPENCODE_EXPLORER_CONTINUATION = "fresh_only";
  */
 export const OPENCODE_EXPLORER_CAPABILITIES = validateRouteCapabilitySnapshot(
   {
-    capabilitySchemaVersion: 2,
+    capabilitySchemaVersion: 3,
     driverMaturity: "experimental",
     values: {
       activeInput: "initial_only",
@@ -132,6 +132,7 @@ export const OPENCODE_EXPLORER_CAPABILITIES = validateRouteCapabilitySnapshot(
       turnObservation: "unavailable",
     },
     maturity: Object.fromEntries(ROUTE_CAPABILITY_NAMES.map((name) => [name, "experimental"])),
+    provenance: Object.fromEntries(ROUTE_CAPABILITY_NAMES.map((name) => [name, "checkout_declared"])),
   },
   "OpenCode Explorer route capability snapshot"
 );
@@ -792,6 +793,8 @@ function sealedInspection({ serverUrl, readiness, detailCode, liveValidated, rou
     maturity: "experimental",
     detailCode,
     routes: routes === null ? null : Object.freeze(routes),
+    capabilityProvenance: OPENCODE_EXPLORER_CAPABILITIES.provenance,
+    inspectionGeneration: "unavailable",
   });
 }
 

@@ -529,11 +529,145 @@ export function assertNoLeakedConfiguration(value, context) {
   }
 }
 
-export function projectNativeRouteDiscovery(records) {
+const DIFFERENTIAL_PARITY_SCHEMA = "harnessdock.native-harness-differential-parity.v2";
+const DIFFERENTIAL_PARITY_HARNESSES = Object.freeze(["claude-code", "pi", "opencode"]);
+const DIFFERENTIAL_PARITY_DIMENSIONS = Object.freeze([
+  "exact_model_effort_inventory",
+  "argv_environment_or_request_transport",
+  "native_configuration_inheritance",
+  "prompt_authority_delta",
+  "event_tool_order",
+  "interrupt",
+  "exact_session_continuation",
+  "cross_process_turn_observation_or_reconciliation",
+  "automatic_recovery_exact_session_transport",
+  "same_session_recovery_prompt",
+  "terminal_classification",
+  "route_drift",
+  "native_usage_provenance",
+  "process_lifecycle",
+]);
+const DIFFERENTIAL_PARITY_RESULTS = new Set(["pass", "fail", "hold", "not_applicable"]);
+const DIFFERENTIAL_PARITY_DIGEST = /^sha256:[0-9a-f]{64}$/;
+const DIFFERENTIAL_PARITY_REFERENCE = /^[a-z0-9][a-z0-9.-]*\.json#[A-Za-z0-9_/-]+$/;
+const DIFFERENTIAL_PARITY_TEXT = /^[A-Za-z0-9][A-Za-z0-9 ._:@#/,;()\-]*$/;
+
+function parityDigest(value) {
+  return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
+}
+
+function parityRecord(value, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(`Differential parity ${label} must be an object.`);
+  return value;
+}
+
+function parityKeys(value, keys, label) {
+  if (Object.keys(value).sort().join(",") !== [...keys].sort().join(",")) {
+    throw new Error(`Differential parity ${label} has an unsupported field.`);
+  }
+}
+
+function parityText(value, label) {
+  if (typeof value !== "string" || value.length === 0 || value.length > 480 || !DIFFERENTIAL_PARITY_TEXT.test(value)) {
+    throw new Error(`Differential parity ${label} is not bounded sanitized text.`);
+  }
+  return value;
+}
+
+/**
+ * Assess one closed, sanitized native-harness parity matrix. Result ownership
+ * remains with the checked-in receipt/composer; this gate only validates its
+ * shape and promotion semantics.
+ */
+export function assessNativeHarnessDifferentialParity(receipt) {
+  const matrix = parityRecord(receipt, "receipt");
+  parityKeys(matrix, ["schema", "cells", "digest"], "receipt");
+  if (matrix.schema !== DIFFERENTIAL_PARITY_SCHEMA) throw new Error("Differential parity receipt schema is unsupported.");
+  if (!Array.isArray(matrix.cells)) throw new Error("Differential parity cells must be an array.");
+  const expectedCells = DIFFERENTIAL_PARITY_HARNESSES.flatMap((harness) =>
+    DIFFERENTIAL_PARITY_DIMENSIONS.map((dimension) => `${harness}/${dimension}`),
+  );
+  if (matrix.cells.length !== expectedCells.length) throw new Error("Differential parity receipt must contain every closed matrix cell exactly once.");
+  assertNoLeakedConfiguration(matrix, "differential parity receipt");
+  const counts = { pass: 0, fail: 0, hold: 0, not_applicable: 0 };
+  const blockers = [];
+  for (const [index, candidate] of matrix.cells.entries()) {
+    const row = parityRecord(candidate, `cell ${index}`);
+    const expected = expectedCells[index];
+    if (`${row.harness}/${row.dimension}` !== expected) {
+      throw new Error("Differential parity cells must be unique, complete, and canonical-order.");
+    }
+    const needsBlocker = row.result === "fail" || row.result === "hold";
+    const isNotApplicable = row.result === "not_applicable";
+    parityKeys(row, [
+      "harness", "driverVersion", "capabilitySchemaVersion", "dimension", "localEvidence", "directSource", "harnessdockSource", "mode", "comparator", "result", "artifactDigest", "contentDigest",
+      ...(needsBlocker ? ["blockerReason"] : []),
+      ...(isNotApplicable ? ["notApplicableBasis"] : []),
+    ], `cell ${index}`);
+    if (!DIFFERENTIAL_PARITY_HARNESSES.includes(row.harness) || !DIFFERENTIAL_PARITY_DIMENSIONS.includes(row.dimension)) {
+      throw new Error("Differential parity cell has an unknown harness or dimension.");
+    }
+    parityText(row.driverVersion, `cell ${index} driverVersion`);
+    if (row.capabilitySchemaVersion !== 3) throw new Error("Differential parity capability schema must be version 3.");
+    parityText(row.directSource, `cell ${index} direct source`);
+    parityText(row.harnessdockSource, `cell ${index} HarnessDock source`);
+    parityText(row.mode, `cell ${index} mode`);
+    parityText(row.comparator, `cell ${index} comparator`);
+    if (!DIFFERENTIAL_PARITY_RESULTS.has(row.result)) throw new Error("Differential parity result is not closed.");
+    if (!Array.isArray(row.localEvidence) || row.localEvidence.length < 1 || row.localEvidence.length > 4) {
+      throw new Error("Differential parity local evidence must be bounded.");
+    }
+    for (const reference of row.localEvidence) {
+      parityKeys(parityRecord(reference, `cell ${index} evidence`), ["label", "digest"], `cell ${index} evidence`);
+      if (!DIFFERENTIAL_PARITY_REFERENCE.test(reference.label) || !DIFFERENTIAL_PARITY_DIGEST.test(reference.digest ?? "")) {
+        throw new Error("Differential parity local evidence reference is malformed.");
+      }
+    }
+    if (!DIFFERENTIAL_PARITY_DIGEST.test(row.artifactDigest ?? "")) {
+      throw new Error("Differential parity artifact digest is malformed.");
+    }
+    if (needsBlocker) parityText(row.blockerReason, `cell ${index} blocker reason`);
+    if (isNotApplicable) {
+      const basis = parityRecord(row.notApplicableBasis, `cell ${index} N/A basis`);
+      parityKeys(basis, ["capability", "observed"], `cell ${index} N/A basis`);
+      parityText(basis.capability, `cell ${index} N/A capability`);
+      parityText(basis.observed, `cell ${index} N/A observed`);
+    }
+    const { contentDigest, ...content } = row;
+    if (!DIFFERENTIAL_PARITY_DIGEST.test(contentDigest ?? "") || contentDigest !== parityDigest(content)) {
+      throw new Error("Differential parity cell content digest does not match.");
+    }
+    counts[row.result] += 1;
+    if (needsBlocker) blockers.push({ harness: row.harness, dimension: row.dimension, result: row.result, reason: row.blockerReason });
+  }
+  if (!DIFFERENTIAL_PARITY_DIGEST.test(matrix.digest ?? "") || matrix.digest !== parityDigest({ schema: matrix.schema, cells: matrix.cells })) {
+    throw new Error("Differential parity receipt digest does not match.");
+  }
+  const status = counts.fail ? "fail" : counts.hold ? "hold" : "pass";
+  return {
+    status,
+    promotionEligible: status === "pass",
+    counts: Object.freeze(counts),
+    blockers: Object.freeze(blockers),
+  };
+}
+
+export function projectNativeRouteDiscovery(records, previousRecords = null) {
+  const priorGenerations = new Map();
+  for (const record of Array.isArray(previousRecords) ? previousRecords : []) {
+    for (const instance of Array.isArray(record?.instances) ? record.instances : []) {
+      const harness = boundedAtom(record?.harness, 48);
+      const instanceKey = boundedAtom(instance?.instance, 64);
+      if (harness && instanceKey) priorGenerations.set(`${harness}\0${instanceKey}`, instance?.inspection_generation ?? null);
+    }
+  }
   return (Array.isArray(records) ? records : []).map((record) => {
     const harness = boundedAtom(record?.harness, 48) || "unknown";
     const instances = Array.isArray(record?.instances) ? record.instances : [];
     const projectedInstances = instances.slice(0, 8).map((instance) => {
+      const priorGeneration = priorGenerations.get(
+        `${harness}\0${boundedAtom(instance?.instance, 64)}`
+      ) ?? null;
       const routes = instance?.routes ?? null;
       const effortsByModel = routes && typeof routes.effortsByModel === "object" && routes.effortsByModel
         ? Object.fromEntries(
@@ -552,6 +686,8 @@ export function projectNativeRouteDiscovery(records) {
           : [],
         efforts: routes ? boundedEffortList(routes.reasoningEfforts) : [],
         effortsByModel,
+        inspectionGeneration: instance?.inspection_generation ?? null,
+        previousInspectionGeneration: priorGeneration,
       };
     });
     let status;
@@ -636,6 +772,14 @@ export async function probeInstalledMcp(options = {}) {
       // side-effect free by contract: it starts no work, mutates no Agent, and
       // does not start, stop, or reconfigure any Harness's Server. It is
       // therefore the only new call this zero-model smoke may add.
+      const firstHarnesses = await client.callTool(
+        { name: "list_harnesses", arguments: {}, _meta: meta },
+        undefined,
+        callOptions(60_000),
+      );
+      if (firstHarnesses?.isError) throw toolError(firstHarnesses, "list_harnesses");
+      const previousRecords = /** @type {any} */ (firstHarnesses?.structuredContent)?.harnesses;
+      if (!Array.isArray(previousRecords)) throw new Error("list_harnesses returned no structured Harness array.");
       const harnesses = await client.callTool(
         { name: "list_harnesses", arguments: {}, _meta: meta },
         undefined,
@@ -647,7 +791,7 @@ export async function probeInstalledMcp(options = {}) {
       harnessCount = records.length;
       // Bounded, redacted, zero-model projection of the fresh native-route
       // discovery this same call performed. No extra Server or model traffic.
-      nativeRoutes = projectNativeRouteDiscovery(records);
+      nativeRoutes = projectNativeRouteDiscovery(records, previousRecords);
       if (options.expectedHarnessCount != null && harnessCount !== options.expectedHarnessCount) {
         throw new Error(
           `Installed Plugin reported ${harnessCount} admitted Harnesses; this release admits ` +
@@ -782,9 +926,12 @@ export async function runReleaseSmoke(options = {}) {
   // free of configuration, endpoint, or credential text.
   const nativeRouteDiscovery = Array.isArray(mcp.nativeRoutes) ? mcp.nativeRoutes : [];
   assertNoLeakedConfiguration(nativeRouteDiscovery, "release smoke native-route discovery");
+  const differentialParity = options.differentialParityReceipt == null
+    ? null
+    : assessNativeHarnessDifferentialParity(options.differentialParityReceipt);
   return {
     version: 1,
-    status: "pass",
+    status: differentialParity?.status ?? "pass",
     zeroModelCost: options.realClaude !== true,
     installedVersion: parity.installed.version,
     installedSnapshot: parity.installed.snapshotRoot,
@@ -801,5 +948,9 @@ export async function runReleaseSmoke(options = {}) {
     nativeRouteDiscovery,
     compatibilityShells,
     paid: mcp.paid,
+    ...(differentialParity ? {
+      differentialParity,
+      promotionEligible: differentialParity.promotionEligible,
+    } : {}),
   };
 }

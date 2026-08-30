@@ -31,9 +31,12 @@ function seamRouteInspection(runtime) {
       detailCode: "ready",
       routes: {
         models: ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5"],
+        effortsByModel: Object.fromEntries(["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5"].map((model) => [model, ["high"]])),
         topologies: ["leaf", "native_orchestrator"],
         interaction: "noninteractive_fixed_policy",
       },
+      capabilityProvenance: Object.fromEntries(["interaction", "activeInput", "continuation", "history", "interruptRequest", "turnObservation", "automaticRecovery", "authorityEnforcement", "leafEnforcement", "nativeOrchestration"].map((name) => [name, "checkout_declared"])),
+      inspectionGeneration: "unavailable",
     }],
   });
   return runtime;
@@ -94,6 +97,45 @@ function waitMs(milliseconds) {
 }
 
 describe("Agent durable launch boundary", () => {
+  it("reserves an exact inspected tuple and rejects stale tuples before durable or transport work", async () => {
+    const { runtime, workspace } = setup();
+    const inspected = runtime.jobs.inspectRouteInstance;
+    runtime.jobs.inspectRouteInstance = async (harnessId) => {
+      const observed = await inspected(harnessId);
+      return {
+        ...observed,
+        inspections: observed.inspections.map((inspection) => ({
+          ...inspection,
+          routes: { ...inspection.routes, models: ["claude-sonnet-5"], effortsByModel: { "claude-sonnet-5": ["high"] } },
+        })),
+      };
+    };
+    runtime.jobs.assertReady = () => readiness(runtime);
+    let transports = 0;
+    runtime.jobs.launchPreparedStart = async (prepared) => {
+      transports += 1;
+      return { jobId: prepared.jobId, agentId: prepared.agentId, status: "queued" };
+    };
+    const exact = {
+      topology: "leaf", harness: "claude-code", message: "bounded task", model: "claude-sonnet-5",
+      reasoning_effort: "high", write: false,
+    };
+    await runtime.spawnAgent({ ...exact, task_name: "exact_tuple" });
+    const agents = runtime.store.listAgents().length;
+    const jobs = listStoredJobs(workspace).length;
+    for (const stale of [
+      { task_name: "stale_model", model: "claude-opus-5", reasoning_effort: "high" },
+      { task_name: "stale_effort", model: "claude-sonnet-5", reasoning_effort: "low" },
+      { task_name: "model_alias", model: "claude-sonnet", reasoning_effort: "high" },
+      { task_name: "null_effort", model: "claude-sonnet-5", reasoning_effort: null },
+    ]) {
+      await assert.rejects(() => runtime.spawnAgent({ ...exact, ...stale }));
+      assert.equal(runtime.store.listAgents().length, agents);
+      assert.equal(listStoredJobs(workspace).length, jobs);
+      assert.equal(transports, 1);
+    }
+  });
+
   it("rejects a missing model before readiness or Agent reservation", async () => {
     const { runtime } = setup();
     let readinessCalled = false;
@@ -121,7 +163,7 @@ describe("Agent durable launch boundary", () => {
       {
         name: "effort",
         input: { reasoning_effort: "not-an-effort" },
-        error: /Unsupported effort/,
+        error: /exact discovered effort/,
       },
       {
         name: "removed profile",
@@ -148,7 +190,7 @@ describe("Agent durable launch boundary", () => {
         // a shorthand the route resolves.
         name: "alias model",
         input: { model: "fable" },
-        error: /exact model claude-fable-5.*alias "fable"/,
+        error: /exact discovered full model/,
       },
       {
         name: "retired tool allowlist",
@@ -494,7 +536,16 @@ describe("Agent durable launch boundary", () => {
 
     assert.deepEqual(result, {
       agent_name: "/root/boundary",
+      harness: "claude-code",
+      route_maturity: "experimental",
       model: "claude-sonnet-5",
+      reasoning_effort: "high",
+      delegation_mode: "leaf",
+      authority: "behavioral_read_only",
+      phase: null,
+      started_at: null,
+      last_activity_at: null,
+      elapsed_seconds: null,
       status: "working",
     });
     assert.deepEqual(events, ["ready:start", "ready:end", "reserve", "attach", "launch"]);

@@ -54,6 +54,7 @@ import { FUTURE_WRITE_GENERATION } from "./durable-state-v3.mjs";
 import { resolveRuntimeEnvironment } from "./environment.mjs";
 import { createExecutionProfile } from "./execution-profile.mjs";
 import { ROUTE_CAPABILITY_SCHEMA_VERSION } from "./harness-capabilities.mjs";
+import { inspectionEvidenceForRoute } from "./harness-contract.mjs";
 import {
   acceptDriverRoute,
   createDriverScope,
@@ -816,6 +817,7 @@ export async function runPhaseALeafSmoke(options = {}) {
         turnOptions: { effort: PHASE_A_EFFORT },
         turnId: jobId,
       });
+      const inspectionEvidence = inspectionEvidenceForRoute(route, accepted.inspection, driver);
       createLaunchIntent({
         ownerRootId,
         agentId: agent.agentId,
@@ -831,6 +833,7 @@ export async function runPhaseALeafSmoke(options = {}) {
         assignedMessageIds: reservation.assignedMessages.map((message) => message.messageId),
         preparedInput: PHASE_A_PROMPT,
         turnOptions: preparedTurn.turnOptions,
+        inspectionEvidence,
       });
       const lease = acquireInstanceLease({
         ownerRootId,

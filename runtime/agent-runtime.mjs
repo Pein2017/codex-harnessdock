@@ -9,7 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { createAgentStore } from "./agent-store.mjs";
-import { FUTURE_WRITE_GENERATION } from "./durable-state-v3.mjs";
+import { FUTURE_WRITE_GENERATION, assertSameDurableRouteSemantics } from "./durable-state-v3.mjs";
 import { readVersionThreeJobRecord } from "./v3-job-store.mjs";
 import { CLAUDE_CODE_HARNESS_ID, delegationModeForTopology } from "./claude-code-driver.mjs";
 import { deriveBlockedContinuationRejection } from "./agent-blocking.mjs";
@@ -31,6 +31,7 @@ import {
   validateHarnessCapabilities,
 } from "./harness-capabilities.mjs";
 import {
+  inspectionEvidenceForRoute,
   validateInstanceInspection,
 } from "./harness-contract.mjs";
 import {
@@ -370,10 +371,10 @@ function observedAgentJob(agent, job, ownerRootId) {
   return jobOwnerRootId === ownerRootId ? job : null;
 }
 
-function publicSpawnReceipt(cwd, agent) {
+function publicSpawnReceipt(cwd, agent, inspectionEvidence = null) {
+  const job = agent.activeJobId ? readJobFile(cwd, agent.activeJobId) : null;
   return {
-    agent_name: agent.path,
-    model: agent.route?.model ?? agent.model,
+    ...projectAgentCard(agent, job, { inspectionEvidence }),
     status: canonicalAgentStatus(agent),
   };
 }
@@ -1006,6 +1007,9 @@ class AgentRuntime {
    * rolled back so nothing half-exists.
    */
   async spawnVersionThreeAgent({ accepted, taskName, description, message, jobId, turnOptions, executionRoot }) {
+    const inspectionEvidence = inspectionEvidenceForRoute(
+      accepted.route, accepted.inspection, accepted.driver
+    );
     const store = this.versionThreeStore();
     const agent = store.createAgent({
       task_name: taskName,
@@ -1026,11 +1030,13 @@ class AgentRuntime {
       jobId,
       attemptId,
       turnOptions,
+      executionRoute: accepted.route,
+      inspectionEvidence,
     });
-    return publicSpawnReceipt(this.cwd, store.resolveTarget(agent.agentId));
+    return publicSpawnReceipt(this.cwd, store.resolveTarget(agent.agentId), inspectionEvidence);
   }
 
-  async followupVersionThreeAgent(input, initialAgent, driver) {
+  async followupVersionThreeAgent(input, initialAgent) {
     const store = this.versionThreeStore();
     const taskInput = assertText(input.message, "followup_task message");
     if (input.reasoning_effort != null) {
@@ -1064,12 +1070,35 @@ class AgentRuntime {
       );
     }
 
+    if (typeof agent.route.effort !== "string") {
+      throw new Error(`Agent ${agent.path} has a historical route without explicit effort and cannot activate.`);
+    }
     const jobId = generateJobId("hd-agent");
+    const observed = await this.jobs.inspectRouteInstance(agent.route.harnessId);
+    const matchingInspections = observed.inspections.filter((inspection) =>
+      inspection.instanceKey === agent.route.instanceKey && inspection.readiness === "ready"
+    );
+    if (matchingInspections.length !== 1) {
+      throw new Error(`Agent ${agent.path} requires exactly one current ready inspection for its immutable route instance.`);
+    }
+    const admitted = acceptDriverRoute(observed.driver, {
+      harnessId: agent.route.harnessId,
+      model: agent.route.model,
+      topology: agent.route.topology,
+      authority: agent.route.authority,
+      effort: agent.route.effort,
+    }, matchingInspections);
+    const executionRoute = Object.freeze({
+      ...admitted.route,
+      capabilitySchemaVersion: ROUTE_CAPABILITY_SCHEMA_VERSION,
+    });
+    assertSameDurableRouteSemantics(agent.route, executionRoute, `Agent ${agent.path}`);
+    const inspectionEvidence = inspectionEvidenceForRoute(executionRoute, admitted.inspection, observed.driver);
     // Pure Driver validation precedes every durable mailbox or activation
     // mutation. The detached worker recomputes the same prepared turn from the
     // assigned batch and revalidates the host immediately before submission.
-    driver.prepareTurn({
-      route: agent.route,
+    observed.driver.prepareTurn({
+      route: executionRoute,
       taskInput,
       turnOptions,
       turnId: jobId,
@@ -1098,6 +1127,8 @@ class AgentRuntime {
       jobId,
       attemptId,
       turnOptions,
+      executionRoute,
+      inspectionEvidence,
     });
     return publicFollowupReceipt(store.resolveTarget(agent.agentId), "new_turn");
   }
@@ -1598,7 +1629,7 @@ class AgentRuntime {
       agent.version === 3 &&
       harnessExecutionLifecycle(agent.route.harnessId) === "version_three_worker"
     ) {
-      return await this.followupVersionThreeAgent(input, agent, driver);
+      return await this.followupVersionThreeAgent(input, agent);
     }
     const validationJobId = agent.activeJobId ?? agent.latestJobId;
     const validationLatestJob = validationJobId
@@ -1795,7 +1826,14 @@ class AgentRuntime {
         agentId: agent.agentId,
         jobId,
       });
-      return record ? { id: record.jobId, status: record.status } : null;
+      return record ? {
+        id: record.jobId,
+        ownerRootId: record.ownerRootId,
+        agentId: record.agentId,
+        attemptId: record.attemptId,
+        route: record.route,
+        status: record.status,
+      } : null;
     } catch {
       return null;
     }
@@ -2209,11 +2247,9 @@ class AgentRuntime {
     if (input.all != null) throw new Error("list_agents does not expose cross-root all.");
     const agents = this.store.listAgents({ pathPrefix: optionalText(input.path_prefix) }).map((agent) => {
       const jobId = agent.activeJobId ?? agent.latestJobId;
-      const job = observedAgentJob(
-        agent,
-        jobId ? readJobFile(this.cwd, jobId) : null,
-        this.ownerRootId,
-      );
+      const job = agent.version === 3 && harnessExecutionLifecycle(agent.route.harnessId) === "version_three_worker"
+        ? this.versionThreeJobView(agent, jobId)
+        : observedAgentJob(agent, jobId ? readJobFile(this.cwd, jobId) : null, this.ownerRootId);
       return {
         ...projectAgentCard(agent, job),
         agent_status: observedAgentStatus(agent, job),

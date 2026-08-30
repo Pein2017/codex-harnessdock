@@ -1,0 +1,62 @@
+{
+  "schema": "harnessdock.claude-native-differential-parity.v1",
+  "subject": "test-owned fake Claude CLI, direct Node control, and production Claude Driver v2/adapter",
+  "normalization": {
+    "ephemeralRoot": "<ROOT>",
+    "processPid": "<PID>"
+  },
+  "provenRows": [
+    "baseline_argv_environment",
+    "benign_config_inheritance_witness",
+    "task_native_input",
+    "closed_harnessdock_policy_delta",
+    "write_authority_delta",
+    "ordered_stream_tool_events",
+    "interrupt_behavior",
+    "exact_session_continuation",
+    "same_session_recovery_prompt",
+    "terminal_classification",
+    "route_drift",
+    "provider_native_usage_source_fields",
+    "process_lifecycle_cleanup"
+  ],
+  "inventoryWitness": {
+    "observedAt": "2026-08-30T06:33:50.169Z",
+    "source": "claude-agent-sdk-initialization",
+    "promptSubmitted": false,
+    "modelTurnObserved": false,
+    "models": [
+      "claude-opus-5[1m]",
+      "claude-fable-5",
+      "claude-sonnet-5"
+    ],
+    "effortsByModel": {
+      "claude-opus-5[1m]": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "claude-fable-5": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ],
+      "claude-sonnet-5": [
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+        "max"
+      ]
+    }
+  },
+  "notApplicable": {
+    "oldTurnObservation": "turnObservation is unavailable in the current Claude route capability snapshot",
+    "oldExactSessionTransportRecovery": "automaticRecovery is same_session_recovery_prompt, not exact_session_transport"
+  },
+  "unprovenRows": []
+}

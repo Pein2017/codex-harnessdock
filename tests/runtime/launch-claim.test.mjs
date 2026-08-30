@@ -175,8 +175,13 @@ function claimInput(overrides = {}) {
     turnOptions: null,
     ...overrides,
   };
+  if (!Object.hasOwn(overrides, "inspectionEvidence")) base.inspectionEvidence = inspectionEvidence(base.route);
   if (!("leaseBindings" in overrides)) base.leaseBindings = [instanceLease({ route: base.route })];
   return base;
+}
+
+function inspectionEvidence(route = versionThreeRoute()) {
+  return { generation: "unavailable", capabilities: route.capabilities };
 }
 
 /**
@@ -212,7 +217,7 @@ function fakeLiveHarnessTurn({ route = versionThreeRoute(), live = {} } = {}) {
 const RECORD_FIELDS = [
   "version", "ownerRootId", "agentId", "jobId", "attemptId",
   "lifecycleOwner",
-  "route", "leaseState", "leaseIntent", "leaseBindings", "assignedMessageIds", "turnOptions", "inputDigest",
+  "route", "inspectionEvidence", "leaseState", "leaseIntent", "leaseBindings", "assignedMessageIds", "turnOptions", "inputDigest",
   "acceptance", "nativeTurnRef", "nativeSessionRef", "acceptanceEvidenceAt", "sanitizedDetail",
   "submissionState", "submissionStartedAt",
   "createdAt", "updatedAt",
@@ -230,6 +235,7 @@ function materializeLegacyVersionOne(record) {
   delete legacy.leaseIntent;
   delete legacy.turnOptions;
   delete legacy.lifecycleOwner;
+  delete legacy.inspectionEvidence;
   fs.rmSync(currentDirectory, { recursive: true, force: true });
   fs.mkdirSync(legacyDirectory, { recursive: true, mode: 0o700 });
   const fileName = `${createHash("sha256").update(record.attemptId).digest("hex")}.json`;
@@ -348,14 +354,12 @@ describe("launch claim: closed identity and durable binding", () => {
     assert.equal(launchClaimRollbackEligibility(migrated).eligible, true);
   });
 
-  it("migrates a colliding v1 identity before an idempotent create", () => {
+  it("reads a colliding evidence-less v1 identity but refuses a new evidence-bearing submission", () => {
     setup();
     const prepared = createLaunchClaim(claimInput());
     materializeLegacyVersionOne(prepared);
-    const legacyCompatible = { ...prepared };
-    delete legacyCompatible.turnOptions;
-    delete legacyCompatible.lifecycleOwner;
-    assert.deepEqual(createLaunchClaim(claimInput()), legacyCompatible);
+    assert.deepEqual(readLaunchClaim(binding()).route, prepared.route);
+    assert.throws(() => createLaunchClaim(claimInput()), /identity mismatch/);
   });
 
   it("fails closed when valid v1 and v2 records disagree", () => {
@@ -504,6 +508,7 @@ describe("launch claim: closed identity and durable binding", () => {
       assignedMessageIds: ["message-1"],
       preparedInput: "hello world",
       turnOptions: null,
+      inspectionEvidence: inspectionEvidence(),
     });
     assert.equal(intent.leaseState, "intended");
     assert.equal(intent.leaseBindings.length, 0);
@@ -522,6 +527,62 @@ describe("launch claim: closed identity and durable binding", () => {
     assert.deepEqual(acquired.leaseBindings, acquired.leaseIntent);
   });
 
+  it("retains current v3 inspection evidence when the owning runtime provides it", () => {
+    setup();
+    const input = {
+      ...binding(),
+      attemptId: "attempt-1",
+      lifecycleOwner: "version_three_worker",
+      route: versionThreeRoute(),
+      expectedLease: { kind: "instance", capacityClass: "default", capacityLimit: 4 },
+      assignedMessageIds: ["message-1"],
+      preparedInput: "hello world",
+      turnOptions: null,
+    };
+    assert.throws(() => createLaunchIntent(input), /requires complete current inspectionEvidence/);
+    const created = createLaunchIntent({ ...input, inspectionEvidence: inspectionEvidence(input.route) });
+    assert.deepEqual(created.inspectionEvidence, inspectionEvidence(input.route));
+    assert.throws(
+      () => createLaunchIntent({
+        ...input,
+        inspectionEvidence: { generation: "unavailable", capabilities: {
+          ...input.route.capabilities,
+          provenance: { ...input.route.capabilities.provenance, history: "inspection_proven" },
+        } },
+      }),
+      /capabilities do not exactly match/,
+    );
+  });
+
+  it("refuses omitted evidence from both new-claim APIs before a claim file exists", () => {
+    setup();
+    const createInput = claimInput();
+    delete createInput.inspectionEvidence;
+    assert.throws(() => createLaunchClaim(createInput), /requires complete current inspectionEvidence/);
+    assert.equal(readLaunchClaim(binding()), null);
+    assert.throws(() => createLaunchIntent({
+      ...binding(), attemptId: "attempt-intent", route: versionThreeRoute(),
+      expectedLease: { kind: "instance", capacityClass: "default", capacityLimit: 4 },
+      assignedMessageIds: ["message-intent"], preparedInput: "hello", turnOptions: null,
+    }), /requires complete current inspectionEvidence/);
+    assert.equal(readLaunchClaim({ ...binding(), jobId: "job-1" }), null);
+  });
+
+  it("keeps an old evidence-less claim readable for rollback but fences it before submission", () => {
+    setup();
+    const created = createLaunchClaim(claimInput());
+    const [fileName] = fs.readdirSync(resolveLaunchClaimDirectory(created)).filter((entry) => entry.endsWith(".json"));
+    const filePath = path.join(resolveLaunchClaimDirectory(created), fileName);
+    const historical = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    delete historical.inspectionEvidence;
+    fs.writeFileSync(filePath, JSON.stringify(historical));
+    assert.equal(readLaunchClaim(binding()).inspectionEvidence, undefined);
+    assert.throws(() => verifyPreparedLaunchClaim({
+      ...binding(), attemptId: created.attemptId, route: created.route,
+      assignedMessageIds: created.assignedMessageIds, preparedInput: "hello world", turnOptions: null,
+    }), /evidence-less historical launch claim/);
+  });
+
   it("acquires only while the exact durable intent is still rollback-safe", () => {
     setup();
     const route = versionThreeRoute();
@@ -529,6 +590,7 @@ describe("launch claim: closed identity and durable binding", () => {
     const intent = createLaunchIntent({
       ...binding(), attemptId: "attempt-1", lifecycleOwner: "version_three_worker", route, expectedLease,
       assignedMessageIds: ["message-1"], preparedInput: "hello world", turnOptions: null,
+      inspectionEvidence: inspectionEvidence(route),
     });
     const lease = acquireIntendedInstanceLease({
       ...binding(), attemptId: "attempt-1", route,
@@ -1387,8 +1449,8 @@ describe("launch claim: pre-submission rollback eligibility, gated on submission
     assert.ok(bySpecifier.has("./harness-contract.mjs"));
     assert.deepEqual(
       [...bySpecifier.get("./harness-contract.mjs").matchAll(/[\w$]+/g)].map((m) => m[0]),
-      ["durableTurnEvidence"],
-      "must import only the brand-gated evidence consumer, never validateLiveHarnessTurn or a Driver-invoking export"
+      ["durableTurnEvidence", "validateRouteInspectionEvidence"],
+      "must import only bounded evidence validators, never validateLiveHarnessTurn or a Driver-invoking export"
     );
 
     for (const forbidden of ["harness-registry", "workspace-writer-lease", "completion-inbox", "agent-store", "job-store"]) {
@@ -1452,6 +1514,7 @@ describe("launch claim: pre-submission rollback fence", () => {
       assignedMessageIds: ["message-1"],
       preparedInput: "hello",
       turnOptions: null,
+      inspectionEvidence: inspectionEvidence(),
     });
   }
 

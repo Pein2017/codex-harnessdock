@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import { describe, it } from "node:test";
 
 import { createAgentRuntime } from "../../runtime/index.mjs";
+import { acceptDriverRoute, createDriverScope, inspectDriverInstances } from "../../runtime/harness-registry.mjs";
+import { createFakeServiceDriver } from "./fixtures/fake-service-driver.mjs";
 
 const root = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const releaseMetadata = JSON.parse(fs.readFileSync(path.join(root, "package.json"), "utf8"));
@@ -235,59 +237,41 @@ describe("native plugin contract", () => {
       path.join(root, "plugins", "codex-harnessdock", "skills", "spawn-agent", "SKILL.md"),
       "utf8",
     );
-    assert.match(text, /On success:[\s\S]*exactly `agent_name`, `model`, and `status`/i);
+    assert.match(text, /On success:[\s\S]*returned Agent Card[\s\S]*`agent_name`, `model`, and `status`/i);
     assert.match(text, /never worktree paths[\s\S]*final Harness text[\s\S]*JSON[\s\S]*internal IDs/i);
     assert.match(text, /operator diagnostics[\s\S]*actionable[\s\S]*failure\/recovery detail/i);
     assert.match(text, /actionable\s+failure\/recovery detail/i);
     assert.doesNotMatch(text, /receipt exactly as returned/i);
   });
 
-  it("documents exact admitted model and effort identifiers without route ranking", () => {
+  it("keeps spawn guidance inventory-neutral without route ranking", () => {
     const text = fs.readFileSync(
       path.join(root, "plugins", "codex-harnessdock", "skills", "spawn-agent", "SKILL.md"),
       "utf8",
     );
-    for (const model of ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5"]) {
-      assert.match(text, new RegExp(model));
-    }
     assert.doesNotMatch(text, /cheapest\/fastest|preferred for real smoke|highest capability\/spend|Haiku < Sonnet < Opus < Fable/i);
     assert.match(text, /Ask when no model family was selected/i);
-    assert.match(text, /low.*medium.*high.*xhigh.*max/s);
     assert.match(text, /Agent label such as Ops5[\s\S]*partial IDs[\s\S]*substitute another[\s\S]*model/i);
     assert.match(text, /(?:subscription|usage)[\s\S]*(?:quota|credit) exhaustion[\s\S]*stop further\s+real Claude tests/i);
     assert.match(text, /generic transient 429[\s\S]*bounded reconnect/i);
     assert.match(text, /`write: false`[\s\S]*behavioral read\/review-only[\s\S]*`write: true`[\s\S]*task-scoped mutation[\s\S]*not an OS-level/i);
     assert.match(text, /`IS_SANDBOX=1`[\s\S]*`--dangerously-skip-permissions`[\s\S]*never omit `write`/i);
-    assert.match(text, /`leaf`[\s\S]*native[\s\S]*`Agent`[\s\S]*`Workflow`[\s\S]*`native_orchestrator`[\s\S]*exact Opus or Fable/i);
+    assert.match(text, /`leaf`[\s\S]*native[\s\S]*`Agent`[\s\S]*`Workflow`[\s\S]*`native_orchestrator`[\s\S]*fresh listing admits it/i);
     // Every route field is stated by the caller; nothing is defaulted.
     assert.match(text, /`harness`[\s\S]*`model`[\s\S]*`topology`[\s\S]*`write`/);
     assert.match(text, /no default (?:Harness|route)/i);
     assert.doesNotMatch(text, /delegation_mode/);
-    // Pi and OpenCode route truth, stated plainly and without aspiration.
-    for (const model of [
-      "openai-codex/gpt-5.6-luna",
-      "openai-codex/gpt-5.6-terra",
-      "openai-codex/gpt-5.6-sol",
-      "openai/gpt-5.6-luna",
-      "openai/gpt-5.6-terra",
-      "openai/gpt-5.6-sol",
-    ]) assert.match(text, new RegExp(model.replace("/", "\\/")));
-    assert.match(text, /`pi`[\s\S]*provider `openai-codex` only/i);
-    assert.match(text, /every turn requires `low`, `medium`, `high`, `xhigh`, or `max`/i);
-    assert.match(text, /No\s+capacity ceiling[\s\S]*exact serialized session/i);
-    assert.match(text, /resume-only[\s\S]*active input\s+acknowledged[\s\S]*no automatic recovery\/orchestration/i);
-    assert.match(text, /Pi `write: false` allows only `read`, `grep`, `find`, and[\s\S]*Pi `write: true` also allows `bash`, `edit`, and `write`/i);
-    assert.match(text, /`opencode`[\s\S]*leaf[\s\S]*`write: false`/i);
-    // OpenCode now takes both authorities as prompt/receipt only and requires
-    // an explicit effort mapped to one advertised Server variant, never inferred.
-    assert.match(text, /`opencode`[\s\S]*`write: false` or `write: true` \(prompt\/receipt\s+only\)/i);
-    assert.match(text, /`opencode`[\s\S]*explicit[\s\S]*effort must map to one\s+advertised Server variant,\s+never inferred/i);
-    assert.doesNotMatch(text, /no reasoning effort/i);
-    assert.doesNotMatch(text, /deepseek|opencode-go/i);
-    assert.match(text, /No `-fast` variants/i);
+    assert.match(text, /list-harnesses[\s\S]*current inventory[\s\S]*`harness`[\s\S]*`model`[\s\S]*`topology`[\s\S]*`write`[\s\S]*`reasoning_effort`/i);
+    assert.match(text, /all route fields[\s\S]*mandatory[\s\S]*nothing is defaulted, inferred, aliased, or substituted/i);
+    for (const rosterEntry of [
+      "claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5",
+      "openai-codex/gpt-5.6-luna", "openai-codex/gpt-5.6-terra", "openai-codex/gpt-5.6-sol",
+      "openai/gpt-5.6-luna", "openai/gpt-5.6-terra", "openai/gpt-5.6-sol",
+      "Pi `write: false` allows only", "No `-fast` variants",
+    ]) assert.doesNotMatch(text, new RegExp(rosterEntry.replaceAll("/", "\\/"), "i"));
     // Route facts are read from fresh native discovery; native configuration is
     // inherited, never enumerated by HarnessDock.
-    assert.match(text, /reports what is ready from fresh native\s+discovery/i);
+    assert.match(text, /list-harnesses[\s\S]*immediately before route selection/i);
     assert.match(text, /Pi and OpenCode are\s+prompt\/receipt only, inheriting native tools, plugins, MCP, and config unchanged\s+and never enumerated/i);
     assert.match(text, /experimental Native Agent Team lead/i);
     assert.match(text, /named member[\s\S]*launch(?:es|ed)? asynchronously[\s\S]*correlated `SendMessage`[\s\S]*succeed(?:s)?/i);
@@ -300,6 +284,28 @@ describe("native plugin contract", () => {
     assert.match(text, /`Workflow`[\s\S]*remains disabled/i);
     assert.doesNotMatch(text, /allowed_tools/);
     assert.doesNotMatch(text, /fork_turns|execution_profile/);
+  });
+
+  it("admits only the current fake inspection catalog without editing guidance", async () => {
+    const file = path.join(root, "plugins", "codex-harnessdock", "skills", "spawn-agent", "SKILL.md");
+    const before = fs.readFileSync(file);
+    const catalog = { "fake/provider-a": ["opaque-effort-a"] };
+    const fixture = createFakeServiceDriver({ inspectInstances: () => [{
+      harnessId: "fake-service", instanceKey: "tenant-alpha", readiness: "ready", liveValidated: true,
+      maturity: "experimental", detailCode: "ready",
+      routes: { models: Object.keys(catalog), effortsByModel: catalog, configurationIdentity: "secret-catalog-origin" },
+      capabilityProvenance: fixture.capabilities.provenance, inspectionGeneration: "unavailable",
+    }] });
+    const inspect = () => inspectDriverInstances(fixture.driver, createDriverScope({ driver: fixture.driver, purpose: "inspect", env: {} }));
+    const request = (model, effort) => ({ harnessId: "fake-service", model, effort, topology: "leaf", authority: "behavioral_read_only" });
+    assert.equal(acceptDriverRoute(fixture.driver, request("fake/provider-a", "opaque-effort-a"), await inspect()).route.effort, "opaque-effort-a");
+    delete catalog["fake/provider-a"];
+    catalog["fake/provider-b"] = ["opaque-effort-b"];
+    const replaced = await inspect();
+    assert.throws(() => acceptDriverRoute(fixture.driver, request("fake/provider-a", "opaque-effort-a"), replaced));
+    assert.equal(acceptDriverRoute(fixture.driver, request("fake/provider-b", "opaque-effort-b"), await inspect()).route.effort, "opaque-effort-b");
+    assert.deepEqual(fs.readFileSync(file), before);
+    assert.equal(before.includes("fake/provider-b"), false);
   });
 
   it("documents follow-up write inheritance and explicit authority changes", () => {

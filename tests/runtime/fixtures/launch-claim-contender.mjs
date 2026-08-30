@@ -34,6 +34,7 @@ function run() {
       assignedMessageIds: ["message-1"],
       preparedInput: "hello",
       turnOptions: JSON.parse(turnOptionsText),
+      inspectionEvidence: { generation: "unavailable", capabilities: versionThreeRoute().capabilities },
     });
     return "ok";
   }

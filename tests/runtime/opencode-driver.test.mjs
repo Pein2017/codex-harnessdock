@@ -26,6 +26,7 @@ import {
   isDriverPreTransportRejection,
   validateCanonicalRoute,
   validateDriverV2,
+  validateInstanceInspection,
   validateLiveHarnessTurn,
   validateNormalizedTerminalResult,
   validatePreparedTurn,
@@ -315,6 +316,25 @@ describe("opencode driver: readiness and route admission", () => {
     assert.equal(server.requests.find((request) => request.path === "/provider")?.query.directory, WORKSPACE_ROOT);
   });
 
+  it("replaces the whole OpenCode projection when a model disappears and records only opaque test drift", async () => {
+    const { server, url } = await startFake();
+    const generations = [`sha256:${"a".repeat(64)}`, `sha256:${"b".repeat(64)}`];
+    const driver = driverFor(url, { _test: { inspectionGeneration: () => generations.shift() } });
+    const scope = createDriverScope({ driver, purpose: "inspect", env: { OPENCODE_SERVER_URL: url }, workspaceRoot: WORKSPACE_ROOT });
+    const [first] = await driver.inspectInstances(scope);
+    const next = readyProvider();
+    next.body.all[0].models = {
+      "gpt-5.6-terra": next.body.all[0].models["gpt-5.6-terra"],
+    };
+    server.state.provider = next;
+    const [second] = await driver.inspectInstances(scope);
+    assert.equal(first.inspectionGeneration, `sha256:${"a".repeat(64)}`);
+    assert.equal(second.inspectionGeneration, `sha256:${"b".repeat(64)}`);
+    assert.equal(Object.hasOwn(second.routes.effortsByModel, OPENCODE_EXPLORER_MODEL), false);
+    assert.deepEqual(second.routes.models, ["openai/gpt-5.6-terra"]);
+    assert.deepEqual(second.capabilityProvenance, first.capabilityProvenance);
+  });
+
   it("does not advertise dormant CLI routes when the connected Server is absent", async () => {
     let discovered = 0;
     const driver = driverFor("http://127.0.0.1:4998", {
@@ -360,6 +380,18 @@ describe("opencode driver: readiness and route admission", () => {
     ]) {
       assert.throws(() => driver.validateRoute(bad, inspection));
     }
+  });
+
+  it("rejects an orphaned OpenCode effort projection before any session request", async () => {
+    const { server, url } = await startFake();
+    const driver = driverFor(url);
+    const [inspection] = await driver.inspectInstances(
+      createDriverScope({ driver, purpose: "inspect", env: { OPENCODE_SERVER_URL: url }, workspaceRoot: WORKSPACE_ROOT })
+    );
+    const malformed = structuredClone(inspection);
+    malformed.routes.effortsByModel["foreign-model"] = ["high"];
+    assert.throws(() => validateInstanceInspection(malformed, driver), /exact keys/);
+    assert.deepEqual(postRequests(server), []);
   });
 
   it("binds a non-default admitted model through native submission and result lineage", async () => {
@@ -542,7 +574,7 @@ describe("opencode driver: session and turn lineage", () => {
     const session = requests.findIndex((request) => request.method === "POST" && request.path === "/session");
     assert.ok(session > 0);
     assert.deepEqual(requests[session - 1], {
-      method: "GET", path: "/agent", hasAuthorizationHeader: false, query: { directory: WORKSPACE_ROOT },
+      method: "GET", path: "/agent", hasAuthorizationHeader: false, contentType: null, query: { directory: WORKSPACE_ROOT },
     });
   });
 

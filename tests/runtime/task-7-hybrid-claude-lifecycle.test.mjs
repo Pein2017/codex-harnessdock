@@ -34,6 +34,7 @@ import { afterEach, describe, it } from "node:test";
 
 import { createAgentRuntime } from "../../runtime/agent-runtime.mjs";
 import { claudeCodeInstanceKey } from "../../runtime/claude-code-driver.mjs";
+import { MODEL_ALIASES, VALID_EFFORTS } from "../../runtime/claude-headless-adapter.mjs";
 import { harnessExecutionLifecycle, resolveDriverV2 } from "../../runtime/harness-registry.mjs";
 import { readJobFile, writeJobFile } from "../../runtime/job-store.mjs";
 import { observeClaudeCredentialState } from "../../runtime/claude-credential-state.mjs";
@@ -108,10 +109,15 @@ function seamClaude(runtime) {
       maturity: "experimental",
       detailCode: "ready",
       routes: {
-        models: ["claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5"],
+        models: [...new Set(MODEL_ALIASES.values())],
+        effortsByModel: Object.fromEntries(
+          [...new Set(MODEL_ALIASES.values())].map((model) => [model, [...VALID_EFFORTS]]),
+        ),
         topologies: ["leaf", "native_orchestrator"],
         interaction: "noninteractive_fixed_policy",
       },
+      capabilityProvenance: Object.fromEntries(["interaction", "activeInput", "continuation", "history", "interruptRequest", "turnObservation", "automaticRecovery", "authorityEnforcement", "leafEnforcement", "nativeOrchestration"].map((name) => [name, "checkout_declared"])),
+      inspectionGeneration: "unavailable",
     }],
   });
   runtime.jobs.assertReady = () => readinessReceipt(runtime);
@@ -171,8 +177,11 @@ describe("Task 7 hybrid — a new Claude spawn writes a version-three Agent", ()
     // The route's instance key is the redacted identity, never the raw path.
     assert.match(agent.route.instanceKey, /^claude-config-[0-9a-f]{16}$/);
     assert.equal(JSON.stringify(agent).includes(runtime.jobs.env.CLAUDE_CONFIG_DIR), false);
-    // Spawn exposes only the bounded three-field receipt.
-    assert.deepEqual(Object.keys(receipt).sort(), ["agent_name", "model", "status"]);
+    // Spawn exposes the bounded public Agent Card, including its frozen route facts.
+    assert.deepEqual(Object.keys(receipt).sort(), [
+      "agent_name", "authority", "delegation_mode", "elapsed_seconds", "harness",
+      "last_activity_at", "model", "phase", "reasoning_effort", "route_maturity", "started_at", "status",
+    ]);
     assert.equal(receipt.model, "claude-sonnet-5");
   });
 

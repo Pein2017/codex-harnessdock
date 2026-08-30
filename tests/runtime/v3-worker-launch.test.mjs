@@ -94,6 +94,7 @@ function setup(options = {}) {
     assignedMessageIds: input.assignedMessageIds,
     preparedInput,
     turnOptions: null,
+    inspectionEvidence: { generation: "unavailable", capabilities: route.capabilities },
   });
   return {
     input,
@@ -179,6 +180,7 @@ describe("version-three worker launch acceptance core", () => {
       assignedMessageIds: context.input.assignedMessageIds,
       preparedInput: context.input.preparedInput,
       turnOptions: context.input.turnOptions,
+      inspectionEvidence: { generation: "unavailable", capabilities: context.route.capabilities },
     });
     assert.equal((await claimNativeSubmissionStartAsync(identity)).started, true);
 

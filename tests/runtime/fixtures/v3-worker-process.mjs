@@ -94,6 +94,7 @@ async function run() {
       assignedMessageIds: reservation.assignedMessages.map((entry) => entry.messageId),
       preparedInput: payload.promptText,
       turnOptions: null,
+      inspectionEvidence: { generation: "unavailable", capabilities: route.capabilities },
     });
     if (mode === "intent_before_acquire") {
       report("READY", {});
@@ -151,6 +152,7 @@ async function run() {
       // Stated explicitly, exactly as `launchVersionThreeTurn()` states it:
       // this fixture's Driver owns no turn options.
       turnOptions: null,
+      inspectionEvidence: { generation: "unavailable", capabilities: route.capabilities },
     });
     report("READY", {});
     await hangForever();
@@ -205,6 +207,7 @@ async function run() {
     assignedMessageIds: input.assignedMessageIds,
     preparedInput: payload.promptText,
     turnOptions: null,
+    inspectionEvidence: { generation: "unavailable", capabilities: route.capabilities },
   });
 
   if (mode === "hang_while_running") {

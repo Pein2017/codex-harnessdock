@@ -61,6 +61,13 @@ const REJECTED_INPUT_SELECTORS = Object.freeze([
   "harness_module",
   "harness_executable",
   "harness_capabilities",
+  "capability_snapshot",
+  "capabilitySnapshot",
+  "capability_provenance",
+  "provenance",
+  "generation",
+  "inspection_generation",
+  "inspectionGeneration",
   "harness_endpoint",
   "harness_instance",
   "driver",
@@ -72,6 +79,8 @@ const REJECTED_INPUT_SELECTORS = Object.freeze([
   "claude_config_dir",
   "env_file",
   "settings_path",
+  "native_config_path",
+  "nativeConfigPath",
   // A service-backed Harness makes endpoint, instance, and credential inputs
   // the same class of selector as a module path: fixed operator configuration
   // resolved by the Driver, never a model-facing or caller-facing choice.

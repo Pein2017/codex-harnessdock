@@ -146,6 +146,16 @@ describe("Version-three Agent Card", () => {
     assert.equal(card.reasoning_effort, "high");
   });
 
+  it("omits synthetic, absent, and unaccepted attempt evidence", () => {
+    const token = `sha256:${"a".repeat(64)}`;
+    const card = projectAgentCard(futureAgent, {
+      inspectionEvidence: { generation: token, capabilities: futureAgent.route.capabilities },
+    });
+    assert.equal(card.inspection_generation, undefined);
+    assert.equal(card.capability_provenance, undefined);
+    assert.equal(Object.hasOwn(card, "capability_snapshot"), false);
+  });
+
   it("projects a bounded Driver-advertised effort without a fixed enum", () => {
     const card = projectAgentCard({
       ...futureAgent,

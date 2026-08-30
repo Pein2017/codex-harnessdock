@@ -24,12 +24,12 @@ The runtime SHALL require a matching deterministic process identity for every si
 - **WHEN** process control has a live PID and its deterministic identity matches the stored receipt
 - **THEN** the requested platform-appropriate signal or termination may proceed
 
-### Requirement: Transport recovery is bounded and exact-session
-The supervisor SHALL treat Driver-authorized reconnect attempts as one logical job, use bounded backoff, preserve cumulative receipts, and resume only the captured native session when the persisted capability snapshot declares `automaticRecovery=exact_session_transport` and the Driver proves replay safe. No recovery SHALL change Harness, route, Driver version, capability meaning, root owner, Agent, or native session target.
+### Requirement: Transport recovery is bounded and capability-specific
+The supervisor SHALL treat Driver-authorized reconnect attempts as one logical job, use bounded backoff, and preserve cumulative receipts. `automaticRecovery=exact_session_transport` permits only provider-proven recovery of the accepted interrupted turn. `automaticRecovery=same_session_recovery_prompt` permits only a fresh process resuming captured native session `S` and sending exactly one generated recovery prompt for that reconnect attempt as distinct new turn `T2`; it SHALL NOT claim continuation of interrupted `T1`. No recovery SHALL change Harness, route, Driver version, capability meaning, root owner, Agent, or native session target. Existing persisted `exact_session_transport` snapshots remain readable but do not widen a route that now declares the narrower capability.
 
-#### Scenario: Transport closes after an exact native session is captured
-- **WHEN** the Driver classifies the failure as transport-resumable, its persisted capability snapshot admits exact-session recovery, and retry budget remains
-- **THEN** the supervisor permits that Driver to start a bounded reconnect attempt for the same Harness session and route
+#### Scenario: Transport closes after a same-session recovery prompt route captures a native session
+- **WHEN** the Driver classifies the failure as transport-resumable, its persisted snapshot declares `same_session_recovery_prompt`, and retry budget remains
+- **THEN** the supervisor permits the next bounded reconnect attempt for the same Harness session and route with one generated new recovery prompt
 
 #### Scenario: Possible side effects occur without exact session evidence
 - **WHEN** transport fails after observed or possible side effects and the Driver cannot prove an exact native session target

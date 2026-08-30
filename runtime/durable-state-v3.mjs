@@ -177,7 +177,8 @@ function validateVersionThreeRouteInternal(route, label, allowUnknownEffort) {
     : null;
   if (!allowUnknownEffort && effort === null) requiredValue(snapshot, "effort", label);
   const capabilitySchemaVersion = requiredValue(snapshot, "capabilitySchemaVersion", label);
-  if (capabilitySchemaVersion !== ROUTE_CAPABILITY_SCHEMA_VERSION) {
+  if (capabilitySchemaVersion !== ROUTE_CAPABILITY_SCHEMA_VERSION &&
+      !(allowUnknownEffort && capabilitySchemaVersion === 2)) {
     throw new Error(
       `${label} declares capability schema version ${JSON.stringify(capabilitySchemaVersion)}; ` +
       `this runtime requires ${ROUTE_CAPABILITY_SCHEMA_VERSION}.`
@@ -188,7 +189,7 @@ function validateVersionThreeRouteInternal(route, label, allowUnknownEffort) {
   // than the one this record will store.
   const capabilities = validateRouteCapabilitySnapshot(
     plainDataTree(requiredValue(snapshot, "capabilities", label), `${label} capabilities`, 2),
-    `${label} capabilities`
+    `${label} capabilities`, { allowSchemaV2: allowUnknownEffort }
   );
   if (capabilities.capabilitySchemaVersion !== capabilitySchemaVersion) {
     throw new Error(`${label} disagrees with its own capability schema version.`);
@@ -224,6 +225,34 @@ export function validateVersionThreeRoute(route, label = "Version-three route") 
 /** Pre-effort V3 history remains readable; no activation seam accepts it. */
 export function validateStoredVersionThreeRoute(route, label = "Stored version-three route") {
   return validateVersionThreeRouteInternal(route, label, true);
+}
+
+/**
+ * Schema-v2 did not retain provenance.  Compare it to a freshly admitted v3
+ * route by every durable execution semantic, but never invent provenance or
+ * make an inspection generation part of immutable Agent identity.
+ */
+export function sameDurableRouteSemantics(storedRoute, executionRoute, label = "Durable route") {
+  const stored = validateStoredVersionThreeRoute(storedRoute, `${label} stored route`);
+  const execution = validateVersionThreeRoute(executionRoute, `${label} execution route`);
+  for (const field of [
+    "harnessId", "instanceKey", "model", "effort", "topology", "authority", "driverVersion",
+  ]) {
+    if (stored[field] !== execution[field]) return false;
+  }
+  if (stored.capabilities.driverMaturity !== execution.capabilities.driverMaturity) return false;
+  for (const name of Object.keys(stored.capabilities.values)) {
+    if (stored.capabilities.values[name] !== execution.capabilities.values[name] ||
+        stored.capabilities.maturity[name] !== execution.capabilities.maturity[name]) return false;
+  }
+  return true;
+}
+
+export function assertSameDurableRouteSemantics(storedRoute, executionRoute, label = "Durable route") {
+  if (!sameDurableRouteSemantics(storedRoute, executionRoute, label)) {
+    throw new Error(`${label} route identity does not semantically derive from its immutable Agent route.`);
+  }
+  return validateVersionThreeRoute(executionRoute, `${label} execution route`);
 }
 
 /** Stable serialization of one canonical route, for immutability comparison. */

@@ -19,6 +19,7 @@ import {
   ROUTE_CAPABILITY_SCHEMA_VERSION,
   assertAdmittedInteraction,
   validateHarnessCapabilities,
+  validateRouteCapabilityProvenance,
   validateRouteCapabilitySnapshot,
 } from "./harness-capabilities.mjs";
 import { assertHarnessTurnFailureClass } from "./harness-failure-classes.mjs";
@@ -683,6 +684,24 @@ export const CANONICAL_ROUTE_FIELDS = Object.freeze([
 
 const INSTANCE_KEY_PATTERN = /^[a-z0-9][a-z0-9._:-]{0,63}$/;
 const MAX_INSTANCE_ROUTE_FACTS_BYTES = 4 * 1024;
+const INSPECTION_GENERATION_TOKEN_PATTERN = /^sha256:[0-9a-f]{64}$/;
+
+/** A Driver states this only when it has no safe native configuration witness. */
+export const INSPECTION_GENERATION_UNAVAILABLE = "unavailable";
+
+/**
+ * One bounded opaque native-inspection generation. This is evidence, never a
+ * route selector or a raw configuration identity.
+ */
+export function validateInspectionGeneration(value, label = "Inspection generation") {
+  if (value === INSPECTION_GENERATION_UNAVAILABLE) return value;
+  if (typeof value !== "string" || !INSPECTION_GENERATION_TOKEN_PATTERN.test(value)) {
+    throw new Error(
+      `${label} must be ${JSON.stringify(INSPECTION_GENERATION_UNAVAILABLE)} or one bounded opaque sha256 token.`
+    );
+  }
+  return value;
+}
 
 /**
  * Validate one logical-instance inspection. The instance key is a stable
@@ -728,12 +747,53 @@ export function validateInstanceInspection(inspection, driver) {
     if (typeof routes !== "object" || Array.isArray(routes)) {
       throw new Error(`${label} route facts must be an object or null.`);
     }
-    if (JSON.stringify(routes).length > MAX_INSTANCE_ROUTE_FACTS_BYTES) {
-      throw new Error(`${label} route facts exceed their durable bound.`);
+  }
+  if (inspection.capabilityProvenance == null || inspection.inspectionGeneration == null) {
+    throw new Error(`${label} requires current capability provenance and inspection generation.`);
+  }
+  const capabilityProvenance = validateRouteCapabilityProvenance(
+    inspection.capabilityProvenance, `${label} capability provenance`
+  );
+  const inspectionGeneration = validateInspectionGeneration(inspection.inspectionGeneration, `${label} generation`);
+  const canonicalRoutes = routes == null ? null : canonicalBoundedOpaqueField(routes, {
+    label: `${label} route facts`, maxBytes: MAX_INSTANCE_ROUTE_FACTS_BYTES,
+  });
+  if (canonicalRoutes != null && Buffer.byteLength(JSON.stringify(canonicalRoutes), "utf8") > MAX_INSTANCE_ROUTE_FACTS_BYTES) {
+    throw new Error(`${label} route facts exceed their durable bound.`);
+  }
+  if (inspection.readiness === "ready") {
+    if (canonicalRoutes == null) {
+      throw new Error(`${label} ready instance requires exact route facts.`);
+    }
+    const models = canonicalRoutes.models;
+    const effortsByModel = canonicalRoutes.effortsByModel;
+    if (!Array.isArray(models) || models.length === 0 || !models.every(isBoundedRouteText)) {
+      throw new Error(`${label} ready route facts require non-empty bounded models.`);
+    }
+    if (new Set(models).size !== models.length) {
+      throw new Error(`${label} ready route facts declare duplicate models.`);
+    }
+    if (!effortsByModel || typeof effortsByModel !== "object" || Array.isArray(effortsByModel)) {
+      throw new Error(`${label} ready route facts require per-model efforts.`);
+    }
+    const effortModels = Object.keys(effortsByModel);
+    if (effortModels.length !== models.length ||
+        effortModels.some((model) => !models.includes(model)) ||
+        models.some((model) => !Object.hasOwn(effortsByModel, model))) {
+      throw new Error(`${label} ready route models and per-model efforts must have exact keys.`);
+    }
+    for (const model of models) {
+      const efforts = effortsByModel[model];
+      if (!Array.isArray(efforts) || efforts.length === 0 || !efforts.every(isBoundedRouteAtom)) {
+        throw new Error(`${label} ready route ${JSON.stringify(model)} requires non-empty bounded exact efforts.`);
+      }
+      if (new Set(efforts).size !== efforts.length) {
+        throw new Error(`${label} ready route ${JSON.stringify(model)} declares duplicate efforts.`);
+      }
     }
   }
   for (const key of Object.keys(inspection)) {
-    if (!["harnessId", "instanceKey", "readiness", "liveValidated", "maturity", "detailCode", "routes"].includes(key)) {
+    if (!["harnessId", "instanceKey", "readiness", "liveValidated", "maturity", "detailCode", "routes", "capabilityProvenance", "inspectionGeneration"].includes(key)) {
       throw new Error(`${label} declares an unknown field: ${key}.`);
     }
   }
@@ -744,7 +804,57 @@ export function validateInstanceInspection(inspection, driver) {
     liveValidated: inspection.liveValidated,
     maturity: inspection.maturity,
     detailCode: inspection.detailCode,
-    routes: routes == null ? null : Object.freeze({ ...routes }),
+    routes: canonicalRoutes,
+    capabilityProvenance,
+    inspectionGeneration,
+  });
+}
+
+/**
+ * Bind the route snapshot to the exact completed inspection that admitted it.
+ * An inspection itself cannot prove a session-negotiated dimension: that fact
+ * exists only after the accepted native session, so a route may not claim it.
+ */
+export function inspectionEvidenceForRoute(route, inspection, driver) {
+  const validatedInspection = validateInstanceInspection(inspection, driver);
+  if (route?.instanceKey !== validatedInspection.instanceKey) {
+    throw new Error("Route inspection evidence belongs to another logical instance.");
+  }
+  if (JSON.stringify(validatedInspection.capabilityProvenance) !==
+      JSON.stringify(route?.capabilities?.provenance ?? null)) {
+    throw new Error("Route inspection provenance does not match the accepted execution route.");
+  }
+  if (!validatedInspection.liveValidated && Object.values(route?.capabilities?.provenance ?? {}).includes("inspection_proven")) {
+    throw new Error("Route claims inspection-proven capability provenance without a live inspection receipt.");
+  }
+  return validateRouteInspectionEvidence({
+    generation: validatedInspection.inspectionGeneration,
+    capabilities: route?.capabilities,
+  }, route);
+}
+
+/** Validate the bounded evidence retained with one new attempt. */
+export function validateRouteInspectionEvidence(evidence, route, label = "Route inspection evidence") {
+  const fields = snapshotClosedPlainObject(evidence, ["generation", "capabilities"], label);
+  const capabilities = validateRouteCapabilitySnapshot(route?.capabilities, `${label} route capabilities`);
+  if (capabilities.capabilitySchemaVersion !== ROUTE_CAPABILITY_SCHEMA_VERSION || !capabilities.provenance) {
+    throw new Error(`${label} requires current capability-schema v${ROUTE_CAPABILITY_SCHEMA_VERSION} provenance.`);
+  }
+  const evidenceCapabilities = validateRouteCapabilitySnapshot(
+    fields.capabilities, `${label} capabilities`
+  );
+  if (evidenceCapabilities.capabilitySchemaVersion !== ROUTE_CAPABILITY_SCHEMA_VERSION ||
+      JSON.stringify(evidenceCapabilities) !== JSON.stringify(capabilities)) {
+    throw new Error(`${label} capabilities do not exactly match the attempt execution route.`);
+  }
+  for (const value of Object.values(evidenceCapabilities.provenance)) {
+    if (value === "session_negotiated") {
+      throw new Error(`${label} cannot claim session-negotiated provenance before an exact accepted native session.`);
+    }
+  }
+  return Object.freeze({
+    generation: validateInspectionGeneration(fields.generation, `${label} generation`),
+    capabilities: evidenceCapabilities,
   });
 }
 
@@ -784,24 +894,35 @@ export function validateCanonicalRoute(route, { driver, inspection, request }) {
       );
     }
   }
-  if (Object.hasOwn(request, "effort") && route.effort !== request.effort) {
+  if (!isBoundedRouteAtom(request.effort)) {
+    throw new Error(`${label} request must state one explicit effort.`);
+  }
+  if (route.effort !== request.effort) {
     throw new Error(`${label} effective effort ${JSON.stringify(route.effort ?? null)} does not match the requested ${JSON.stringify(request.effort)}.`);
   }
-  if (route.effort != null && (typeof route.effort !== "string" || !route.effort.trim() || route.effort !== route.effort.trim())) {
+  if (!isBoundedRouteAtom(route.effort)) {
     throw new Error(`${label} must record one effective native effort.`);
+  }
+  const validatedInspection = validateInstanceInspection(inspection, driver);
+  if (validatedInspection.readiness !== "ready" ||
+      !validatedInspection.routes.models.includes(route.model) ||
+      !validatedInspection.routes.effortsByModel[route.model].includes(route.effort)) {
+    throw new Error(`${label} model and effort must be freshly advertised by the admitted instance.`);
   }
   const capabilities = assertDriverRouteCoherence(driver, route.capabilities);
   assertAdmittedInteraction(capabilities, label);
-  return Object.freeze({
+  const canonical = Object.freeze({
     harnessId: route.harnessId,
     instanceKey: route.instanceKey,
     model: route.model,
     topology: route.topology,
     authority: route.authority,
     driverVersion: route.driverVersion,
-    ...(route.effort == null ? {} : { effort: route.effort }),
+    effort: route.effort,
     capabilities,
   });
+  inspectionEvidenceForRoute(canonical, validatedInspection, driver);
+  return canonical;
 }
 
 /**

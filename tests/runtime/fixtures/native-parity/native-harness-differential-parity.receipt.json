@@ -1,0 +1,856 @@
+{
+  "schema": "harnessdock.native-harness-differential-parity.v2",
+  "cells": [
+    {
+      "harness": "claude-code",
+      "driverVersion": "claude-code@3",
+      "capabilitySchemaVersion": 3,
+      "dimension": "exact_model_effort_inventory",
+      "localEvidence": [
+        {
+          "label": "claude-differential-receipt.json#inventoryWitness",
+          "digest": "sha256:dda06c657d19b764c99cc5db7c2babeeb128cadc5a6b17c25a29566314062aee"
+        }
+      ],
+      "directSource": "Claude Agent SDK initialization witness",
+      "harnessdockSource": "Claude Driver route revalidation",
+      "artifactDigest": "sha256:cc8861ce03c84f3e106d2853c438ccfd3cdb36ce102e47df9c410b20ef5e3b27",
+      "mode": "zero-prompt native initialization witness",
+      "comparator": "exact native selectable model and per-model effort inventory",
+      "result": "pass",
+      "contentDigest": "sha256:e75cdf98cb2d1c96bf47be7b7e97aad7411cd98c523473e8e5c48a38ce623703"
+    },
+    {
+      "harness": "claude-code",
+      "driverVersion": "claude-code@3",
+      "capabilitySchemaVersion": 3,
+      "dimension": "argv_environment_or_request_transport",
+      "localEvidence": [
+        {
+          "label": "claude-differential-receipt.json#provenRows/baseline_argv_environment",
+          "digest": "sha256:dda06c657d19b764c99cc5db7c2babeeb128cadc5a6b17c25a29566314062aee"
+        }
+      ],
+      "directSource": "independent Claude stream-json control fixture",
+      "harnessdockSource": "Claude Driver differential receipt",
+      "artifactDigest": "sha256:3b88104404aeb5547891254498db107ebfce5e086d4ca4850513dbae7a0edf91",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "exact argv and allowlisted environment comparison",
+      "result": "pass",
+      "contentDigest": "sha256:a537184c0a33048948c77ddc28b6eab5b2cd5c1fb1448ca6fb92847cd32c007e"
+    },
+    {
+      "harness": "claude-code",
+      "driverVersion": "claude-code@3",
+      "capabilitySchemaVersion": 3,
+      "dimension": "native_configuration_inheritance",
+      "localEvidence": [
+        {
+          "label": "claude-differential-receipt.json#provenRows/benign_config_inheritance_witness",
+          "digest": "sha256:dda06c657d19b764c99cc5db7c2babeeb128cadc5a6b17c25a29566314062aee"
+        }
+      ],
+      "directSource": "independent Claude stream-json control fixture",
+      "harnessdockSource": "Claude Driver differential receipt",
+      "artifactDigest": "sha256:eb1eacb0b2bccd8807192de4e9088e62626b3ca705d2becc94e075f4612aa88b",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "benign native configuration witness comparison",
+      "result": "pass",
+      "contentDigest": "sha256:7fdd9dd3d09b70189e4d958d4cd01bca1540b20f381ce9ca14c41d2ddb7dbc8e"
+    },
+    {
+      "harness": "claude-code",
+      "driverVersion": "claude-code@3",
+      "capabilitySchemaVersion": 3,
+      "dimension": "prompt_authority_delta",
+      "localEvidence": [
+        {
+          "label": "claude-differential-receipt.json#provenRows/task_native_input",
+          "digest": "sha256:dda06c657d19b764c99cc5db7c2babeeb128cadc5a6b17c25a29566314062aee"
+        },
+        {
+          "label": "claude-differential-receipt.json#provenRows/closed_harnessdock_policy_delta",
+          "digest": "sha256:dda06c657d19b764c99cc5db7c2babeeb128cadc5a6b17c25a29566314062aee"
+        },
+        {
+          "label": "claude-differential-receipt.json#provenRows/write_authority_delta",
+          "digest": "sha256:dda06c657d19b764c99cc5db7c2babeeb128cadc5a6b17c25a29566314062aee"
+        }
+      ],
+      "directSource": "independent Claude stream-json control fixture",
+      "harnessdockSource": "Claude Driver differential receipt",
+      "artifactDigest": "sha256:30ab45911008e9f07dbc3daf25442f6d7fd295af54aee08638cf122f752c6551",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "bounded task and authority-only native delta comparison",
+      "result": "pass",
+      "contentDigest": "sha256:6e8ed2c7dc2aaac66988d71232aa1a9917e9387fa6fe7dffcd63f273fc7b2db9"
+    },
+    {
+      "harness": "claude-code",
+      "driverVersion": "claude-code@3",
+      "capabilitySchemaVersion": 3,
+      "dimension": "event_tool_order",
+      "localEvidence": [
+        {
+          "label": "claude-differential-receipt.json#provenRows/ordered_stream_tool_events",
+          "digest": "sha256:dda06c657d19b764c99cc5db7c2babeeb128cadc5a6b17c25a29566314062aee"
+        }
+      ],
+      "directSource": "independent Claude stream-json control fixture",
+      "harnessdockSource": "Claude Driver differential receipt",
+      "artifactDigest": "sha256:e0358e4503e6f552978e727ad4e294cff4fc1af65c8b7a6a6d9366a484a38cb6",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "ordered native stream and tool comparison",
+      "result": "pass",
+      "contentDigest": "sha256:a0e405b93ea3ee0348fa8d035ecc0ab6667ee28b5fa7e75317dd225d2f7f683a"
+    },
+    {
+      "harness": "claude-code",
+      "driverVersion": "claude-code@3",
+      "capabilitySchemaVersion": 3,
+      "dimension": "interrupt",
+      "localEvidence": [
+        {
+          "label": "claude-differential-receipt.json#provenRows/interrupt_behavior",
+          "digest": "sha256:dda06c657d19b764c99cc5db7c2babeeb128cadc5a6b17c25a29566314062aee"
+        }
+      ],
+      "directSource": "independent Claude stream-json control fixture",
+      "harnessdockSource": "Claude Driver differential receipt",
+      "artifactDigest": "sha256:99d26a9a8677ed6d16b955418de6a7ff0b04e083dacf90c5e1cb8bdcfb87c02d",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "native interrupt terminal comparison",
+      "result": "pass",
+      "contentDigest": "sha256:2669f3a1d382240dc315ad5634e1f5f291cac00473138a184a2ade5ce99ce5d2"
+    },
+    {
+      "harness": "claude-code",
+      "driverVersion": "claude-code@3",
+      "capabilitySchemaVersion": 3,
+      "dimension": "exact_session_continuation",
+      "localEvidence": [
+        {
+          "label": "claude-differential-receipt.json#provenRows/exact_session_continuation",
+          "digest": "sha256:dda06c657d19b764c99cc5db7c2babeeb128cadc5a6b17c25a29566314062aee"
+        }
+      ],
+      "directSource": "independent Claude stream-json control fixture",
+      "harnessdockSource": "Claude Driver differential receipt",
+      "artifactDigest": "sha256:2aced0b6936767a2014b057101b18c743694fedf50cbe907233c665b2bc80feb",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "same native session and distinct provider-native continuation message/result identities",
+      "result": "pass",
+      "contentDigest": "sha256:33128b5be693c9262a856a8a43e739f6d632b4688784f12caab1460059e9967d"
+    },
+    {
+      "harness": "claude-code",
+      "driverVersion": "claude-code@3",
+      "capabilitySchemaVersion": 3,
+      "dimension": "cross_process_turn_observation_or_reconciliation",
+      "localEvidence": [
+        {
+          "label": "claude-differential-receipt.json#notApplicable/oldTurnObservation",
+          "digest": "sha256:dda06c657d19b764c99cc5db7c2babeeb128cadc5a6b17c25a29566314062aee"
+        }
+      ],
+      "directSource": "independent Claude stream-json control fixture",
+      "harnessdockSource": "Claude Driver differential receipt",
+      "artifactDigest": "sha256:86638fc0d028b643d9605a112360f89bf4a555f2605f1cd0800b6e156be5cbe4",
+      "mode": "capability-derived",
+      "comparator": "capability snapshot unavailability",
+      "result": "not_applicable",
+      "notApplicableBasis": {
+        "capability": "turnObservation",
+        "observed": "unavailable"
+      },
+      "contentDigest": "sha256:4580f80f2312676bfdf1c7626dcaf4daf49de7a9a11fb7921edb96c7d05cef48"
+    },
+    {
+      "harness": "claude-code",
+      "driverVersion": "claude-code@3",
+      "capabilitySchemaVersion": 3,
+      "dimension": "automatic_recovery_exact_session_transport",
+      "localEvidence": [
+        {
+          "label": "claude-differential-receipt.json#notApplicable/oldExactSessionTransportRecovery",
+          "digest": "sha256:dda06c657d19b764c99cc5db7c2babeeb128cadc5a6b17c25a29566314062aee"
+        }
+      ],
+      "directSource": "independent Claude stream-json control fixture",
+      "harnessdockSource": "Claude Driver differential receipt",
+      "artifactDigest": "sha256:1bcee04849aef1e0508a0faeced27672a068e03001422c3768ee0c1ce668d2b0",
+      "mode": "capability-derived",
+      "comparator": "capability snapshot unavailability",
+      "result": "not_applicable",
+      "notApplicableBasis": {
+        "capability": "automaticRecovery",
+        "observed": "same_session_recovery_prompt"
+      },
+      "contentDigest": "sha256:34cd9384fca104ca030b96dccedc39679848f104be6fe62af345d2d566c993f4"
+    },
+    {
+      "harness": "claude-code",
+      "driverVersion": "claude-code@3",
+      "capabilitySchemaVersion": 3,
+      "dimension": "same_session_recovery_prompt",
+      "localEvidence": [
+        {
+          "label": "claude-differential-receipt.json#provenRows/same_session_recovery_prompt",
+          "digest": "sha256:dda06c657d19b764c99cc5db7c2babeeb128cadc5a6b17c25a29566314062aee"
+        }
+      ],
+      "directSource": "independent Claude stream-json control fixture",
+      "harnessdockSource": "Claude Driver differential receipt",
+      "artifactDigest": "sha256:97232437435667beac077bfbce348eb5784aeed10600aa84e7bb6bbc66fb15ec",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "same session, one generated recovery prompt, no duplicate original input, and distinct native message/result identities",
+      "result": "pass",
+      "contentDigest": "sha256:800d3fbc3c54e3db218855d3503ae9a65018795f492feee39cdf7e64f5431d49"
+    },
+    {
+      "harness": "claude-code",
+      "driverVersion": "claude-code@3",
+      "capabilitySchemaVersion": 3,
+      "dimension": "terminal_classification",
+      "localEvidence": [
+        {
+          "label": "claude-differential-receipt.json#provenRows/terminal_classification",
+          "digest": "sha256:dda06c657d19b764c99cc5db7c2babeeb128cadc5a6b17c25a29566314062aee"
+        }
+      ],
+      "directSource": "independent Claude stream-json control fixture",
+      "harnessdockSource": "Claude Driver differential receipt",
+      "artifactDigest": "sha256:ef16bba7870d9cab763e0faedc95e7716b0d1bcbb4a681d3b1f3c83b1979c005",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "closed native terminal comparison",
+      "result": "pass",
+      "contentDigest": "sha256:5bf74be9302da3fb7f91738f15812352d3b9e1adbf5e23c0a8f0159ca2fb070b"
+    },
+    {
+      "harness": "claude-code",
+      "driverVersion": "claude-code@3",
+      "capabilitySchemaVersion": 3,
+      "dimension": "route_drift",
+      "localEvidence": [
+        {
+          "label": "claude-differential-receipt.json#provenRows/route_drift",
+          "digest": "sha256:dda06c657d19b764c99cc5db7c2babeeb128cadc5a6b17c25a29566314062aee"
+        }
+      ],
+      "directSource": "independent Claude stream-json control fixture",
+      "harnessdockSource": "Claude Driver differential receipt",
+      "artifactDigest": "sha256:340abd5a33b15c5d23f62ff83489364d74057f99ef23f857fee1d5a618a3545d",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "fresh native route drift refusal",
+      "result": "pass",
+      "contentDigest": "sha256:f8e87dadfae0d62026fbc292e4c124677510842f4e7e593c0f1999dc3e2639bd"
+    },
+    {
+      "harness": "claude-code",
+      "driverVersion": "claude-code@3",
+      "capabilitySchemaVersion": 3,
+      "dimension": "native_usage_provenance",
+      "localEvidence": [
+        {
+          "label": "claude-differential-receipt.json#provenRows/provider_native_usage_source_fields",
+          "digest": "sha256:dda06c657d19b764c99cc5db7c2babeeb128cadc5a6b17c25a29566314062aee"
+        }
+      ],
+      "directSource": "independent Claude stream-json control fixture",
+      "harnessdockSource": "Claude Driver differential receipt",
+      "artifactDigest": "sha256:22b7b7474138442c1e33ee705ad6eec87d5c9ba633d420d115b5991d7cca9891",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "provider-native usage source comparison",
+      "result": "pass",
+      "contentDigest": "sha256:ecdc304a01e22d74ebdf428310c54257b5fa224ef2b5bbd69dd4ed6dc968ab53"
+    },
+    {
+      "harness": "claude-code",
+      "driverVersion": "claude-code@3",
+      "capabilitySchemaVersion": 3,
+      "dimension": "process_lifecycle",
+      "localEvidence": [
+        {
+          "label": "claude-differential-receipt.json#provenRows/process_lifecycle_cleanup",
+          "digest": "sha256:dda06c657d19b764c99cc5db7c2babeeb128cadc5a6b17c25a29566314062aee"
+        }
+      ],
+      "directSource": "independent Claude stream-json control fixture",
+      "harnessdockSource": "Claude Driver differential receipt",
+      "artifactDigest": "sha256:035345e3f682b3841105ff3a36a8c3659c4ddc9f6fcb134805fd52208d45d100",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "native process cleanup comparison",
+      "result": "pass",
+      "contentDigest": "sha256:a6327b1898108111ec6a6c263c806adb04ccf45db37a03798ba87f4a4fbc9e6e"
+    },
+    {
+      "harness": "pi",
+      "driverVersion": "pi@2",
+      "capabilitySchemaVersion": 3,
+      "dimension": "exact_model_effort_inventory",
+      "localEvidence": [
+        {
+          "label": "pi-native-differential-receipt.json#provenRows/exact_model_per_model_effort_inventory",
+          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+        }
+      ],
+      "directSource": "manual Pi JSONL client",
+      "harnessdockSource": "Pi Driver receipt and native invocation capture",
+      "artifactDigest": "sha256:2cfee9ad1f8950e863a4ba48fed33f5818060d4f56416d19ccc437bbc3abc13a",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "exact native model and effort inventory comparison",
+      "result": "pass",
+      "contentDigest": "sha256:60b97d406fd4fa275de7b8a9a9d4d22a4e601b314dc3e913115882e247da36d3"
+    },
+    {
+      "harness": "pi",
+      "driverVersion": "pi@2",
+      "capabilitySchemaVersion": 3,
+      "dimension": "argv_environment_or_request_transport",
+      "localEvidence": [
+        {
+          "label": "pi-native-differential-receipt.json#provenRows/argv_environment",
+          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+        }
+      ],
+      "directSource": "manual Pi JSONL client",
+      "harnessdockSource": "Pi Driver receipt and native invocation capture",
+      "artifactDigest": "sha256:c749643e32bf2f28f89459b2f867d090cc512f3a29b5639fd66f8d9d46fadfa4",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "exact argv and environment comparison",
+      "result": "pass",
+      "contentDigest": "sha256:d1489587d0f4058503bb6e753cab6f614598a6ad92cacdf1550b76ae9c00ebfc"
+    },
+    {
+      "harness": "pi",
+      "driverVersion": "pi@2",
+      "capabilitySchemaVersion": 3,
+      "dimension": "native_configuration_inheritance",
+      "localEvidence": [
+        {
+          "label": "pi-native-differential-receipt.json#provenRows/configuration_inheritance_witness",
+          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+        }
+      ],
+      "directSource": "manual Pi JSONL client",
+      "harnessdockSource": "Pi Driver receipt and native invocation capture",
+      "artifactDigest": "sha256:7857037aeca0cfbd9e157ad528cf002c458c170ea14e6e1f466685cecc57edf8",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "deterministic native configuration sentinel comparison",
+      "result": "pass",
+      "contentDigest": "sha256:02fe955a3e0de29ea5b618ca400caaa9083fec888b29d6ea47708d9882abf6e4"
+    },
+    {
+      "harness": "pi",
+      "driverVersion": "pi@2",
+      "capabilitySchemaVersion": 3,
+      "dimension": "prompt_authority_delta",
+      "localEvidence": [
+        {
+          "label": "pi-native-differential-receipt.json#provenRows/prompt_authority_native_input",
+          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+        }
+      ],
+      "directSource": "Pi Driver behavioral_read_only native capture",
+      "harnessdockSource": "Pi Driver behavioral_write native capture",
+      "artifactDigest": "sha256:d7739414cb769de4cac13b1a93d6a0a347cbb847c1335d0848f9bcc31a4d21c2",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "authority-only native input comparison",
+      "result": "pass",
+      "contentDigest": "sha256:3b3cc2329d908f51760159ddfbfb9cf290d4abde834090eb28c54d6806f8d688"
+    },
+    {
+      "harness": "pi",
+      "driverVersion": "pi@2",
+      "capabilitySchemaVersion": 3,
+      "dimension": "event_tool_order",
+      "localEvidence": [
+        {
+          "label": "pi-native-differential-receipt.json#provenRows/ordered_events",
+          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+        }
+      ],
+      "directSource": "manual Pi JSONL client",
+      "harnessdockSource": "Pi Driver receipt and native invocation capture",
+      "artifactDigest": "sha256:3bd86eca26bcc81cb0beff57f36db922c6ac96e7f02c3aef2cd1cc7a635a2572",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "ordered native event comparison",
+      "result": "pass",
+      "contentDigest": "sha256:54ea0276014041f2479cc22822b01b1746810c32a86199bd4b84e451f3679fdd"
+    },
+    {
+      "harness": "pi",
+      "driverVersion": "pi@2",
+      "capabilitySchemaVersion": 3,
+      "dimension": "interrupt",
+      "localEvidence": [
+        {
+          "label": "pi-native-differential-receipt.json#provenRows/interrupt_request_behavior",
+          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+        }
+      ],
+      "directSource": "manual Pi JSONL client",
+      "harnessdockSource": "Pi Driver receipt and native invocation capture",
+      "artifactDigest": "sha256:fdab8c28f83353501f843182182990095af78d649d80762fa9bc36437064937c",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "native interrupt request comparison",
+      "result": "pass",
+      "contentDigest": "sha256:37c1c09f90fc05bed41cfa8572d2492e25e639b9d77797406da06f3a418b9782"
+    },
+    {
+      "harness": "pi",
+      "driverVersion": "pi@2",
+      "capabilitySchemaVersion": 3,
+      "dimension": "exact_session_continuation",
+      "localEvidence": [
+        {
+          "label": "pi-native-differential-receipt.json#provenRows/exact_session_continuation",
+          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+        }
+      ],
+      "directSource": "manual Pi JSONL client",
+      "harnessdockSource": "Pi Driver receipt and native invocation capture",
+      "artifactDigest": "sha256:4271e1e663bf7484d63c9e7c50390abf0cfa36bd513fdfaad71c43a42a219f2d",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "same native session and distinct provider-native history identities",
+      "result": "pass",
+      "contentDigest": "sha256:6bd48434287a74f9f7e1108d00ddb4bb894d3783b531d63ebbbe32a2caab1055"
+    },
+    {
+      "harness": "pi",
+      "driverVersion": "pi@2",
+      "capabilitySchemaVersion": 3,
+      "dimension": "cross_process_turn_observation_or_reconciliation",
+      "localEvidence": [
+        {
+          "label": "pi-native-differential-receipt.json#notApplicableRows/cross_process_turn_observation_or_reconciliation",
+          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+        }
+      ],
+      "directSource": "accepted Pi capability snapshot",
+      "harnessdockSource": "Pi Driver inspection receipt",
+      "artifactDigest": "sha256:ec833b19d159ba681e50bda3b3397116bad0053bb383e42149b8ac22a17a580f",
+      "mode": "capability-derived",
+      "comparator": "capability snapshot unavailability",
+      "result": "not_applicable",
+      "notApplicableBasis": {
+        "capability": "turnObservation",
+        "observed": "unavailable"
+      },
+      "contentDigest": "sha256:d96c16f4f513fac351af8f9e9d70551350691f790b2c34f3fe5a50bc262e3dcd"
+    },
+    {
+      "harness": "pi",
+      "driverVersion": "pi@2",
+      "capabilitySchemaVersion": 3,
+      "dimension": "automatic_recovery_exact_session_transport",
+      "localEvidence": [
+        {
+          "label": "pi-native-differential-receipt.json#notApplicableRows/automatic_recovery_exact_session_transport",
+          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+        }
+      ],
+      "directSource": "accepted Pi capability snapshot",
+      "harnessdockSource": "Pi Driver inspection receipt",
+      "artifactDigest": "sha256:30a0924a3360be687d1df9fcbbfdff62c01bc0fd14036ab9076cf7f451568666",
+      "mode": "capability-derived",
+      "comparator": "capability snapshot unavailability",
+      "result": "not_applicable",
+      "notApplicableBasis": {
+        "capability": "automaticRecovery",
+        "observed": "none"
+      },
+      "contentDigest": "sha256:a67f65346fb034b2e51b3d76339878b53e279316b42c82a63bce63ab2b4e0347"
+    },
+    {
+      "harness": "pi",
+      "driverVersion": "pi@2",
+      "capabilitySchemaVersion": 3,
+      "dimension": "same_session_recovery_prompt",
+      "localEvidence": [
+        {
+          "label": "pi-native-differential-receipt.json#notApplicableRows/same_session_recovery_prompt",
+          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+        }
+      ],
+      "directSource": "accepted Pi capability snapshot",
+      "harnessdockSource": "Pi Driver inspection receipt",
+      "artifactDigest": "sha256:30a0924a3360be687d1df9fcbbfdff62c01bc0fd14036ab9076cf7f451568666",
+      "mode": "capability-derived",
+      "comparator": "capability snapshot unavailability",
+      "result": "not_applicable",
+      "notApplicableBasis": {
+        "capability": "automaticRecovery",
+        "observed": "none"
+      },
+      "contentDigest": "sha256:5e843be6113284242805f1ecd6b873738e0c52dd084ace735624a9e9dfa4b3b2"
+    },
+    {
+      "harness": "pi",
+      "driverVersion": "pi@2",
+      "capabilitySchemaVersion": 3,
+      "dimension": "terminal_classification",
+      "localEvidence": [
+        {
+          "label": "pi-native-differential-receipt.json#provenRows/terminal_classification",
+          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+        }
+      ],
+      "directSource": "manual Pi JSONL client",
+      "harnessdockSource": "Pi Driver receipt and native invocation capture",
+      "artifactDigest": "sha256:febea5e496d0ef137047b21a4698e4942abee2dc7a328f431b26b40d2683c514",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "closed native terminal comparison",
+      "result": "pass",
+      "contentDigest": "sha256:94180d78f288254a64fcd7207da8308bda809701669d4782866f54d432f8d6fe"
+    },
+    {
+      "harness": "pi",
+      "driverVersion": "pi@2",
+      "capabilitySchemaVersion": 3,
+      "dimension": "route_drift",
+      "localEvidence": [
+        {
+          "label": "pi-native-differential-receipt.json#provenRows/route_drift",
+          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+        }
+      ],
+      "directSource": "manual Pi JSONL client",
+      "harnessdockSource": "Pi Driver receipt and native invocation capture",
+      "artifactDigest": "sha256:5ec5ee9adade96209dce2128df5841b6cc0505c200966e15aff7ee9c0276aff7",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "fresh native route drift refusal",
+      "result": "pass",
+      "contentDigest": "sha256:1636aca862f807338e3f2f0bf4368607dda460db9115b7384e2e35a336543230"
+    },
+    {
+      "harness": "pi",
+      "driverVersion": "pi@2",
+      "capabilitySchemaVersion": 3,
+      "dimension": "native_usage_provenance",
+      "localEvidence": [
+        {
+          "label": "pi-native-differential-receipt.json#provenRows/native_usage_source_fields",
+          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+        }
+      ],
+      "directSource": "manual Pi JSONL client",
+      "harnessdockSource": "Pi Driver receipt and native invocation capture",
+      "artifactDigest": "sha256:189ccd976e55aa17d790ab7a42cd17888e3bd402202f5dc2aedd1272db2dac4a",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "provider-native usage source comparison",
+      "result": "pass",
+      "contentDigest": "sha256:3b29fe9fb860a089975516dcb70d88972ac9fedc9b23975a065c184f87261669"
+    },
+    {
+      "harness": "pi",
+      "driverVersion": "pi@2",
+      "capabilitySchemaVersion": 3,
+      "dimension": "process_lifecycle",
+      "localEvidence": [
+        {
+          "label": "pi-native-differential-receipt.json#provenRows/lifecycle_process_cleanup",
+          "digest": "sha256:3eb8930b5e6e4f4f53fa240950b630cfd767bdf222e9131340f9aa6a5267fdfe"
+        }
+      ],
+      "directSource": "manual Pi JSONL client",
+      "harnessdockSource": "Pi Driver receipt and native invocation capture",
+      "artifactDigest": "sha256:cc6f5e5fd791d50e11f6babbb1044d8f4e1965aa83e804e33c487ad8d5674f6c",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "native process cleanup comparison",
+      "result": "pass",
+      "contentDigest": "sha256:665dd941cadbfb9016a20417bb2ed78860f6ec67b77ed747b2d4d43848f3686e"
+    },
+    {
+      "harness": "opencode",
+      "driverVersion": "opencode@1",
+      "capabilitySchemaVersion": 3,
+      "dimension": "exact_model_effort_inventory",
+      "localEvidence": [
+        {
+          "label": "opencode-native-differential-parity.receipt.json#provenRows/exact_model_effort_inventory",
+          "digest": "sha256:1baea84328c18b881299015202d20fe3b4a10d812e0f32d2549c1324442149cf"
+        }
+      ],
+      "directSource": "independent OpenCode Server fixture",
+      "harnessdockSource": "OpenCode Driver differential receipt",
+      "artifactDigest": "sha256:f40dd36c9bbef399fe2cfac15a913e8b17d3cc6e78bf1bcab888cc496c4ba8e3",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "exact native model and effort inventory comparison",
+      "result": "pass",
+      "contentDigest": "sha256:582d882ab079c7d9dcf79e6058d999355c9f9e36bdf92ba5e6693caa72e26296"
+    },
+    {
+      "harness": "opencode",
+      "driverVersion": "opencode@1",
+      "capabilitySchemaVersion": 3,
+      "dimension": "argv_environment_or_request_transport",
+      "localEvidence": [
+        {
+          "label": "opencode-native-differential-parity.receipt.json#provenRows/request_transport_environment",
+          "digest": "sha256:1baea84328c18b881299015202d20fe3b4a10d812e0f32d2549c1324442149cf"
+        }
+      ],
+      "directSource": "independent OpenCode Server fixture",
+      "harnessdockSource": "OpenCode Driver differential receipt",
+      "artifactDigest": "sha256:65a3206fde040ccf995746b300865f332b1d42686565b40b7b1da56ca892057a",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "exact normalized native request transport comparison",
+      "result": "pass",
+      "contentDigest": "sha256:2b7684d16a191bbe1e187aa362dbf6ff67b15550e58b3a91c2435c2b32495ac6"
+    },
+    {
+      "harness": "opencode",
+      "driverVersion": "opencode@1",
+      "capabilitySchemaVersion": 3,
+      "dimension": "native_configuration_inheritance",
+      "localEvidence": [
+        {
+          "label": "opencode-native-differential-parity.receipt.json#provenRows/native_configuration_inheritance",
+          "digest": "sha256:1baea84328c18b881299015202d20fe3b4a10d812e0f32d2549c1324442149cf"
+        }
+      ],
+      "directSource": "independent OpenCode Server fixture",
+      "harnessdockSource": "OpenCode Driver differential receipt",
+      "artifactDigest": "sha256:5b35d6fbb27cadddd353e9bd71fd28af7c269662412e467c8d144147d7b6863c",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "independent native config and resolved Agent witness comparison",
+      "result": "pass",
+      "contentDigest": "sha256:cbbfc5e67be67fbd30bda682916323298894d382d52cdb4bf75d52dfc3c5f4ba"
+    },
+    {
+      "harness": "opencode",
+      "driverVersion": "opencode@1",
+      "capabilitySchemaVersion": 3,
+      "dimension": "prompt_authority_delta",
+      "localEvidence": [
+        {
+          "label": "opencode-native-differential-parity.receipt.json#provenRows/driver_authority_non_prompt_invariance",
+          "digest": "sha256:1baea84328c18b881299015202d20fe3b4a10d812e0f32d2549c1324442149cf"
+        }
+      ],
+      "directSource": "independent OpenCode Server fixture",
+      "harnessdockSource": "OpenCode Driver differential receipt",
+      "artifactDigest": "sha256:56d8943d781fa2e7ba4376171316af73df9976aff38e7df1bba5f85bb7c8452b",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "authority-only non-prompt request comparison",
+      "result": "pass",
+      "contentDigest": "sha256:ff44704e3e0548a9d8993b91b593f0a9b15e82906c6a6c6489ab1b6b31e7534c"
+    },
+    {
+      "harness": "opencode",
+      "driverVersion": "opencode@1",
+      "capabilitySchemaVersion": 3,
+      "dimension": "event_tool_order",
+      "localEvidence": [
+        {
+          "label": "opencode-native-differential-parity.receipt.json#provenRows/ordered_request_event_tool_observations",
+          "digest": "sha256:1baea84328c18b881299015202d20fe3b4a10d812e0f32d2549c1324442149cf"
+        }
+      ],
+      "directSource": "independent OpenCode Server fixture",
+      "harnessdockSource": "OpenCode Driver differential receipt",
+      "artifactDigest": "sha256:4d05ce22e87ddd8cbdef75fce6d37e1a93310b2de23cec8571aafba7d47f8170",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "ordered native request event and tool comparison",
+      "result": "pass",
+      "contentDigest": "sha256:ab7b1543a8199fa11a2e196ddec0401c9d3ec24cbb6c5d635e63fdd8482f0f2b"
+    },
+    {
+      "harness": "opencode",
+      "driverVersion": "opencode@1",
+      "capabilitySchemaVersion": 3,
+      "dimension": "interrupt",
+      "localEvidence": [
+        {
+          "label": "opencode-native-differential-parity.receipt.json#notApplicableRows/interrupt",
+          "digest": "sha256:1baea84328c18b881299015202d20fe3b4a10d812e0f32d2549c1324442149cf"
+        }
+      ],
+      "directSource": "independent OpenCode Server fixture",
+      "harnessdockSource": "OpenCode Driver differential receipt",
+      "artifactDigest": "sha256:6f3355b1410b82c9b8ca6741cdf4d83a272277f56a84d563c4c4b3560d5fccf9",
+      "mode": "capability-derived",
+      "comparator": "capability snapshot unavailability",
+      "result": "not_applicable",
+      "notApplicableBasis": {
+        "capability": "interruptRequest",
+        "observed": "unsupported"
+      },
+      "contentDigest": "sha256:7f2c2b4b36d7a2d98c2f564e5933c9d8a3cfe543c57de7397bf2c58ddf8bb3ec"
+    },
+    {
+      "harness": "opencode",
+      "driverVersion": "opencode@1",
+      "capabilitySchemaVersion": 3,
+      "dimension": "exact_session_continuation",
+      "localEvidence": [
+        {
+          "label": "opencode-native-differential-parity.receipt.json#notApplicableRows/exact_session_continuation",
+          "digest": "sha256:1baea84328c18b881299015202d20fe3b4a10d812e0f32d2549c1324442149cf"
+        }
+      ],
+      "directSource": "independent OpenCode Server fixture",
+      "harnessdockSource": "OpenCode Driver differential receipt",
+      "artifactDigest": "sha256:80a9051fbbd6430a1953815c562d399b0a436f59d72ba5663bb87629631f1e8e",
+      "mode": "capability-derived",
+      "comparator": "capability snapshot unavailability",
+      "result": "not_applicable",
+      "notApplicableBasis": {
+        "capability": "continuation",
+        "observed": "fresh_only"
+      },
+      "contentDigest": "sha256:70618501d2b1174f3a4f4f0bb01ecdb3064311a1dea8144fbb6f72ed687041f6"
+    },
+    {
+      "harness": "opencode",
+      "driverVersion": "opencode@1",
+      "capabilitySchemaVersion": 3,
+      "dimension": "cross_process_turn_observation_or_reconciliation",
+      "localEvidence": [
+        {
+          "label": "opencode-native-differential-parity.receipt.json#notApplicableRows/cross_process_turn_observation_or_reconciliation",
+          "digest": "sha256:1baea84328c18b881299015202d20fe3b4a10d812e0f32d2549c1324442149cf"
+        }
+      ],
+      "directSource": "independent OpenCode Server fixture",
+      "harnessdockSource": "OpenCode Driver differential receipt",
+      "artifactDigest": "sha256:56f1060ebc744e4287d7fb619e31ee159dac64846e4299d174dd56dc0d9e5dbe",
+      "mode": "capability-derived",
+      "comparator": "capability snapshot unavailability",
+      "result": "not_applicable",
+      "notApplicableBasis": {
+        "capability": "turnObservation",
+        "observed": "unavailable"
+      },
+      "contentDigest": "sha256:6acbcb88d0ed75fd0bd78d1d6f642eec29683443708836f4de573c9f670912ff"
+    },
+    {
+      "harness": "opencode",
+      "driverVersion": "opencode@1",
+      "capabilitySchemaVersion": 3,
+      "dimension": "automatic_recovery_exact_session_transport",
+      "localEvidence": [
+        {
+          "label": "opencode-native-differential-parity.receipt.json#notApplicableRows/automatic_recovery_exact_session_transport",
+          "digest": "sha256:1baea84328c18b881299015202d20fe3b4a10d812e0f32d2549c1324442149cf"
+        }
+      ],
+      "directSource": "independent OpenCode Server fixture",
+      "harnessdockSource": "OpenCode Driver differential receipt",
+      "artifactDigest": "sha256:0cac5bd2acca3e518df05cefd4e2f4be1b31669f225d29bb9da872d6df954f1a",
+      "mode": "capability-derived",
+      "comparator": "capability snapshot unavailability",
+      "result": "not_applicable",
+      "notApplicableBasis": {
+        "capability": "automaticRecovery",
+        "observed": "none"
+      },
+      "contentDigest": "sha256:b7471a20eb6a30425988bf35691d0ee90069995fa42ff8e34e55b020997b7707"
+    },
+    {
+      "harness": "opencode",
+      "driverVersion": "opencode@1",
+      "capabilitySchemaVersion": 3,
+      "dimension": "same_session_recovery_prompt",
+      "localEvidence": [
+        {
+          "label": "opencode-native-differential-parity.receipt.json#notApplicableRows/same_session_recovery_prompt",
+          "digest": "sha256:1baea84328c18b881299015202d20fe3b4a10d812e0f32d2549c1324442149cf"
+        }
+      ],
+      "directSource": "independent OpenCode Server fixture",
+      "harnessdockSource": "OpenCode Driver differential receipt",
+      "artifactDigest": "sha256:b5293c932dd3cb982643def4061827248fb42fbee35fd07d0cd8256c070e53a5",
+      "mode": "capability-derived",
+      "comparator": "capability snapshot unavailability",
+      "result": "not_applicable",
+      "notApplicableBasis": {
+        "capability": "automaticRecovery",
+        "observed": "none"
+      },
+      "contentDigest": "sha256:5772c735f90a11964dbec79c4b8f5eeff845ce81731eab4664313fb0a732a1a2"
+    },
+    {
+      "harness": "opencode",
+      "driverVersion": "opencode@1",
+      "capabilitySchemaVersion": 3,
+      "dimension": "terminal_classification",
+      "localEvidence": [
+        {
+          "label": "opencode-native-differential-parity.receipt.json#provenRows/terminal_classification",
+          "digest": "sha256:1baea84328c18b881299015202d20fe3b4a10d812e0f32d2549c1324442149cf"
+        }
+      ],
+      "directSource": "independent OpenCode Server fixture",
+      "harnessdockSource": "OpenCode Driver differential receipt",
+      "artifactDigest": "sha256:f3399d42ea3fdb7ae831cdbc1223ad7318d008fe6d584b7a3aa7c33b0983643f",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "closed native terminal comparison",
+      "result": "pass",
+      "contentDigest": "sha256:c7c25c226f88057e54c3c7b0384a1b8979e774a14af7776765886aac60ff11e2"
+    },
+    {
+      "harness": "opencode",
+      "driverVersion": "opencode@1",
+      "capabilitySchemaVersion": 3,
+      "dimension": "route_drift",
+      "localEvidence": [
+        {
+          "label": "opencode-native-differential-parity.receipt.json#provenRows/route_drift",
+          "digest": "sha256:1baea84328c18b881299015202d20fe3b4a10d812e0f32d2549c1324442149cf"
+        }
+      ],
+      "directSource": "independent OpenCode Server fixture",
+      "harnessdockSource": "OpenCode Driver differential receipt",
+      "artifactDigest": "sha256:939e47066dcc00584683ab35cd20f7e1b2c49680424603012c3f41a5937c94e5",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "fresh native route drift refusal",
+      "result": "pass",
+      "contentDigest": "sha256:7c1d0a4031631ab6cd57e3c7d1ce6f453bc4b9cc1aa25f9b110e99251ea29b02"
+    },
+    {
+      "harness": "opencode",
+      "driverVersion": "opencode@1",
+      "capabilitySchemaVersion": 3,
+      "dimension": "native_usage_provenance",
+      "localEvidence": [
+        {
+          "label": "opencode-native-differential-parity.receipt.json#provenRows/provider_native_usage_source_fields",
+          "digest": "sha256:1baea84328c18b881299015202d20fe3b4a10d812e0f32d2549c1324442149cf"
+        }
+      ],
+      "directSource": "independent OpenCode Server fixture",
+      "harnessdockSource": "OpenCode Driver differential receipt",
+      "artifactDigest": "sha256:7aab92e7b9562da41dd1d5e412668a73292c242ff1deae6f3a2fd70e264b81b0",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "provider-native usage source comparison",
+      "result": "pass",
+      "contentDigest": "sha256:96523b71f68b2adacf8fdeb4a21dbdd662db49080afdb4207fcbd64f001a0a4a"
+    },
+    {
+      "harness": "opencode",
+      "driverVersion": "opencode@1",
+      "capabilitySchemaVersion": 3,
+      "dimension": "process_lifecycle",
+      "localEvidence": [
+        {
+          "label": "opencode-native-differential-parity.receipt.json#provenRows/direct_executable_process_lifecycle_comparison",
+          "digest": "sha256:1baea84328c18b881299015202d20fe3b4a10d812e0f32d2549c1324442149cf"
+        },
+        {
+          "label": "opencode-native-differential-parity.receipt.json#provenRows/managed_service_process_lifecycle",
+          "digest": "sha256:1baea84328c18b881299015202d20fe3b4a10d812e0f32d2549c1324442149cf"
+        }
+      ],
+      "directSource": "independent OpenCode Server fixture",
+      "harnessdockSource": "OpenCode Driver differential receipt",
+      "artifactDigest": "sha256:6a350935ff40f1117a0dfbfa6369a163e038f4398fa69d65a6edfa56537c1ab1",
+      "mode": "zero-model deterministic native comparison",
+      "comparator": "direct executable comparison and managed Service guard suite",
+      "result": "pass",
+      "contentDigest": "sha256:a9140ce65ce9846bb4e2a75183b373fad4444e68cc4f3da2a530ac358f0639f7"
+    }
+  ],
+  "digest": "sha256:070c2f118085ddaddbafc6bbd05581832b34c46ee61c15603ad6b25956aa7b72"
+}

@@ -48,7 +48,9 @@ import {
   validateDriverV2,
   validateHarnessDriver,
   validateHarnessTurnResult,
+  validateCanonicalRoute,
   validateLiveHarnessTurn,
+  validateInstanceInspection,
   validateNormalizedTerminalResult,
   validatePreparedTurn,
 } from "../../runtime/harness-contract.mjs";
@@ -141,11 +143,135 @@ function routeCapabilities(overrides = {}) {
       leafEnforcement: "validated",
       nativeOrchestration: "validated",
     },
+    provenance: Object.fromEntries(
+      ROUTE_CAPABILITY_NAMES.map((name) => [name, "checkout_declared"]),
+    ),
     ...overrides,
   };
 }
 
 describe("Harness Driver contract", () => {
+  it("requires capability-schema v3 provenance and bounded inspection evidence", () => {
+    const provenance = Object.fromEntries(
+      ROUTE_CAPABILITY_NAMES.map((name) => [name, "checkout_declared"]),
+    );
+    const snapshot = {
+      capabilitySchemaVersion: 3,
+      driverMaturity: "experimental",
+      values: routeCapabilities().values,
+      maturity: routeCapabilities().maturity,
+      provenance,
+    };
+    assert.equal(ROUTE_CAPABILITY_SCHEMA_VERSION, 3);
+    assert.deepEqual(validateRouteCapabilitySnapshot(snapshot).provenance, provenance);
+
+    const { continuation: _missing, ...missing } = provenance;
+    assert.throws(
+      () => validateRouteCapabilitySnapshot({ ...snapshot, provenance: missing }),
+      /provenance|continuation/,
+    );
+    assert.throws(
+      () => validateRouteCapabilitySnapshot({ ...snapshot, provenance: { ...provenance, telepathy: "checkout_declared" } }),
+      /unknown capability provenance: telepathy/,
+    );
+
+    const inspection = validateInstanceInspection({
+      harnessId: "fake-service",
+      instanceKey: "tenant-alpha",
+      readiness: "ready",
+      liveValidated: true,
+      maturity: "experimental",
+      detailCode: "ready",
+      routes: { models: ["fake-service-standard"], effortsByModel: { "fake-service-standard": ["high"] } },
+      capabilityProvenance: provenance,
+      inspectionGeneration: "unavailable",
+    }, { harnessId: "fake-service" });
+    assert.equal(inspection.inspectionGeneration, "unavailable");
+    assert.deepEqual(inspection.capabilityProvenance, provenance);
+    for (const omitted of ["capabilityProvenance", "inspectionGeneration"]) {
+      const invalid = {
+        harnessId: "fake-service",
+        instanceKey: "tenant-alpha",
+        readiness: "ready",
+        liveValidated: true,
+        maturity: "experimental",
+        detailCode: "ready",
+        routes: { models: ["fake-service-standard"], effortsByModel: { "fake-service-standard": ["high"] } },
+        capabilityProvenance: provenance,
+        inspectionGeneration: "unavailable",
+      };
+      delete invalid[omitted];
+      assert.throws(() => validateInstanceInspection(invalid, { harnessId: "fake-service" }), /requires current capability provenance and inspection generation/);
+    }
+    assert.throws(() => validateInstanceInspection({
+      harnessId: "fake-service", instanceKey: "tenant-alpha", readiness: "ready", liveValidated: true,
+      maturity: "experimental", detailCode: "ready", routes: null,
+    }, { harnessId: "fake-service" }), /requires current capability provenance and inspection generation/);
+  });
+
+  it("rejects malformed ready route projections without rewriting native atoms", () => {
+    const provenance = routeCapabilities().provenance;
+    const base = {
+      harnessId: "fake-service",
+      instanceKey: "tenant-alpha",
+      readiness: "ready",
+      liveValidated: true,
+      maturity: "experimental",
+      detailCode: "ready",
+      capabilityProvenance: provenance,
+      inspectionGeneration: "unavailable",
+    };
+    const routes = {
+      models: ["first-model", "second-model"],
+      effortsByModel: { "first-model": ["unexpected-native-effort"], "second-model": ["other-native-effort"] },
+    };
+    const valid = validateInstanceInspection({ ...base, routes }, { harnessId: "fake-service" });
+    assert.deepEqual(valid.routes, routes);
+    for (const [name, malformed] of [
+      ["missing", { models: ["first-model", "second-model"], effortsByModel: { "first-model": ["high"] } }],
+      ["empty", { models: ["first-model"], effortsByModel: { "first-model": [] } }],
+      ["duplicate-model", { models: ["first-model", "first-model"], effortsByModel: { "first-model": ["high"] } }],
+      ["duplicate-effort", { models: ["first-model"], effortsByModel: { "first-model": ["high", "high"] } }],
+      ["orphan", { models: ["first-model"], effortsByModel: { "first-model": ["high"], "second-model": ["high"] } }],
+    ]) {
+      assert.throws(
+        () => validateInstanceInspection({ ...base, routes: malformed }, { harnessId: "fake-service" }),
+        /ready route|exact keys|duplicate/,
+        name,
+      );
+    }
+  });
+
+  it("keeps different exact effort sets attached to their own models", async () => {
+    const capabilities = routeCapabilities();
+    const catalog = { "first-model": ["first-effort"], "second-model": ["second-effort"] };
+    const fixture = createFakeServiceDriver({
+      inspectInstances: () => [{
+        harnessId: "fake-service", instanceKey: "tenant-alpha", readiness: "ready", liveValidated: true,
+        maturity: "experimental", detailCode: "ready",
+        routes: { models: Object.keys(catalog), effortsByModel: catalog },
+        capabilityProvenance: capabilities.provenance, inspectionGeneration: "unavailable",
+      }],
+    });
+    const inspections = await inspectDriverInstances(
+      fixture.driver, createDriverScope(scopeInput(fixture.driver, { purpose: "inspect" })),
+    );
+    assert.equal(
+      acceptDriverRoute(fixture.driver, {
+        harnessId: "fake-service", model: "second-model", effort: "second-effort",
+        topology: "leaf", authority: "behavioral_read_only",
+      }, inspections).route.effort,
+      "second-effort",
+    );
+    assert.throws(
+      () => acceptDriverRoute(fixture.driver, {
+        harnessId: "fake-service", model: "first-model", effort: "second-effort",
+        topology: "leaf", authority: "behavioral_read_only",
+      }, inspections),
+      /must be freshly advertised/,
+    );
+  });
+
   it("publishes one closed capability vocabulary and fails on anything outside it", () => {
     assert.deepEqual(HARNESS_CAPABILITY_NAMES, [
       "activeInput",
@@ -289,6 +415,10 @@ describe("Harness Driver contract", () => {
       "claude_config_dir",
       "env_file",
       "capability_override",
+      "provenance",
+      "generation",
+      "native_config_path",
+      "capability_snapshot",
     ]) {
       assert.throws(
         () => assertNoHarnessImplementationSelector({ [key]: "/somewhere" }, "spawn_agent"),
@@ -845,8 +975,8 @@ describe("Harness Driver contract", () => {
 });
 
 describe("Driver Contract v2 route capabilities", () => {
-  it("publishes the closed version-two dimensions with independent route maturity", () => {
-    assert.equal(ROUTE_CAPABILITY_SCHEMA_VERSION, 2);
+  it("publishes the closed version-three dimensions with independent route maturity", () => {
+    assert.equal(ROUTE_CAPABILITY_SCHEMA_VERSION, 3);
     assert.deepEqual(ROUTE_CAPABILITY_NAMES, [
       "activeInput",
       "authorityEnforcement",
@@ -871,6 +1001,7 @@ describe("Driver Contract v2 route capabilities", () => {
     assert.equal(Object.isFrozen(snapshot), true);
     assert.equal(Object.isFrozen(snapshot.values), true);
     assert.equal(Object.isFrozen(snapshot.maturity), true);
+    assert.equal(Object.isFrozen(snapshot.provenance), true);
     assert.equal(snapshot.values.interaction, "noninteractive_fixed_policy");
     assert.equal(capabilityMaturity(snapshot, "history"), "experimental");
     assert.equal(capabilityMaturity(snapshot, "continuation"), "validated");
@@ -1494,6 +1625,32 @@ describe("Driver Contract v2 registry and scope", () => {
     assert.equal(capabilityMaturity(accepted.route.capabilities, "continuation"), "experimental");
     assert.equal(Object.isFrozen(accepted.route), true);
 
+    const incomplete = { ...accepted.route };
+    delete incomplete.effort;
+    assert.throws(
+      () => validateCanonicalRoute(incomplete, {
+        driver: service,
+        inspection: accepted.inspection,
+        request: { harnessId: service.harnessId, model: "standard-tier", topology: "leaf", authority: "behavioral_read_only" },
+      }),
+      /must state one explicit effort/,
+      "a direct internal canonical-route caller cannot mint an effortless route",
+    );
+    for (const stale of [
+      { model: "stale-tier", effort: "high" },
+      { model: "standard-tier", effort: "stale-effort" },
+      { model: "standard-tier-alias", effort: "high" },
+    ]) {
+      assert.throws(
+        () => validateCanonicalRoute({ ...accepted.route, ...stale }, {
+          driver: service,
+          inspection: accepted.inspection,
+          request: { harnessId: service.harnessId, topology: "leaf", authority: "behavioral_read_only", ...stale },
+        }),
+        /must be freshly advertised/,
+      );
+    }
+
     for (const field of ["model", "topology", "authority"]) {
       const { [field]: _dropped, ...partial } = routeRequest();
       const inspections = await inspectDriverInstances(
@@ -1531,6 +1688,25 @@ describe("Driver Contract v2 registry and scope", () => {
       /effective effort "low" does not match the requested "high"/,
     );
     assert.deepEqual(capabilities.values.interaction, "noninteractive_fixed_policy");
+  });
+
+  it("refuses capability provenance that the fresh inspection did not prove", async () => {
+    for (const claimed of ["inspection_proven", "session_negotiated"]) {
+      const overclaim = createFakeServiceDriver({
+        routeOverride: (route) => ({
+          ...route,
+          capabilities: {
+            ...route.capabilities,
+            provenance: { ...route.capabilities.provenance, continuation: claimed },
+          },
+        }),
+      });
+      await assert.rejects(
+        () => acceptFakeServiceRoute(overclaim.driver),
+        /provenance does not match|session-negotiated/,
+        claimed,
+      );
+    }
   });
 
   it("reports instance readiness independently and fails closed when selection is ambiguous", async () => {

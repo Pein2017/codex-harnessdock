@@ -60,6 +60,10 @@ let sequence = 0;
 
 const PROMPT = "Inspect only.\n\nReturn one bounded finding.";
 const EXECUTABLE = "/usr/local/bin/claude";
+const DISCOVERED_ROUTES = {
+  models: ["claude-sonnet-5"],
+  effortsByModel: { "claude-sonnet-5": ["low", "medium", "high", "xhigh", "max"] },
+};
 
 function hostSeams() {
   return {
@@ -128,6 +132,7 @@ async function setup(options = {}) {
   const session = options.session ?? fakeSession();
   const driver = createClaudeCodeDriverV2({
     env,
+    inspectRoutes: async () => DISCOVERED_ROUTES,
     runTurnSession: session.run,
     requestInterrupt: () => ({ requested: true, requestFailure: null }),
     recordCompatibilityObservation: () => ({ recorded: true, compatibility: { version: "2.0.0" } }),
@@ -144,7 +149,7 @@ async function setup(options = {}) {
   const { route } = acceptDriverRoute(driver, {
     harnessId: CLAUDE_CODE_HARNESS_ID,
     model: options.model ?? "claude-sonnet-5",
-    effort: options.routeEffort ?? "high",
+    effort: options.routeEffort ?? options.turnOptions?.effort ?? "high",
     topology: "leaf",
     authority: "behavioral_read_only",
   }, inspections);
@@ -186,6 +191,7 @@ async function setup(options = {}) {
     assignedMessageIds,
     preparedInput: PROMPT,
     turnOptions: launchTurnOptions,
+    inspectionEvidence: { generation: "unavailable", capabilities: v3Route.capabilities },
   });
 
   return {
@@ -249,14 +255,14 @@ describe("Task 7 — turn options reach the native turn through the neutral laun
         turnOptions: { effort: "xhigh" },
       }).inputDigest
     );
-    assert.notEqual(
-      context.preparedTurn.inputDigest,
-      context.driver.prepareTurn({
+    assert.throws(
+      () => context.driver.prepareTurn({
         route: context.route,
         taskInput: "Inspect only.\n\nReturn one bounded finding.",
         turnId: context.jobId,
         turnOptions: { effort: "low" },
-      }).inputDigest
+      }),
+      /immutable admitted effort/,
     );
   });
 
@@ -472,7 +478,7 @@ describe("Task 7 correction — turn options are durably bound to the launch cla
   function claimInput(overrides) {
     const binding = { ownerRootId: "root-opt", agentId: "agent-opt", jobId: "job-opt" };
     const route = versionThreeRoute();
-    return {
+    const input = {
       ...binding,
       attemptId: "attempt-same",
       route,
@@ -488,6 +494,10 @@ describe("Task 7 correction — turn options are durably bound to the launch cla
       preparedInput: "identical prompt",
       ...overrides,
     };
+    if (!Object.hasOwn(overrides, "inspectionEvidence")) {
+      input.inspectionEvidence = { generation: "unavailable", capabilities: input.route.capabilities };
+    }
+    return input;
   }
 
   it("refuses an omitted turn-option value rather than inventing one", () => {
@@ -630,6 +640,7 @@ describe("Task 7 correction — turn options are durably bound to the launch cla
       assignedMessageIds: ["message-1"],
       preparedInput,
       turnOptions: { tier: "one" },
+      inspectionEvidence: { generation: "unavailable", capabilities: route.capabilities },
     });
 
     const first = await launchVersionThreeTurn(launchInput({ tier: "one" }));

@@ -123,6 +123,7 @@ const OPENCODE_NATIVE_CAPABILITIES = validateRouteCapabilitySnapshot({
     turnObservation: "unavailable",
   },
   maturity: Object.fromEntries(ROUTE_CAPABILITY_NAMES.map((name) => [name, "experimental"])),
+  provenance: Object.fromEntries(ROUTE_CAPABILITY_NAMES.map((name) => [name, "checkout_declared"])),
 }, "OpenCode native route capabilities");
 
 function opencodeModelParts(model) {
@@ -365,10 +366,15 @@ function requiredText(value, code, detail) {
  * One OpenCode Explorer Driver bound to one fixed configuration.
  *
  * @param {{env?: NodeJS.ProcessEnv, cwd?: string, envFile?: string,
- *   acceptanceTimeoutMs?: number, turnTimeoutMs?: number, serviceManager?: any}} [options]
+ *   acceptanceTimeoutMs?: number, turnTimeoutMs?: number,
+ *   serviceManager?: {ensure: () => Promise<object>, acquireTurnLease?: (identity: object) => Promise<object>, releaseTurnLease?: (lease: object) => Promise<boolean>},
+ *   _test?: any}} [options]
  */
 export function createOpencodeDriver(options = {}) {
   const fixedEnv = options.env ?? process.env;
+  const inspectionGeneration = () => typeof options._test?.inspectionGeneration === "function"
+    ? options._test.inspectionGeneration()
+    : (options._test?.inspectionGeneration ?? "unavailable");
   const clientOptions = Object.freeze({
     env: fixedEnv,
     cwd: options.cwd,
@@ -453,7 +459,7 @@ export function createOpencodeDriver(options = {}) {
   async function inspectNative(scope) {
     const declared = scope?.env?.OPENCODE_SERVER_URL;
     if (declared && opencodeInstanceKey(declared) !== fixedInstanceKey) {
-      return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: "blocked", liveValidated: false, maturity: "experimental", detailCode: "not_configured", routes: null };
+      return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: "blocked", liveValidated: false, maturity: "experimental", detailCode: "not_configured", routes: null, capabilityProvenance: OPENCODE_NATIVE_CAPABILITIES.provenance, inspectionGeneration: inspectionGeneration() };
     }
     try {
       const handle = createOpencodeDiscoveryClient({ ...clientOptions, env: fixedEnv, directory: scope?.workspaceRoot });
@@ -480,6 +486,8 @@ export function createOpencodeDriver(options = {}) {
           liveValidated: false, maturity: "experimental",
           detailCode: unavailable ? (notAuthenticated ? "not_authenticated" : "service_unreachable") : "interactive_policy",
           routes: null,
+          capabilityProvenance: OPENCODE_NATIVE_CAPABILITIES.provenance,
+          inspectionGeneration: inspectionGeneration(),
         };
       }
       const routes = discovered.routes.filter(({ model }) => {
@@ -487,11 +495,16 @@ export function createOpencodeDriver(options = {}) {
         return providerId !== "gitlab" || !modelId.startsWith("duo-workflow-");
       });
       if (routes.length === 0) {
-        return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: "blocked", liveValidated: false, maturity: "experimental", detailCode: "interactive_policy", routes: null };
+        return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: "blocked", liveValidated: false, maturity: "experimental", detailCode: "interactive_policy", routes: null, capabilityProvenance: OPENCODE_NATIVE_CAPABILITIES.provenance, inspectionGeneration: inspectionGeneration() };
       }
-      return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: "ready", liveValidated: true, maturity: "experimental", detailCode: "ready", routes: nativeRouteFacts(routes) };
+      // Test-only differential evidence. It stays outside every Driver result
+      // and receipt; the test projects these just-read native facts to digests.
+      if (typeof options._test?.captureNativeAdmissionEvidence === "function") {
+        options._test.captureNativeAdmissionEvidence(Object.freeze({ defaultAgent, agent: policy.agent }));
+      }
+      return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: "ready", liveValidated: true, maturity: "experimental", detailCode: "ready", routes: nativeRouteFacts(routes), capabilityProvenance: OPENCODE_NATIVE_CAPABILITIES.provenance, inspectionGeneration: inspectionGeneration() };
     } catch {
-      return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: "unavailable", liveValidated: false, maturity: "experimental", detailCode: "service_unreachable", routes: null };
+      return { harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, readiness: "unavailable", liveValidated: false, maturity: "experimental", detailCode: "service_unreachable", routes: null, capabilityProvenance: OPENCODE_NATIVE_CAPABILITIES.provenance, inspectionGeneration: inspectionGeneration() };
     }
   }
 
@@ -675,6 +688,16 @@ export function createOpencodeDriver(options = {}) {
           "acceptance and settlement stay unknown.",
         { retryable: false }
       );
+    }
+
+    // Test-only differential evidence: typed part order is otherwise consumed
+    // at the result boundary and never belongs in a durable Driver receipt.
+    // Deliberately expose no part payload, native id, tool input, or output.
+    if (typeof options._test?.captureNativePromptEvidence === "function") {
+      const parts = Array.isArray(outcome.response?.parts) ? outcome.response.parts : [];
+      options._test.captureNativePromptEvidence(Object.freeze({
+        partTypes: Object.freeze(parts.map((part) => typeof part?.type === "string" ? part.type : "invalid")),
+      }));
     }
 
     const selected = selectOpencodeExplorerFinalResult(outcome.response, {

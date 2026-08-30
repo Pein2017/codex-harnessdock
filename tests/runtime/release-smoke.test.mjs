@@ -6,6 +6,7 @@ import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import {
+  assessNativeHarnessDifferentialParity,
   assertNoLeakedConfiguration,
   isClaudeSubscriptionLimit,
   probeInstalledMcp,
@@ -26,6 +27,8 @@ import {
 } from "../../runtime/plugin-compatibility-shells.mjs";
 import { CANONICAL_RUNTIME_CHECKOUT, SOURCE_ROOT } from "../../runtime/version.mjs";
 import { runReleaseSmokeCli } from "../../scripts/release-smoke.mjs";
+import { acceptDriverRoute, createDriverScope, inspectDriverInstances } from "../../runtime/harness-registry.mjs";
+import { createFakeServiceDriver } from "./fixtures/fake-service-driver.mjs";
 
 const temporaryDirectories = [];
 
@@ -153,6 +156,66 @@ function productionWitnessDriver(runAttempt) {
 }
 
 describe("release smoke", () => {
+  it("projects and admits a replaced fake catalog without a turn or configuration identity", async () => {
+    const guidance = fs.readFileSync(path.join(SOURCE_ROOT, "plugins", "codex-harnessdock", "skills", "spawn-agent", "SKILL.md"));
+    const catalog = { "fake/provider-a": ["opaque-effort-a"] };
+    const fixture = createFakeServiceDriver({ inspectInstances: () => [{
+      harnessId: "fake-service", instanceKey: "tenant-alpha", readiness: "ready", liveValidated: true,
+      maturity: "experimental", detailCode: "ready",
+      routes: { models: Object.keys(catalog), effortsByModel: catalog, configurationIdentity: "secret-catalog-origin" },
+      capabilityProvenance: fixture.capabilities.provenance, inspectionGeneration: "unavailable",
+    }] });
+    const inspect = async () => {
+      const [inspection] = await inspectDriverInstances(fixture.driver, createDriverScope({ driver: fixture.driver, purpose: "inspect", env: {} }));
+      return inspection;
+    };
+    const listing = (inspection) => projectNativeRouteDiscovery([{ harness: "fake-service", maturity: "experimental", instances: [{
+      instance: inspection.instanceKey, readiness: inspection.readiness, live_validated: inspection.liveValidated,
+      maturity: inspection.maturity, routes: inspection.routes,
+    }] }]);
+    const request = (model, effort) => ({ harnessId: "fake-service", model, effort, topology: "leaf", authority: "behavioral_read_only" });
+    const firstInspection = await inspect();
+    const first = listing(firstInspection);
+    assert.equal(acceptDriverRoute(fixture.driver, request("fake/provider-a", "opaque-effort-a"), [firstInspection]).route.effort, "opaque-effort-a");
+    delete catalog["fake/provider-a"];
+    catalog["fake/provider-b"] = ["opaque-effort-b"];
+    const secondInspection = await inspect();
+    const second = listing(secondInspection);
+    assert.notDeepEqual(first, second);
+    assert.throws(() => acceptDriverRoute(fixture.driver, request("fake/provider-a", "opaque-effort-a"), [secondInspection]));
+    assert.equal(acceptDriverRoute(fixture.driver, request("fake/provider-b", "opaque-effort-b"), [secondInspection]).route.effort, "opaque-effort-b");
+    assert.deepEqual(second[0].instances[0].effortsByModel, { "fake/provider-b": ["opaque-effort-b"] });
+    assert.equal(guidance.includes("fake/provider-b"), false);
+    assert.equal(JSON.stringify(second).includes("secret-catalog-origin"), false);
+    assert.equal(fixture.control.service.prompts.length, 0);
+  });
+
+  it("reports a supplied complete differential matrix as promotable without changing default smoke behavior", async () => {
+    const fixture = matchingSnapshot();
+    const differentialParityReceipt = JSON.parse(fs.readFileSync(
+      path.join(SOURCE_ROOT, "tests", "runtime", "fixtures", "native-parity", "native-harness-differential-parity.receipt.json"),
+      "utf8",
+    ));
+    const assessment = assessNativeHarnessDifferentialParity(differentialParityReceipt);
+    assert.equal(assessment.status, "pass");
+    assert.equal(assessment.promotionEligible, true);
+    const report = await runReleaseSmoke({
+      installed: fixture.installed,
+      differentialParityReceipt,
+      probeMcp: async () => ({
+        healthy: true,
+        tools: [...HARNESSDOCK_MCP_TOOL_NAMES],
+        agentCount: 0,
+        harnessCount: ADMITTED_GENERATION_HARNESS_IDS.length,
+        paid: { requested: false, status: "skipped" },
+      }),
+    });
+    assert.equal(report.status, "pass");
+    assert.equal(report.promotionEligible, true);
+    assert.deepEqual(report.differentialParity.counts, { pass: 32, fail: 0, hold: 0, not_applicable: 10 });
+    assert.equal(report.differentialParity.blockers.length, 0);
+  });
+
   it("validates matching installed Skills and MCP evidence without paid usage by default", async () => {
     const fixture = matchingSnapshot();
     let probeOptions;
@@ -716,6 +779,68 @@ describe("release smoke", () => {
     assert.equal(result.status, 1);
     assert.match(result.stderr, /mutually exclusive paid smoke modes/i);
     assert.doesNotMatch(result.stderr, /Starting explicit paid/i);
+  });
+
+  it("loads the canonical differential receipt into the production CLI and returns its release outcome", async () => {
+    const stdout = [];
+    const canonicalReceipt = path.join(
+      SOURCE_ROOT, "tests", "runtime", "fixtures", "native-parity", "native-harness-differential-parity.receipt.json",
+    );
+    let suppliedReceipt;
+    const exitCode = await runReleaseSmokeCli([], {
+      sourceRoot: SOURCE_ROOT,
+      assertCheckoutDependencies() {},
+      readFileSync(receiptPath, encoding) {
+        assert.equal(receiptPath, canonicalReceipt);
+        return fs.readFileSync(receiptPath, encoding);
+      },
+      async runReleaseSmoke(options) {
+        suppliedReceipt = options.differentialParityReceipt;
+        const assessment = assessNativeHarnessDifferentialParity(suppliedReceipt);
+        return {
+          status: assessment.status,
+          promotionEligible: assessment.promotionEligible,
+        };
+      },
+      writeStdout(value) { stdout.push(value); },
+      writeStderr() {},
+    });
+    assert.equal(exitCode, 0);
+    assert.equal(suppliedReceipt.schema, "harnessdock.native-harness-differential-parity.v2");
+    assert.deepEqual(JSON.parse(stdout.join("")), { status: "pass", promotionEligible: true });
+  });
+
+  for (const [label, readFileSync] of [
+    ["missing", () => { throw new Error("ENOENT canonical receipt"); }],
+    ["malformed", () => "{"],
+  ]) {
+    it(`fails closed when the canonical differential receipt is ${label}`, async () => {
+      const stderr = [];
+      let called = false;
+      const exitCode = await runReleaseSmokeCli([], {
+        sourceRoot: path.join(os.tmpdir(), "release-smoke-canonical-receipt"),
+        assertCheckoutDependencies() {},
+        readFileSync,
+        async runReleaseSmoke() { called = true; },
+        writeStdout() {},
+        writeStderr(value) { stderr.push(value); },
+      });
+      assert.equal(exitCode, 1);
+      assert.equal(called, false);
+      assert.match(stderr.join(""), label === "missing" ? /ENOENT canonical receipt/ : /JSON/);
+    });
+  }
+
+  it("does not accept a CLI receipt override", async () => {
+    let called = false;
+    const exitCode = await runReleaseSmokeCli(["--differential-parity-receipt", "replacement.json"], {
+      assertCheckoutDependencies() {},
+      async runReleaseSmoke() { called = true; },
+      writeStdout() {},
+      writeStderr() {},
+    });
+    assert.equal(exitCode, 1);
+    assert.equal(called, false);
   });
 
   it("prints an unverified native-team report before returning a nonzero CLI outcome without launching a model", async () => {

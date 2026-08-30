@@ -138,6 +138,9 @@ function runtimeFor(serverUrl) {
       CODEX_HARNESSDOCK_TRUSTED_OWNER_ROOT_ID: "generation-root",
       CODEX_HARNESSDOCK_RUNTIME_HOME: RUNTIME_HOME,
       CODEX_HARNESSDOCK_RUNTIME_ENV_FILE: "",
+      // A dead-origin test must not fall through to the host's native OpenCode
+      // diagnostic executable and turn into a dormant-route observation.
+      OPENCODE_EXECUTABLE: "",
     },
   });
 }
@@ -233,7 +236,7 @@ describe("public generation: list_harnesses observes without selecting", () => {
     const opencode = harnessOf(listing, OPENCODE_HARNESS_ID);
     assert.equal(opencode.driver_version, OPENCODE_DRIVER_VERSION);
     assert.equal(opencode.maturity, "experimental");
-    assert.equal(opencode.capability_schema_version, 2);
+    assert.equal(opencode.capability_schema_version, 3);
     assert.equal(opencode.instances.length, 1);
     const instance = opencode.instances[0];
     assert.equal(instance.instance, opencodeExplorerInstanceKey(url));
@@ -303,6 +306,13 @@ describe("public generation: list_harnesses observes without selecting", () => {
     assert.deepEqual(opencode.instances[0], {
       instance: opencodeExplorerInstanceKey(url), readiness: "blocked", detail: "interactive_policy",
       live_validated: false, maturity: "experimental", capacity: null, routes: null,
+      capability_provenance: {
+        interaction: "checkout_declared", activeInput: "checkout_declared", continuation: "checkout_declared",
+        history: "checkout_declared", interruptRequest: "checkout_declared", automaticRecovery: "checkout_declared",
+        authorityEnforcement: "checkout_declared", leafEnforcement: "checkout_declared",
+        nativeOrchestration: "checkout_declared", turnObservation: "checkout_declared",
+      },
+      inspection_generation: "unavailable",
     });
     assert.doesNotMatch(JSON.stringify(opencode), /doom_loop|ask|build|1\.18\.23/i);
   });
@@ -426,6 +436,7 @@ describe("public generation: list_harnesses through MCP and the operator CLI", (
           CODEX_HARNESSDOCK_RUNTIME_SOURCE_ROOT: "",
           CODEX_HARNESSDOCK_RUNTIME_ENV_FILE: envFileFor(DEAD_SERVER_URL),
           CODEX_HARNESSDOCK_RUNTIME_HOME: fs.mkdtempSync(path.join(os.tmpdir(), "cc-generation-cli-")),
+          OPENCODE_EXECUTABLE: "",
         },
       }
     );

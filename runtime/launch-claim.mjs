@@ -111,7 +111,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { validateStoredVersionThreeRoute, validateVersionThreeRoute } from "./durable-state-v3.mjs";
-import { durableTurnEvidence } from "./harness-contract.mjs";
+import { durableTurnEvidence, validateRouteInspectionEvidence } from "./harness-contract.mjs";
 import { acquiredLeaseEvidence } from "./instance-admission-lease.mjs";
 import {
   assertNativeReferenceEnvelopeShape,
@@ -800,13 +800,14 @@ const LAUNCH_CLAIM_FIELDS = Object.freeze([
   "version", "ownerRootId", "agentId", "jobId", "attemptId",
   "controlRoot", "executionRoot", "lifecycleOwner",
   "route", "leaseState", "leaseIntent", "leaseBindings", "assignedMessageIds", "turnOptions", "inputDigest",
+  "inspectionEvidence",
   "acceptance", "nativeTurnRef", "nativeSessionRef", "acceptanceEvidenceAt", "sanitizedDetail",
   "submissionState", "submissionStartedAt",
   "createdAt", "updatedAt",
 ]);
 const LEGACY_LAUNCH_CLAIM_FIELDS = Object.freeze(
   LAUNCH_CLAIM_FIELDS.filter((field) => ![
-    "controlRoot", "executionRoot", "lifecycleOwner", "leaseState", "leaseIntent", "turnOptions",
+    "controlRoot", "executionRoot", "lifecycleOwner", "leaseState", "leaseIntent", "turnOptions", "inspectionEvidence",
   ].includes(field))
 );
 
@@ -1001,13 +1002,15 @@ function validateLaunchClaimRecord(parsed) {
   const hasControlRoot = Object.hasOwn(snapshot, "controlRoot");
   const hasExecutionRoot = Object.hasOwn(snapshot, "executionRoot");
   const hasLifecycleOwner = Object.hasOwn(snapshot, "lifecycleOwner");
+  const hasInspectionEvidence = Object.hasOwn(snapshot, "inspectionEvidence");
   if (hasControlRoot !== hasExecutionRoot) {
     throw new Error(`${label} must state controlRoot and executionRoot together.`);
   }
   const expectedFields = LAUNCH_CLAIM_FIELDS.filter((field) =>
     (hasTurnOptions || field !== "turnOptions") &&
     (hasControlRoot || !["controlRoot", "executionRoot"].includes(field)) &&
-    (hasLifecycleOwner || field !== "lifecycleOwner")
+    (hasLifecycleOwner || field !== "lifecycleOwner") &&
+    (hasInspectionEvidence || field !== "inspectionEvidence")
   );
   assertClosedFieldSet(snapshot, expectedFields, label);
   if (snapshot.version !== LAUNCH_CLAIM_SCHEMA_VERSION) {
@@ -1027,6 +1030,9 @@ function validateLaunchClaimRecord(parsed) {
     : controlRoot;
   const lifecycleOwner = hasLifecycleOwner
     ? assertLifecycleOwner(snapshot.lifecycleOwner, `${label} lifecycleOwner`)
+    : null;
+  const inspectionEvidence = hasInspectionEvidence
+    ? validateRouteInspectionEvidence(snapshot.inspectionEvidence, route, `${label} inspection evidence`)
     : null;
   const leaseState = ["intended", "acquired"].includes(snapshot.leaseState) ? snapshot.leaseState : null;
   if (leaseState == null) throw new Error(`${label} has an unsupported leaseState.`);
@@ -1120,6 +1126,7 @@ function validateLaunchClaimRecord(parsed) {
     ...(controlRoot == null ? {} : { controlRoot, executionRoot }),
     ...(lifecycleOwner == null ? {} : { lifecycleOwner }),
     route,
+    ...(inspectionEvidence == null ? {} : { inspectionEvidence }),
     leaseState,
     leaseIntent,
     leaseBindings,
@@ -1397,16 +1404,6 @@ export function verifyPreparedLaunchClaim(input) {
       "Legacy write claim has no durable writer binding and cannot be verified, replayed, or submitted.",
     );
   }
-  const lifecycleOwner = assertLifecycleOwner(
-    snapshot.lifecycleOwner,
-    "Prepared launch claim lifecycleOwner",
-  );
-  if (stored.lifecycleOwner !== lifecycleOwner) {
-    throw taggedError(
-      "lifecycle_owner_mismatch",
-      "Detached launch lifecycle owner does not match its durable prepared claim.",
-    );
-  }
   const attemptId = assertIdentityText(snapshot.attemptId, "Prepared launch claim attemptId");
   const route = validateVersionThreeRoute(snapshot.route, "Prepared launch claim route");
   const statedRoots = Object.hasOwn(snapshot, "controlRoot") || Object.hasOwn(snapshot, "executionRoot");
@@ -1419,6 +1416,25 @@ export function verifyPreparedLaunchClaim(input) {
   const executionRoot = statedRoots
     ? assertStoredRoot(snapshot.executionRoot, "Prepared launch claim executionRoot")
     : null;
+  if (stored.inspectionEvidence == null) {
+    throw taggedError(
+      "inspection_evidence_required",
+      "Detached worker cannot submit an evidence-less historical launch claim."
+    );
+  }
+  validateRouteInspectionEvidence(
+    stored.inspectionEvidence, route, "Prepared launch claim inspection evidence"
+  );
+  const lifecycleOwner = assertLifecycleOwner(
+    snapshot.lifecycleOwner,
+    "Prepared launch claim lifecycleOwner",
+  );
+  if (stored.lifecycleOwner !== lifecycleOwner) {
+    throw taggedError(
+      "lifecycle_owner_mismatch",
+      "Detached launch lifecycle owner does not match its durable prepared claim.",
+    );
+  }
   const assignedMessageIds = assertAssignedMessageIds(
     snapshot.assignedMessageIds, "Prepared launch claim assignedMessageIds"
   );
@@ -1449,7 +1465,7 @@ export function verifyPreparedLaunchClaim(input) {
 
 const CREATE_INPUT_FIELDS = Object.freeze([
   "ownerRootId", "agentId", "jobId", "attemptId",
-  "controlRoot", "executionRoot", "lifecycleOwner", "route", "leaseBindings", "assignedMessageIds", "preparedInput", "turnOptions",
+  "controlRoot", "executionRoot", "lifecycleOwner", "route", "leaseBindings", "assignedMessageIds", "preparedInput", "turnOptions", "inspectionEvidence",
 ]);
 
 function prepareLaunchClaimCreate(input) {
@@ -1493,6 +1509,12 @@ function prepareLaunchClaimCreate(input) {
   const identity = assertBindingIdentity({ ownerRootId, agentId, jobId });
   const canonicalAttemptId = assertIdentityText(attemptId, "Launch claim attemptId");
   const canonicalRoute = validateVersionThreeRoute(route, "Launch claim route");
+  if (!Object.hasOwn(snapshot, "inspectionEvidence")) {
+    throw new Error("Launch claim create input requires complete current inspectionEvidence.");
+  }
+  const inspectionEvidence = validateRouteInspectionEvidence(
+    snapshot.inspectionEvidence, canonicalRoute, "Launch claim inspection evidence"
+  );
   const boundRouteDigest = routeDigestOf(canonicalRoute);
   const canonicalLeaseBindings = canonicalizeLeaseBindings(leaseBindings, identity, canonicalRoute, boundRouteDigest);
   const canonicalAssignedMessageIds = assertAssignedMessageIds(assignedMessageIds, "Launch claim assignedMessageIds");
@@ -1519,6 +1541,7 @@ function prepareLaunchClaimCreate(input) {
     canonicalAssignedMessageIds,
     canonicalTurnOptions: canonicalOptions,
     canonicalInputDigest,
+    inspectionEvidence,
     claimDir: resolveLaunchClaimDirectory(identity),
   };
 }
@@ -1557,6 +1580,7 @@ function createLaunchClaimWhileLocked(prepared) {
       JSON.stringify(existing.leaseIntent) === JSON.stringify(leaseIntent) &&
       JSON.stringify(existing.leaseBindings) === JSON.stringify(canonicalLeaseBindings) &&
       JSON.stringify(existing.turnOptions ?? null) === JSON.stringify(prepared.canonicalTurnOptions) &&
+      JSON.stringify(existing.inspectionEvidence ?? null) === JSON.stringify(prepared.inspectionEvidence ?? null) &&
       JSON.stringify(existing.assignedMessageIds) === JSON.stringify(canonicalAssignedMessageIds) &&
       existing.inputDigest === canonicalInputDigest
     );
@@ -1582,6 +1606,7 @@ function createLaunchClaimWhileLocked(prepared) {
     }),
     ...(canonicalLifecycleOwner == null ? {} : { lifecycleOwner: canonicalLifecycleOwner }),
     route: canonicalRoute,
+    inspectionEvidence: prepared.inspectionEvidence,
     leaseState,
     leaseIntent,
     leaseBindings: canonicalLeaseBindings,
@@ -1647,7 +1672,7 @@ export async function createLaunchClaimAsync(input) {
 const INTENT_INPUT_FIELDS = Object.freeze([
   "ownerRootId", "agentId", "jobId", "attemptId", "controlRoot", "executionRoot", "lifecycleOwner",
   "route", "expectedLease", "expectedLeases",
-  "assignedMessageIds", "preparedInput", "turnOptions",
+  "assignedMessageIds", "preparedInput", "turnOptions", "inspectionEvidence",
 ]);
 
 function expectedLeaseReceipt(expectedLease, identity, route) {
@@ -1691,6 +1716,9 @@ export function createLaunchIntent(input) {
   const snapshot = plainRecordSnapshot(input, "Launch claim intent input");
   assertNoUnknownFields(snapshot, INTENT_INPUT_FIELDS, "Launch claim intent input");
   if (!Object.hasOwn(snapshot, "turnOptions")) throw new Error("Launch claim intent requires turnOptions.");
+  if (!Object.hasOwn(snapshot, "inspectionEvidence")) {
+    throw new Error("Launch claim intent input requires complete current inspectionEvidence.");
+  }
   if (!Object.hasOwn(snapshot, "lifecycleOwner")) throw new Error("Launch claim intent requires lifecycleOwner.");
   const identity = assertBindingIdentity(snapshot);
   const canonicalRoute = validateVersionThreeRoute(snapshot.route, "Launch claim intent route");
@@ -1726,6 +1754,9 @@ export function createLaunchIntent(input) {
   ) {
     throw new Error("Launch claim writer intent must bind the immutable execution root.");
   }
+  const inspectionEvidence = validateRouteInspectionEvidence(
+    snapshot.inspectionEvidence, canonicalRoute, "Launch claim intent inspection evidence"
+  );
   const assignedMessageIds = assertAssignedMessageIds(snapshot.assignedMessageIds, "Launch claim intent assignedMessageIds");
   const inputDigest = computeInputDigest(
     assignedMessageIds,
@@ -1743,6 +1774,7 @@ export function createLaunchIntent(input) {
     canonicalAssignedMessageIds: assignedMessageIds,
     canonicalTurnOptions: canonicalTurnOptions(snapshot.turnOptions ?? null, "Launch claim intent turnOptions"),
     canonicalInputDigest: inputDigest,
+    inspectionEvidence,
     leaseState: "intended",
     leaseIntent,
     claimDir: resolveLaunchClaimDirectory(identity),

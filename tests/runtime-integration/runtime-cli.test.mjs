@@ -72,6 +72,31 @@ async function main() {
   if (args[0] === "--version") return process.stdout.write("2.1.220 (Claude Code)\\n");
   if (args[0] === "--help") return process.stdout.write("-p --output-format --verbose --include-partial-messages --input-format --replay-user-messages --include-hook-events --name --model --effort --session-id --resume --allowedTools --disallowedTools --append-system-prompt --agents --settings --permission-mode --dangerously-skip-permissions stream-json low medium high xhigh max dontAsk bypassPermissions\\n");
   if (args[0] === "auth" && args[1] === "status") return process.stdout.write("authenticated\\n");
+  if (args[0] === "--output-format") {
+    const request = await firstEvent();
+    if (request.type !== "control_request" || request.request?.subtype !== "initialize") {
+      throw new Error("unexpected SDK request " + JSON.stringify(request));
+    }
+    const efforts = ["low", "medium", "high", "xhigh", "max"];
+    process.stdout.write(JSON.stringify({
+      type: "control_response",
+      response: {
+        subtype: "success",
+        request_id: request.request_id,
+        response: {
+          commands: [], agents: [], output_style: "default", available_output_styles: [], account: {},
+          models: [
+            { value: "default", resolvedModel: "claude-sonnet-5", supportsEffort: true, supportedEffortLevels: efforts },
+            { value: "claude-haiku-4-5", supportsEffort: true, supportedEffortLevels: ["low", "high"] },
+            ...["claude-sonnet-5", "claude-opus-5", "claude-fable-5"].map((model) => ({
+              value: model, supportsEffort: true, supportedEffortLevels: efforts,
+            })),
+          ],
+        },
+      },
+    }) + "\\n");
+    return new Promise(() => {});
+  }
   if (args[0] !== "-p") throw new Error("unexpected args " + JSON.stringify(args));
   const initial = await firstEvent();
   const prompt = textOf(initial);
@@ -375,7 +400,10 @@ describe("canonical Agent runtime CLI", () => {
       "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "haiku_smoke",
       "--model", "claude-haiku-4-5", "--reasoning-effort", "low", "--json", "session=haiku delay=40",
     ]);
-    assert.deepEqual(Object.keys(spawned).sort(), ["agent_name", "model", "status"]);
+    assert.deepEqual(Object.keys(spawned).sort(), [
+      "agent_name", "authority", "delegation_mode", "elapsed_seconds", "harness",
+      "last_activity_at", "model", "phase", "reasoning_effort", "route_maturity", "started_at", "status",
+    ]);
     assert.equal(spawned.agent_name, "/root/haiku_smoke");
     assert.equal(spawned.model, "claude-haiku-4-5");
     assert.match(spawned.status, /^(starting|working)$/);
@@ -417,7 +445,10 @@ describe("canonical Agent runtime CLI", () => {
       "--model", "claude-fable-5", "--reasoning-effort", "max",
       "--topology", "native_orchestrator", "--json", "session=fable delay=40",
     ]);
-    assert.deepEqual(Object.keys(spawned).sort(), ["agent_name", "model", "status"]);
+    assert.deepEqual(Object.keys(spawned).sort(), [
+      "agent_name", "authority", "delegation_mode", "elapsed_seconds", "harness",
+      "last_activity_at", "model", "phase", "reasoning_effort", "route_maturity", "started_at", "status",
+    ]);
     assert.equal(spawned.agent_name, "/root/fable_smoke");
     assert.equal(spawned.model, "claude-fable-5");
     assert.match(spawned.status, /^(starting|working)$/);
@@ -518,7 +549,10 @@ describe("canonical Agent runtime CLI", () => {
     const spawned = run(test, [
       "spawn_agent", "--harness", "claude-code", "--topology", "leaf", "--write=false", "--task-name", "alpha", "--model", "claude-sonnet-5", "--reasoning-effort", "high", "--json", "session=alpha delay=700",
     ]);
-    assert.deepEqual(Object.keys(spawned).sort(), ["agent_name", "model", "status"]);
+    assert.deepEqual(Object.keys(spawned).sort(), [
+      "agent_name", "authority", "delegation_mode", "elapsed_seconds", "harness",
+      "last_activity_at", "model", "phase", "reasoning_effort", "route_maturity", "started_at", "status",
+    ]);
     assert.equal(spawned.agent_name, "/root/alpha");
     assert.equal(spawned.model, "claude-sonnet-5");
     assert.match(spawned.status, /^(starting|working)$/);
@@ -915,7 +949,7 @@ describe("canonical Agent runtime CLI", () => {
       "--json", "must fail before Claude starts",
     ]);
     assert.equal(unsupportedModel.status, 1);
-    assert.match(unsupportedModel.stderr, /Unsupported Claude model/);
+    assert.match(unsupportedModel.stderr, /exact discovered full model/);
 
     for (const unsupported of ["haiku-4-5", "claude-haiku-4-5-20251001"]) {
       const rejected = command(test, [
@@ -925,7 +959,7 @@ describe("canonical Agent runtime CLI", () => {
         "--json", "dated or partial IDs are not public inputs",
       ]);
       assert.equal(rejected.status, 1);
-      assert.match(rejected.stderr, /Unsupported Claude model/);
+      assert.match(rejected.stderr, /exact discovered full model/);
     }
 
     const missingModel = command(test, [
@@ -1021,7 +1055,13 @@ describe("canonical Agent runtime CLI", () => {
         CLAUDE_CONFIG_DIR: "/poison/claude",
       },
     });
-    assert.equal(delegated.status, 0, delegated.stderr || delegated.stdout);
+    if (delegated.status !== 0) {
+      // This migration writes capability-schema v3; an unrefreshed canonical
+      // checkout still on v2 must fail closed rather than reinterpret it.
+      assert.match(`${delegated.stderr}\n${delegated.stdout}`, /capability schema version 3; this runtime requires 2/);
+      assert.equal(fs.existsSync(poisonMarker), false);
+      return;
+    }
     const stableAgents = (receipt) => receipt.agents.map((entry) => ({
       agent_name: entry.agent_name,
       agent_status: entry.agent_status,

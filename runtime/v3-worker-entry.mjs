@@ -43,7 +43,8 @@
  */
 
 import { canonicalAgentWorkspaceRoot, createAgentStore } from "./agent-store.mjs";
-import { FUTURE_WRITE_GENERATION } from "./durable-state-v3.mjs";
+import { FUTURE_WRITE_GENERATION, assertSameDurableRouteSemantics } from "./durable-state-v3.mjs";
+import { validateRouteInspectionEvidence } from "./harness-contract.mjs";
 import { validateNativeReferenceEnvelope } from "./native-reference.mjs";
 import {
   releaseLeasesForPreSubmissionRollback,
@@ -220,7 +221,7 @@ export async function runDetachedVersionThreeTurn(input) {
     writeGeneration: FUTURE_WRITE_GENERATION,
   });
   const agent = store.readAgent(agentId);
-  const route = requireVersionThreeRoute(agent, agentId);
+  const storedRoute = requireVersionThreeRoute(agent, agentId);
   const claim = readLaunchClaim({ ownerRootId, agentId, jobId });
   if (!claim || claim.attemptId !== attemptId) {
     throw new Error(`Version-three worker found no exact prepared claim for attempt ${attemptId}.`);
@@ -228,6 +229,13 @@ export async function runDetachedVersionThreeTurn(input) {
   if (claim.lifecycleOwner !== "version_three_worker") {
     throw new Error(`Version-three worker refuses claim ${jobId} owned by another or legacy lifecycle.`);
   }
+  if (claim.inspectionEvidence == null) {
+    throw new Error("Version-three worker refuses an evidence-less historical launch claim before submission.");
+  }
+  const route = assertSameDurableRouteSemantics(
+    storedRoute, claim.route, `Version-three worker ${jobId}`
+  );
+  validateRouteInspectionEvidence(claim.inspectionEvidence, route, "Version-three worker inspection evidence");
   const { taskInput, assignedMessageIds } = requireAssignedInput(
     store, agent, jobId, claim.assignedMessageIds
   );

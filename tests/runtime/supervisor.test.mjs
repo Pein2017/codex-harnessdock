@@ -84,6 +84,23 @@ describe("job supervisor", () => {
     assert.equal(result.finalMessage, "partial then done");
   });
 
+  it("fails closed for any recovery capability other than a same-session recovery prompt", async () => {
+    const { workspace } = setup();
+    let calls = 0;
+    await assert.rejects(
+      runClaudeTaskSession({
+        workspaceRoot: workspace,
+        jobId: "cc-1",
+        cwd: workspace,
+        prompt: "ORIGINAL TASK",
+        automaticRecovery: "exact_session_transport",
+        runAttempt: async () => { calls += 1; return completed(); },
+      }),
+      /recovery is unavailable for automaticRecovery="exact_session_transport"/,
+    );
+    assert.equal(calls, 0);
+  });
+
   it("returns an orchestrator transport close without reconnect while retaining exact parent continuation evidence", async () => {
     const { workspace } = setup();
     let calls = 0;

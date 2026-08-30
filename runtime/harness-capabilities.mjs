@@ -16,7 +16,7 @@ export const HARNESS_CAPABILITY_VALUES = Object.freeze({
   continuation: Object.freeze(["exact_resume", "fresh_only"]),
   history: Object.freeze(["assistant_messages", "unavailable"]),
   interrupt: Object.freeze(["graceful_flush_proven", "best_effort_signal", "unsupported"]),
-  automaticRecovery: Object.freeze(["exact_session_transport", "none"]),
+  automaticRecovery: Object.freeze(["exact_session_transport", "same_session_recovery_prompt", "none"]),
   authorityEnforcement: Object.freeze(["process_sandbox", "prompt_only"]),
   leafEnforcement: Object.freeze(["effective_tool_denial", "prompt_only"]),
   nativeOrchestration: Object.freeze(["opaque_bounded", "disabled"]),
@@ -85,7 +85,7 @@ export function assertHarnessCapability(snapshot, name, admitted, detail) {
  * wrapped in Contract v2; the two never merge, because version one encodes
  * process-shaped interruption instead of a request/settlement split.
  */
-export const ROUTE_CAPABILITY_SCHEMA_VERSION = 2;
+export const ROUTE_CAPABILITY_SCHEMA_VERSION = 3;
 
 export const ROUTE_CAPABILITY_VALUES = Object.freeze({
   interaction: Object.freeze(["noninteractive_fixed_policy", "requires_broker"]),
@@ -94,7 +94,7 @@ export const ROUTE_CAPABILITY_VALUES = Object.freeze({
   history: Object.freeze(["assistant_messages", "unavailable"]),
   interruptRequest: Object.freeze(["supported", "unsupported"]),
   turnObservation: Object.freeze(["terminal_observable", "unavailable"]),
-  automaticRecovery: Object.freeze(["exact_session_transport", "none"]),
+  automaticRecovery: Object.freeze(["exact_session_transport", "same_session_recovery_prompt", "none"]),
   authorityEnforcement: Object.freeze(["prompt_only", "harness_policy", "process_sandbox"]),
   leafEnforcement: Object.freeze(["effective_tool_denial", "prompt_only", "unsupported"]),
   nativeOrchestration: Object.freeze(["opaque_bounded", "disabled"]),
@@ -105,6 +105,11 @@ export const ROUTE_CAPABILITY_NAMES = Object.freeze(
 );
 
 export const CAPABILITY_MATURITY_VALUES = Object.freeze(["experimental", "validated"]);
+export const ROUTE_CAPABILITY_PROVENANCE_VALUES = Object.freeze([
+  "checkout_declared",
+  "inspection_proven",
+  "session_negotiated",
+]);
 
 /**
  * Interaction values this generation may actually run. `requires_broker` stays
@@ -118,7 +123,29 @@ export const ADMITTED_INTERACTION_VALUES = Object.freeze(["noninteractive_fixed_
  * values, missing dimensions, missing maturity, and a foreign schema version all
  * fail here, before an Agent, lease, or native turn exists.
  */
-export function validateRouteCapabilitySnapshot(snapshot, label = "Route capability snapshot") {
+export function validateRouteCapabilityProvenance(provenance, label = "Route capability provenance") {
+  const fields = plainRecordSnapshot(provenance, label);
+  /** @type {Record<string, string>} */
+  const normalized = {};
+  for (const name of ROUTE_CAPABILITY_NAMES) {
+    const value = fields[name];
+    if (!ROUTE_CAPABILITY_PROVENANCE_VALUES.includes(value)) {
+      throw new Error(
+        `${label} has an unsupported ${name} value: ${JSON.stringify(value ?? null)}. ` +
+        `Use one of: ${ROUTE_CAPABILITY_PROVENANCE_VALUES.join(", ")}.`
+      );
+    }
+    normalized[name] = value;
+  }
+  for (const name of Object.keys(fields)) {
+    if (!ROUTE_CAPABILITY_NAMES.includes(name)) {
+      throw new Error(`${label} declares an unknown capability provenance: ${name}.`);
+    }
+  }
+  return Object.freeze(normalized);
+}
+
+export function validateRouteCapabilitySnapshot(snapshot, label = "Route capability snapshot", { allowSchemaV2 = false } = {}) {
   // Every field is read exactly once, from one descriptor snapshot of an
   // ordinary object. A Proxy, accessor, hidden, symbol-keyed, or inherited
   // field is refused here: a route snapshot that can answer differently to a
@@ -126,7 +153,8 @@ export function validateRouteCapabilitySnapshot(snapshot, label = "Route capabil
   const fields = plainRecordSnapshot(snapshot, label);
   const declaredSchemaVersion = fields.capabilitySchemaVersion;
   const declaredDriverMaturity = fields.driverMaturity;
-  if (declaredSchemaVersion !== ROUTE_CAPABILITY_SCHEMA_VERSION) {
+  if (declaredSchemaVersion !== ROUTE_CAPABILITY_SCHEMA_VERSION &&
+      !(allowSchemaV2 && declaredSchemaVersion === 2)) {
     throw new Error(
       `${label} declares capability schema version ${JSON.stringify(declaredSchemaVersion ?? null)}; ` +
       `this runtime requires ${ROUTE_CAPABILITY_SCHEMA_VERSION}.`
@@ -138,13 +166,18 @@ export function validateRouteCapabilitySnapshot(snapshot, label = "Route capabil
       `Use one of: ${CAPABILITY_MATURITY_VALUES.join(", ")}.`
     );
   }
-  for (const [part, name] of [[fields.values, "values"], [fields.maturity, "maturity"]]) {
+  const schemaV2 = declaredSchemaVersion === 2;
+  for (const [part, name] of [[fields.values, "values"], [fields.maturity, "maturity"],
+    ...(schemaV2 ? [] : [[fields.provenance, "provenance"]])]) {
     if (!part || typeof part !== "object" || Array.isArray(part)) {
       throw new Error(`${label} must carry a capability ${name} object.`);
     }
   }
   const values = plainRecordSnapshot(fields.values, `${label} capability values`);
   const maturity = plainRecordSnapshot(fields.maturity, `${label} capability maturity`);
+  const provenance = schemaV2 ? null : validateRouteCapabilityProvenance(
+    fields.provenance, `${label} capability provenance`
+  );
   /** @type {Record<string, string>} */
   const normalizedValues = {};
   /** @type {Record<string, string>} */
@@ -167,7 +200,8 @@ export function validateRouteCapabilitySnapshot(snapshot, label = "Route capabil
     normalizedValues[name] = value;
     normalizedMaturity[name] = declaredMaturity;
   }
-  for (const [part, partLabel] of [[values, "capability"], [maturity, "capability maturity"]]) {
+  for (const [part, partLabel] of [[values, "capability"], [maturity, "capability maturity"],
+    ...(provenance == null ? [] : [[provenance, "capability provenance"]])]) {
     for (const name of Object.keys(part)) {
       if (!ROUTE_CAPABILITY_NAMES.includes(name)) {
         throw new Error(`${label} declares an unknown ${partLabel}: ${name}.`);
@@ -175,15 +209,16 @@ export function validateRouteCapabilitySnapshot(snapshot, label = "Route capabil
     }
   }
   for (const key of Object.keys(fields)) {
-    if (!["capabilitySchemaVersion", "driverMaturity", "values", "maturity"].includes(key)) {
+    if (!["capabilitySchemaVersion", "driverMaturity", "values", "maturity", ...(schemaV2 ? [] : ["provenance"])].includes(key)) {
       throw new Error(`${label} declares an unknown field: ${key}.`);
     }
   }
   return Object.freeze({
-    capabilitySchemaVersion: ROUTE_CAPABILITY_SCHEMA_VERSION,
+    capabilitySchemaVersion: declaredSchemaVersion,
     driverMaturity: declaredDriverMaturity,
     values: Object.freeze(normalizedValues),
     maturity: Object.freeze(normalizedMaturity),
+    ...(provenance == null ? {} : { provenance }),
   });
 }
 

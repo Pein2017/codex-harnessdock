@@ -240,6 +240,7 @@ function setup(options = {}) {
     assignedMessageIds,
     preparedInput: PROMPT,
     turnOptions: null,
+    inspectionEvidence: { generation: "unavailable", capabilities: route.capabilities },
   });
 
   return {
@@ -434,6 +435,7 @@ describe("version-three worker loss: before native submission (scenario 1)", () 
       assignedMessageIds: reservation.assignedMessages.map((message) => message.messageId),
       preparedInput: PROMPT,
       turnOptions: null,
+      inspectionEvidence: { generation: "unavailable", capabilities: route.capabilities },
     });
     const before = store.readAgent(agent.agentId);
 
@@ -561,6 +563,7 @@ describe("version-three worker loss: before native submission (scenario 1)", () 
       assignedMessageIds: [queued.message.messageId],
       preparedInput: "continue exactly",
       turnOptions: null,
+      inspectionEvidence: { generation: "unavailable", capabilities: route.capabilities },
     });
 
     rollbackPreparedVersionThreeTurn({ cwd: workspaceRoot, ownerRootId, agentId: agent.agentId, jobId, attemptId });
