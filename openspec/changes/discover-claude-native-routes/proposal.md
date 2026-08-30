@@ -4,8 +4,8 @@ Pi and OpenCode already take current model/effort facts from their native Harnes
 
 ## What Changes
 
-- Replace the Claude static route roster with a bounded, zero-prompt native control inspection from the exact configured Claude executable and ordinary `CLAUDE_CONFIG_DIR` state.
-- Use the native initialization/model-list response as the only admitted model source and require native per-model effort evidence. If the installed CLI cannot provide complete, unambiguous model/effort facts without a turn, report the Claude instance unavailable rather than falling back to a static table.
+- Replace the Claude static route roster with a bounded, zero-prompt Agent SDK initialization from the exact configured Claude executable and ordinary `CLAUDE_CONFIG_DIR` state.
+- Use the documented `initializationResult().models` (or `supportedModels()`) response as the only admitted model source and require native per-model effort evidence. If the SDK cannot provide complete, unambiguous model/effort facts without a turn, report the Claude instance unavailable rather than falling back to a static table.
 - **BREAKING:** remove Claude model aliases, effort aliases, and default-effort resolution from route admission; accept only the exact caller-stated model and effort freshly advertised by the native inspection.
 - Revalidate the same exact tuple immediately before transport and leave existing Agent route identity immutable. Native configuration changes need no HarnessDock reload, but a disappeared or changed tuple fails before prompt submission.
 - Preserve terminal-parity execution, prompt-only `write`, leaf/native-orchestrator topology policy, Claude-owned settings/plugins/MCP/history, and current exact-session recovery behavior without adding a process permission switch.
@@ -27,4 +27,4 @@ None.
 
 ## Impact
 
-Expected surfaces are the Claude Driver/headless adapter, existing stream-json control transport, route inspection and MCP projection, diagnostics/release smoke, and Claude parity fixtures. The change adds no SDK/runtime dependency, model API client, settings parser, static compatibility catalog, provider fallback, paid retry, installation, release, archive, or model-quality claim.
+Expected surfaces are the Claude Driver, a minimal Agent SDK inspection owner, route inspection and MCP projection, diagnostics/release smoke, and Claude parity fixtures. The change pins `@anthropic-ai/claude-agent-sdk@0.3.251`; it adds no model API client, settings parser, static compatibility catalog, provider fallback, paid retry, installation, release, archive, or model-quality claim.

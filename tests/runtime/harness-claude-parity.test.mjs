@@ -25,10 +25,10 @@ function scratch(label) {
 
 const driver = createClaudeCodeDriver();
 const MODELS = [
-  ["haiku", "claude-haiku-4-5", "low"],
-  ["sonnet", "claude-sonnet-5", "high"],
-  ["opus", "claude-opus-5", "xhigh"],
-  ["fable", "claude-fable-5", "max"],
+  ["claude-haiku-4-5", "claude-haiku-4-5", "low"],
+  ["claude-sonnet-5", "claude-sonnet-5", "high"],
+  ["claude-opus-5", "claude-opus-5", "xhigh"],
+  ["claude-fable-5", "claude-fable-5", "max"],
 ];
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"];
 
@@ -40,7 +40,7 @@ async function captureTurn(route, options = {}) {
     cwd: options.cwd ?? "/workspace",
     jobId: "cc-parity-1",
     prompt: options.prompt ?? "do the work",
-    route,
+    route: { ...route, effort: route.effort ?? "high" },
     env: { CLAUDE_CONFIG_DIR: options.claudeConfigDir ?? "/data/.claude", PATH: "/usr/bin" },
     launchContext: {
       compatibility: { fingerprint: "fingerprint-1", executable: "/usr/local/bin/claude" },
@@ -92,16 +92,14 @@ describe("claude-code Driver preserves established Claude execution semantics", 
   it("admits exactly the established model, effort, and topology routes", () => {
     for (const [alias, canonical, defaultEffort] of MODELS) {
       for (const model of [alias, canonical]) {
-        const validated = driver.validateRoute({ model, write: false, delegationMode: "leaf" });
+        const validated = driver.validateRoute({ model, effort: defaultEffort, write: false, delegationMode: "leaf" });
         assert.equal(validated.model, canonical);
         assert.equal(validated.name, "terminal-parity");
         assert.equal(validated.dangerouslySkipPermissions, true);
         assert.equal(validated.delegationMode, "leaf");
-        // terminal-parity keeps the caller's effort choice; `safe` is where a
-        // per-model default applies.
-        assert.equal(validated.effort, undefined);
+        assert.equal(validated.effort, defaultEffort);
         assert.equal(
-          driver.validateRoute({ profile: "safe", model, write: false }).effort,
+          driver.validateRoute({ profile: "safe", model, effort: defaultEffort, write: false }).effort,
           defaultEffort,
         );
       }
@@ -111,12 +109,12 @@ describe("claude-code Driver preserves established Claude execution semantics", 
     }
     for (const model of ["claude-opus-5", "claude-fable-5"]) {
       assert.equal(
-        driver.validateRoute({ model, delegationMode: "claude_orchestrator", write: false }).delegationMode,
+        driver.validateRoute({ model, effort: "high", delegationMode: "claude_orchestrator", write: false }).delegationMode,
         "claude_orchestrator",
       );
     }
     assert.throws(
-      () => driver.validateRoute({ model: "opus", delegationMode: "claude_orchestrator", write: false }),
+      () => driver.validateRoute({ model: "opus", effort: "high", delegationMode: "claude_orchestrator", write: false }),
       /claude_orchestrator delegation requires exact model claude-opus-5 or claude-fable-5/,
     );
     assert.throws(() => driver.validateRoute({ model: "claude-opus-4-7", write: false }), /Unsupported Claude model/);
@@ -126,7 +124,7 @@ describe("claude-code Driver preserves established Claude execution semantics", 
 
   it("builds the fixed terminal-parity leaf envelope", async () => {
     const { captured } = await captureTurn(
-      { model: "sonnet", effort: "high", write: false, delegationMode: "leaf" },
+      { model: "claude-sonnet-5", effort: "high", write: false, delegationMode: "leaf" },
       { sessionName: "researcher" },
     );
     const options = captured.claudeOptions;
@@ -154,7 +152,7 @@ describe("claude-code Driver preserves established Claude execution semantics", 
   });
 
   it("keeps write intent a prompt-level authority statement", async () => {
-    const { captured } = await captureTurn({ model: "opus", write: true, delegationMode: "leaf" });
+    const { captured } = await captureTurn({ model: "claude-opus-5", write: true, delegationMode: "leaf" });
     assert.equal(captured.claudeOptions.dangerouslySkipPermissions, true);
     assert.equal(captured.claudeOptions.permissionMode, undefined);
     assert.match(captured.claudeOptions.appendSystemPrompt, /Task-scoped workspace mutation is allowed/);
@@ -175,7 +173,7 @@ describe("claude-code Driver preserves established Claude execution semantics", 
 
   it("resumes only the exact captured session and drops the fresh session name", async () => {
     const { captured } = await captureTurn(
-      { model: "opus", write: false, delegationMode: "leaf" },
+      { model: "claude-opus-5", write: false, delegationMode: "leaf" },
       { resumeSessionId: "session-exact", sessionName: "researcher" },
     );
     assert.equal(captured.claudeOptions.resumeSessionId, "session-exact");

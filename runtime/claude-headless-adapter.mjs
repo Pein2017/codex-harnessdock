@@ -1438,10 +1438,10 @@ export function buildArgs(prompt, options = {}) {
     args.push("--name", sessionName);
   }
   if (options.model) {
-    args.push("--model", resolveModel(options.model));
+    args.push("--model", options.exactDiscovered ? String(options.model) : resolveModel(options.model));
   }
   if (options.effort) {
-    args.push("--effort", resolveEffort(options.effort));
+    args.push("--effort", options.exactDiscovered ? String(options.effort) : resolveEffort(options.effort));
   }
   if (options.sessionId) {
     args.push("--session-id", options.sessionId);

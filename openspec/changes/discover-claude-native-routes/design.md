@@ -1,6 +1,6 @@
 ## Context
 
-See `proposal.md` and its five delta specs. The installed Claude Code 2.1.250 help exposes model/effort selection but no documented `models` subcommand. The executable contains a native `list_models` control subtype, and `/data/CoordExp/external/codex-host/packages/adapters/claude-code/src/sdk-transport.ts` proves that a zero-prompt Agent SDK initialization can return `initializationResult().models`. That precedent establishes a native seam, not a contract to copy its default-model or all-model thinking assumptions.
+See `proposal.md` and its five delta specs. The installed Claude Code 2.1.250 help exposes model/effort selection but no documented `models` subcommand. The pinned public Agent SDK exposes `Query.initializationResult()`, `supportedModels()`, `ModelInfo.resolvedModel`, `ModelInfo.supportedEffortLevels`, and `pathToClaudeCodeExecutable`; that is the contract used here.
 
 ## Goals / Non-Goals
 
@@ -12,15 +12,15 @@ See `proposal.md` and its five delta specs. The installed Claude Code 2.1.250 he
 
 **Non-Goals:**
 
-- No Anthropic Models API client, API-key requirement, settings scraping, Agent SDK runtime dependency, human TUI parsing, static version table, default route, or fallback model.
+- No Anthropic Models API client, API-key requirement, settings scraping, human TUI parsing, static version table, default route, or fallback model.
 - No model-quality ordering, provider/account details, plugin/MCP inventory, permission-mode change, or Claude lifecycle redesign.
 - No partial rollout that disables a currently usable Claude route merely because the research probe is incomplete.
 
 ## Decisions
 
-### 1. First freeze a zero-prompt native control receipt
+### 1. Use documented zero-prompt SDK initialization
 
-Implementation begins with a disposable process-shaped probe against the exact configured executable using the existing stream-json transport family. It may send only initialization and `list_models`-class control messages, bounds stdout/stderr/time/process group, and must prove that no user message, accepted turn, session continuation, or model request occurred. The sanitized response becomes the fake fixture before production code changes.
+Implementation uses an empty `AsyncIterable` prompt with `query({ options: { cwd, pathToClaudeCodeExecutable } })`, omits `settingSources`, awaits only initialization model metadata, bounds the deadline, and always calls `close()`. It never yields a user message, accepts a turn, resumes a session, or starts generation. Deterministic SDK fakes are the fixture source.
 
 If the installed protocol cannot return complete exact selectable model values and per-model effort evidence, the change enters `HOLD`: keep the shipped Claude catalog behavior unchanged, record the negative receipt, and do not remove aliases/defaults or merge an always-unavailable Driver.
 
@@ -38,7 +38,7 @@ The probe inherits the same allowlisted environment and `CLAUDE_CONFIG_DIR` as a
 
 The ordinary turn still passes through `runtime/execution-profile.mjs`; terminal-parity additions and the leaf/native-orchestrator envelope remain unchanged and are compared separately by the differential change.
 
-Alternative rejected: reuse the external inspector's `settingSources: ["user"]`, `tools: []`, or SDK dependency. Those are codex-host product choices and would not prove parity with this user's direct Claude invocation.
+Alternative rejected: reuse the external inspector's `settingSources: ["user"]` or `tools: []`. Those are codex-host product choices and would not prove parity with this user's direct Claude invocation.
 
 ### 4. Discovery and admission are two fresh observations
 

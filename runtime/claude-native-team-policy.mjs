@@ -13,13 +13,6 @@ const LEAF = "leaf";
 const ORCHESTRATOR = "claude_orchestrator";
 const NATIVE_TEAM_LEAD = "native_team_lead";
 const ORCHESTRATOR_MODELS = new Set(["claude-opus-5", "claude-fable-5"]);
-const LEAF_MODELS = new Set([
-  "claude-haiku-4-5",
-  "claude-sonnet-5",
-  "claude-opus-5",
-  "claude-fable-5",
-]);
-
 const COMMON_DENIED_TOOL_NAMES = Object.freeze([
   "Workflow",
   "ListAgents",
@@ -110,7 +103,7 @@ function normalizeMode(value) {
 }
 
 function normalizeModel(value) {
-  return requiredText(value, "Claude model").toLowerCase();
+  return requiredText(value, "Claude model");
 }
 
 function memberAuthority(name, write) {
@@ -221,10 +214,6 @@ export function resolveNativeTeamPolicy({ model, delegationMode, write, jobId } 
       "claude_orchestrator delegation requires exact model claude-opus-5 or claude-fable-5."
     );
   }
-  if (!LEAF_MODELS.has(exactModel)) {
-    throw new Error(`Unsupported Claude model ${exactModel}.`);
-  }
-
   if (mode === LEAF) {
     return deepFreeze({
       role: LEAF,

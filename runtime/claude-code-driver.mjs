@@ -16,17 +16,14 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  MODEL_ALIASES,
-  VALID_EFFORTS,
   cancelClaudeProcess,
   getClaudeAuthStatus,
   getClaudeAvailability,
   interruptClaudeProcess,
   requestClaudeInterrupt,
-  resolveDefaultEffort,
-  resolveEffort,
   sanitizeUnknownEventSummary,
 } from "./claude-headless-adapter.mjs";
+import { inspectClaudeAgentSdkRoutes } from "./claude-agent-sdk-inspector.mjs";
 import { observeClaudeCredentialState } from "./claude-credential-state.mjs";
 import { readBoundClaudeAgentMessages } from "./claude-session-history.mjs";
 import {
@@ -69,8 +66,6 @@ import { terminalMetricsFromEvidence } from "./terminal-metrics.mjs";
 export const CLAUDE_CODE_HARNESS_ID = "claude-code";
 export const CLAUDE_CODE_DRIVER_VERSION = "claude-code@2";
 
-const CHECKOUT_DECLARED_CLAUDE_MODELS = Object.freeze([...new Set(MODEL_ALIASES.values())]);
-const CHECKOUT_DECLARED_CLAUDE_EFFORTS = Object.freeze([...VALID_EFFORTS]);
 
 /**
  * Observable behavior of a Claude Code turn under this checkout.
@@ -627,7 +622,7 @@ const MAX_TURN_OPTIONS_DEPTH = 1;
  * exactly once, from that snapshot, and a caller-held reference to the
  * original object can never change what this Driver already captured.
  */
-function validateClaudeTurnOptions(model, turnOptions) {
+function validateClaudeTurnOptions(model, turnOptions, admittedEffort = null) {
   if (turnOptions != null && typeof turnOptions !== "object") {
     throw new Error("Claude turn options must be a plain object.");
   }
@@ -639,7 +634,15 @@ function validateClaudeTurnOptions(model, turnOptions) {
       throw new Error(`Claude turn options declare an unknown field: ${key}.`);
     }
   }
-  const effort = resolveEffort(resolveDefaultEffort(model, snapshot.effort));
+  const effort = typeof (snapshot.effort ?? admittedEffort) === "string" &&
+    (snapshot.effort ?? admittedEffort).trim() === (snapshot.effort ?? admittedEffort) &&
+    (snapshot.effort ?? admittedEffort)
+    ? (snapshot.effort ?? admittedEffort)
+    : null;
+  if (!effort) throw new Error(`Claude route ${model} requires an explicit discovered effort.`);
+  if (admittedEffort != null && effort !== admittedEffort) {
+    throw new Error(`Claude turn effort must equal its immutable admitted effort for ${model}.`);
+  }
   return Object.freeze({ effort });
 }
 
@@ -941,6 +944,7 @@ export function createClaudeCodeDriverV2(options = {}) {
   const observeCredentialState = options.observeCredentialState ?? observeClaudeCredentialState;
   const readSteering = options.readSteering ?? getSteeringSnapshot;
   const assignDurableInput = options.assignDurableInput ?? enqueueSteeringMessage;
+  const inspectRoutes = options.inspectRoutes ?? inspectClaudeAgentSdkRoutes;
 
   const fixedInstanceKey = claudeCodeInstanceKey(fixedEnv?.CLAUDE_CONFIG_DIR);
 
@@ -987,7 +991,7 @@ export function createClaudeCodeDriverV2(options = {}) {
     }
     // Validation is the profile owner's; a route it refuses never reaches a
     // prompt, a durable claim, or the native transport.
-    validateExecutionProfileOptions({ model: route.model, delegationMode, write, jobId: turnId });
+    validateExecutionProfileOptions({ model: route.model, effort: route.effort, exactDiscovered: true, delegationMode, write, jobId: turnId });
     const policy = resolveNativeTeamPolicy({ model: route.model, delegationMode, write, jobId: turnId });
     return delegationEnvelopeFacts(policy, write);
   }
@@ -1068,26 +1072,32 @@ export function createClaudeCodeDriverV2(options = {}) {
           inspectionGeneration: "unavailable",
         }];
       }
-      return [{
-        harnessId: CLAUDE_CODE_HARNESS_ID,
-        instanceKey,
-        readiness: host.readiness,
-        liveValidated: true,
-        maturity: "experimental",
-        detailCode: host.detailCode,
-        routes: host.readiness === "ready"
-          ? {
-              models: [...CHECKOUT_DECLARED_CLAUDE_MODELS],
-              effortsByModel: Object.fromEntries(
-                CHECKOUT_DECLARED_CLAUDE_MODELS.map((model) => [model, [...CHECKOUT_DECLARED_CLAUDE_EFFORTS]]),
-              ),
-              topologies: ["leaf", "native_orchestrator"],
-              interaction: "noninteractive_fixed_policy",
-            }
-          : null,
-        capabilityProvenance: claudeRouteCapabilities("leaf").provenance,
-        inspectionGeneration: "unavailable",
-      }];
+      if (host.readiness !== "ready") {
+        return [{
+          harnessId: CLAUDE_CODE_HARNESS_ID, instanceKey, readiness: host.readiness,
+          liveValidated: true, maturity: "experimental", detailCode: host.detailCode,
+          routes: null, capabilityProvenance: claudeRouteCapabilities("leaf").provenance,
+          inspectionGeneration: "unavailable",
+        }];
+      }
+      try {
+        const discovered = await inspectRoutes({ cwd: observedCwd, executable: host.compatibility.executable });
+        return [{
+          harnessId: CLAUDE_CODE_HARNESS_ID, instanceKey, readiness: "ready",
+          liveValidated: true, maturity: "experimental", detailCode: "ready",
+          routes: { ...discovered, topologies: ["leaf", "native_orchestrator"], interaction: "noninteractive_fixed_policy" },
+          capabilityProvenance: claudeRouteCapabilities("leaf").provenance,
+          inspectionGeneration: "unavailable",
+        }];
+      } catch (error) {
+        return [{
+          harnessId: CLAUDE_CODE_HARNESS_ID, instanceKey, readiness: "unavailable",
+          liveValidated: false, maturity: "experimental",
+          detailCode: "protocol_error", routes: null,
+          capabilityProvenance: claudeRouteCapabilities("leaf").provenance,
+          inspectionGeneration: "unavailable",
+        }];
+      }
     },
 
     /**
@@ -1124,23 +1134,23 @@ export function createClaudeCodeDriverV2(options = {}) {
     validateRoute(request, inspection) {
       const delegationMode = delegationModeForTopology(request?.topology);
       const write = request?.authority === "behavioral_write";
-      const validated = validateExecutionProfileOptions({
-        model: request?.model,
-        delegationMode,
-        write,
+      const model = typeof request?.model === "string" && request.model.trim() === request.model && request.model
+        ? request.model : null;
+      if (!model || !inspection?.routes?.models?.includes(model)) {
+        throw new Error("Claude route validation requires one exact discovered full model.");
+      }
+      const effort = validateClaudeTurnOptions(model, { effort: request?.effort }).effort;
+      if (!inspection.routes.effortsByModel?.[model]?.includes(effort)) {
+        throw new Error(`Claude route validation requires one exact discovered effort for ${model}.`);
+      }
+      validateExecutionProfileOptions({
+        model, effort, exactDiscovered: true, delegationMode, write,
         jobId: delegationMode === "claude_orchestrator" ? "route-validation" : undefined,
       });
-      if (validated.model !== request?.model) {
-        throw new Error(
-          `Claude route validation requires the exact model ${validated.model}, not the alias ` +
-          `${JSON.stringify(request?.model ?? null)}: a route is persisted as stated.`
-        );
-      }
-      const effort = validateClaudeTurnOptions(validated.model, { effort: request?.effort }).effort;
       return {
         harnessId: CLAUDE_CODE_HARNESS_ID,
         instanceKey: inspection.instanceKey,
-        model: validated.model,
+        model,
         topology: request.topology,
         authority: request.authority,
         effort,
@@ -1161,7 +1171,7 @@ export function createClaudeCodeDriverV2(options = {}) {
       if (!taskInput.trim()) {
         throw new Error("A Claude turn requires bounded task input.");
       }
-      const turnOptions = validateClaudeTurnOptions(route.model, input?.turnOptions);
+      const turnOptions = validateClaudeTurnOptions(route.model, input?.turnOptions, route.effort);
       const facts = envelopeFacts(route, input?.turnId);
       return {
         harnessId: CLAUDE_CODE_HARNESS_ID,
@@ -1193,7 +1203,7 @@ export function createClaudeCodeDriverV2(options = {}) {
      * a receipt written earlier.
      */
     async revalidatePreparedTurn(preparedTurn, scope) {
-      assertOwnedRoute(preparedTurn?.route, "Claude prepared turn route");
+      const route = assertOwnedRoute(preparedTurn?.route, "Claude prepared turn route");
       assertOwnedRoute(scope?.route, "Claude turn scope route");
       const cwd = scope?.workspaceRoot ?? process.cwd();
       const host = observeHost(cwd);
@@ -1211,6 +1221,15 @@ export function createClaudeCodeDriverV2(options = {}) {
         host.compatibility,
         { availability: host.availability, env: fixedEnv },
       );
+      let discovered;
+      try {
+        discovered = await inspectRoutes({ cwd, executable: compatibility.executable });
+      } catch {
+        throw new Error("Claude exact-route revalidation is unavailable before prompt submission.");
+      }
+      if (!discovered.models.includes(route.model) || !discovered.effortsByModel?.[route.model]?.includes(route.effort)) {
+        throw new Error("Claude exact route disappeared or narrowed before prompt submission.");
+      }
       return Object.freeze({ availability: host.availability, compatibility });
     },
 
@@ -1310,7 +1329,7 @@ export function createClaudeCodeDriverV2(options = {}) {
         }
         // The prepared digest binds a validated turn-scoped effort; a scope
         // that requests a different one can never reuse it.
-        const turnOptions = validateClaudeTurnOptions(route.model, scope.turnOptions);
+        const turnOptions = validateClaudeTurnOptions(route.model, scope.turnOptions, route.effort);
         if (JSON.stringify(turnOptions) !== JSON.stringify(preparedTurn?.turnOptions)) {
           throw new Error(
             "The prepared Claude turn options are not the ones this turn's scope requests: " +
@@ -1332,6 +1351,7 @@ export function createClaudeCodeDriverV2(options = {}) {
           model: route.model,
           delegationMode,
           write,
+          exactDiscovered: true,
           env: fixedEnv,
           jobId: scope.turnId,
           effort: turnOptions.effort,
