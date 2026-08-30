@@ -26,12 +26,12 @@
     "promptSubmitted": false,
     "modelTurnObserved": false,
     "models": [
-      "claude-opus-5",
+      "claude-opus-5[1m]",
       "claude-fable-5",
       "claude-sonnet-5"
     ],
     "effortsByModel": {
-      "claude-opus-5": [
+      "claude-opus-5[1m]": [
         "low",
         "medium",
         "high",

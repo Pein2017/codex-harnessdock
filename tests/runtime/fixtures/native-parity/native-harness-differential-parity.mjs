@@ -94,7 +94,7 @@ function validateClaudeReceipt(receipt) {
     inventory.promptSubmitted !== false || inventory.modelTurnObserved !== false) {
     fail("Claude inventory witness is not the accepted zero-prompt SDK observation");
   }
-  const expectedModels = ["claude-opus-5", "claude-fable-5", "claude-sonnet-5"];
+  const expectedModels = ["claude-opus-5[1m]", "claude-fable-5", "claude-sonnet-5"];
   const expectedEfforts = ["low", "medium", "high", "xhigh", "max"];
   if (JSON.stringify(inventory.models) !== JSON.stringify(expectedModels) ||
     JSON.stringify(inventory.effortsByModel) !== JSON.stringify(Object.fromEntries(expectedModels.map((model) => [model, expectedEfforts])))) {

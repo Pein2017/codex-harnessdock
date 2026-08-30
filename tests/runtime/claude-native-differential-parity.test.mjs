@@ -59,9 +59,9 @@ const INVENTORY_WITNESS = {
   source: "claude-agent-sdk-initialization",
   promptSubmitted: false,
   modelTurnObserved: false,
-  models: ["claude-opus-5", "claude-fable-5", "claude-sonnet-5"],
+  models: ["claude-opus-5[1m]", "claude-fable-5", "claude-sonnet-5"],
   effortsByModel: {
-    "claude-opus-5": ["low", "medium", "high", "xhigh", "max"],
+    "claude-opus-5[1m]": ["low", "medium", "high", "xhigh", "max"],
     "claude-fable-5": ["low", "medium", "high", "xhigh", "max"],
     "claude-sonnet-5": ["low", "medium", "high", "xhigh", "max"],
   },
