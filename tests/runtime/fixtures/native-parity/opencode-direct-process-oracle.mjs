@@ -93,7 +93,7 @@ function directNativeObservation(record, executable) {
 }
 
 /** Manually spawn, health-check, reuse-check, and stop one exact fake Server. */
-export async function runDirectOpencodeProcessOracle({ executable, root, configuration, baseEnv = process.env, healthState = null, permission = '{"*":"allow"}', args = null }) {
+export async function runDirectOpencodeProcessOracle({ executable, root, configuration, baseEnv = process.env, healthState = null, permission = '{"*":"allow","doom_loop":"allow"}', args = null }) {
   const port = await freeLoopbackPort();
   const url = `http://127.0.0.1:${port}`;
   const recordFile = new URL("direct-process.json", `file://${root}/`).pathname;

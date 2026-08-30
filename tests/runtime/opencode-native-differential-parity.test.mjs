@@ -312,6 +312,7 @@ function assertUnattendedPolicyDelta(policy) {
       { permission: "question", pattern: "*", action: "deny" },
       { permission: "plan_exit", pattern: "*", action: "deny" },
       { permission: "task", pattern: "*", action: "deny" },
+      { permission: "doom_loop", pattern: "*", action: "allow" },
     ],
     "the harness-only session permission delta must be the reviewed unattended policy",
   );
