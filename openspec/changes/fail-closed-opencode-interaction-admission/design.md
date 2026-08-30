@@ -19,7 +19,7 @@ See `proposal.md` and `specs/opencode-explorer-runtime/spec.md`. The installed b
 
 ### 1. Use the maximum session policy, with only zero-wait denials
 
-Managed children receive the exact child-local environment `OPENCODE_PERMISSION='{"*":"allow"}'`. `POST /session` sends exact ordered rules: wildcard `allow`, followed by `question: deny`, `plan_exit: deny`, and `task: deny`. The wildcard maximizes ordinary permissions; the three terminal denials remove unattended interaction and delegation/escape surfaces. No arbitrary generic `ask` rule is added.
+Managed children receive the exact child-local environment `OPENCODE_PERMISSION='{"*":"allow","doom_loop":"allow"}'`. `POST /session` sends exact ordered rules: wildcard `allow`, followed by `question: deny`, `plan_exit: deny`, `task: deny`, and `doom_loop: allow`. The wildcard maximizes ordinary permissions; the three terminal denials remove unattended interaction and delegation/escape surfaces, while the explicit `doom_loop` allow overrides the native Agent exception. No arbitrary generic `ask` rule is added.
 
 Session wildcard rules override ordinary Agent-specific rules, but `doom_loop` is Agent-scoped. Therefore final `GET /config` plus `GET /agent` resolves the default Agent and requires terminal `doom_loop:*:allow`; an absent, malformed, ambiguous, or non-allow terminal witness produces sanitized `interactive_policy` and zero `POST /session`.
 

@@ -79,7 +79,7 @@ describe("OpenCode shared service manager", () => {
     const inherited = process.env.OPENCODE_PERMISSION;
 
     assert.deepEqual(await manager.ensure(), { status: "managed" });
-    assert.equal(childEnv.OPENCODE_PERMISSION, '{"*":"allow"}');
+    assert.equal(childEnv.OPENCODE_PERMISSION, '{"*":"allow","doom_loop":"allow"}');
     assert.equal(process.env.OPENCODE_PERMISSION, inherited);
     const receiptFile = path.join(runtimeRoot, "opencode-service", "receipt.json");
     const receipt = JSON.parse(fs.readFileSync(receiptFile, "utf8"));

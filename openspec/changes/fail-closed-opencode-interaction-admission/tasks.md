@@ -11,8 +11,8 @@
 
 ## 3. Maximum-permission session policy and ownership
 
-- [x] 3.1 Install exact child-local `OPENCODE_PERMISSION='{"*":"allow"}'` for managed children and bind a nonsecret policy-generation digest plus environment identity into the managed-Service fingerprint/receipt without leaking arbitrary environment values.
-- [x] 3.2 Create sessions with exact ordered rules wildcard `allow`, `question: deny`, `plan_exit: deny`, and `task: deny`; preserve exact provider/model/variant and Agent-selector omission.
+- [x] 3.1 Install exact child-local `OPENCODE_PERMISSION='{"*":"allow","doom_loop":"allow"}'` for managed children and bind a nonsecret policy-generation digest plus environment identity into the managed-Service fingerprint/receipt without leaking arbitrary environment values.
+- [x] 3.2 Create sessions with exact ordered rules wildcard `allow`, `question: deny`, `plan_exit: deny`, `task: deny`, and `doom_loop: allow`; preserve exact provider/model/variant and Agent-selector omission.
 - [x] 3.3 Keep attached Servers unchanged: do not restart, replace, or mutate them to install policy, and do not add a broker, prompt tool map, auto-answer, user/global/project config change, or model call.
 
 ## 4. Bounded lifecycle witnesses
