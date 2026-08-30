@@ -559,6 +559,7 @@ describe("opencode-client: turn-scoped admission gate", () => {
         { permission: "question", pattern: "*", action: "deny" },
         { permission: "plan_exit", pattern: "*", action: "deny" },
         { permission: "task", pattern: "*", action: "deny" },
+        { permission: "doom_loop", pattern: "*", action: "allow" },
       ],
     });
     assert.equal(Object.hasOwn(server.requests[0].body, "agent"), false);

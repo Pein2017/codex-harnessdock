@@ -638,6 +638,7 @@ describe("opencode driver: session and turn lineage", () => {
       { permission: "question", pattern: "*", action: "deny" },
       { permission: "plan_exit", pattern: "*", action: "deny" },
       { permission: "task", pattern: "*", action: "deny" },
+      { permission: "doom_loop", pattern: "*", action: "allow" },
     ]);
     assert.equal(Object.hasOwn(posts[0].body, "title"), false, "never sends prompt-derived session metadata");
     assert.equal(posts[0].query.directory, WORKSPACE_ROOT);

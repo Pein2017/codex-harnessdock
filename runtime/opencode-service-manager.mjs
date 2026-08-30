@@ -20,8 +20,8 @@ const LOCK_TIMEOUT_MS = 5_000;
 const STARTUP_TIMEOUT_MS = 10_000;
 const RETRY_DELAY_MS = 20;
 const REAP_TIMEOUT_MS = 5_000;
-const MANAGED_CHILD_PERMISSION = '{"*":"allow"}';
-const POLICY_GENERATION = "opencode-max-permission-zero-wait-v1";
+const MANAGED_CHILD_PERMISSION = '{"*":"allow","doom_loop":"allow"}';
+const POLICY_GENERATION = "opencode-max-permission-zero-wait-v2";
 
 function sha256(value) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");

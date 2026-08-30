@@ -1,11 +1,11 @@
 ## ADDED Requirements
 
 ### Requirement: OpenCode admission establishes maximum permissions without unattended interaction
-Before advertising or creating an OpenCode session, the Driver SHALL establish the highest supported permission surface while denying only `question`, `plan_exit`, and `task` for zero-wait execution. A managed child SHALL receive exact `OPENCODE_PERMISSION='{"*":"allow"}'`; `POST /session` SHALL use ordered rules wildcard `allow`, then `question: deny`, `plan_exit: deny`, and `task: deny`. The Driver SHALL preserve the exact provider/model/variant route and omit an Agent selector. It SHALL NOT use user/global/project configuration mutation, a permission/question broker, prompt tool map, auto-answer, or a model call to establish admission.
+Before advertising or creating an OpenCode session, the Driver SHALL establish the highest supported permission surface while denying only `question`, `plan_exit`, and `task` for zero-wait execution. A managed child SHALL receive exact `OPENCODE_PERMISSION='{"*":"allow","doom_loop":"allow"}'`; `POST /session` SHALL use ordered rules wildcard `allow`, then `question: deny`, `plan_exit: deny`, `task: deny`, and `doom_loop: allow`. The Driver SHALL preserve the exact provider/model/variant route and omit an Agent selector. It SHALL NOT use user/global/project configuration mutation, a permission/question broker, prompt tool map, auto-answer, or a model call to establish admission.
 
 #### Scenario: Managed child has the requested policy
 - **WHEN** a managed OpenCode child is created for an otherwise valid exact route
-- **THEN** its child-local environment is exactly the managed wildcard allow policy and the session request has the declared ordered wildcard/terminal-deny rules
+- **THEN** its child-local environment is exactly the managed wildcard plus `doom_loop` allow policy and the session request has the declared ordered wildcard/terminal-deny rules plus terminal `doom_loop` allow
 
 #### Scenario: Ordinary Agent rule is overridden by the session wildcard
 - **WHEN** the resolved default Agent has an ordinary permission rule that conflicts with the session wildcard

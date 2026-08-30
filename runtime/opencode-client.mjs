@@ -892,6 +892,7 @@ export async function createOpencodeSession(handle, options) {
           { permission: "question", pattern: "*", action: "deny" },
           { permission: "plan_exit", pattern: "*", action: "deny" },
           { permission: "task", pattern: "*", action: "deny" },
+          { permission: "doom_loop", pattern: "*", action: "allow" },
         ],
         ...(directory === undefined ? {} : { directory }),
       },
