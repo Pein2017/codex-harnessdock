@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.26.0 - 2026-08-31
+
+- Add `dispatch_agents` as the ninth typed MCP operation and matching Skill for
+  1..8 complete explicit rows, with pure structural validation, bounded
+  environment preflight, exact-pair discovery reuse, ordered launch, and no
+  durable batch identity, retry, fallback, or cross-row rollback.
+- Preserve singular-spawn ownership across cancellation and non-rollback-safe
+  failure, returning only the public Agent name and closed recovery outcome;
+  update operator accounting for exact Harness/model/effort/topology/write
+  routes and batch row outcomes.
+- Advance the MCP API to generation 10 and update the zero-model release smoke,
+  Plugin guidance, direct-Harness parity, and failure/performance acceptance for
+  exactly nine tools and Skills within the existing catalog budget.
+
 ## 0.25.5 - 2026-08-31
 
 - Revalidate and pin OpenCode 1.18.25 so an upgraded managed service is

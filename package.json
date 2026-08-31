@@ -1,6 +1,6 @@
 {
   "name": "codex-harnessdock-runtime",
-  "version": "0.25.5",
+  "version": "0.26.0",
   "description": "HarnessDock for Codex is an unofficial third-party durable Claude Agent runtime; it is not affiliated with or endorsed by OpenAI.",
   "private": true,
   "type": "module",
