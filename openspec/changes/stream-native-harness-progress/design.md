@@ -281,8 +281,12 @@ gate after the corresponding spec/tasks are approved.
 
 1. Land the capability-v4, Driver, V3 projection, wait, and focused-test
    changes together; no stored V3 job conversion or transcript migration runs.
-2. Retained V3 records without progress remain recoverable; retained v3 route
-   snapshots are not re-admitted for new work.
+2. Retained V3 records without progress remain recoverable. Stored capability
+   schemas v2/v3 are validated against the dimensions that existed in that
+   schema, without fabricating or writing back the later `nativeProgress`
+   claim; an explicitly present later claim must still be complete. Fresh
+   routes remain strict v4, and old snapshots alone are not re-admitted for new
+   work.
 3. Refresh the Plugin cachebuster and start a new Codex task so fresh Driver
    capability snapshots and model-facing guidance are loaded together.
 4. Rollback removes the new sink/projection and restores capability v3 only if

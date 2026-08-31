@@ -124,11 +124,15 @@ export const ADMITTED_INTERACTION_VALUES = Object.freeze(["noninteractive_fixed_
  * values, missing dimensions, missing maturity, and a foreign schema version all
  * fail here, before an Agent, lease, or native turn exists.
  */
-export function validateRouteCapabilityProvenance(provenance, label = "Route capability provenance") {
+export function validateRouteCapabilityProvenance(
+  provenance,
+  label = "Route capability provenance",
+  { capabilityNames = ROUTE_CAPABILITY_NAMES } = {},
+) {
   const fields = plainRecordSnapshot(provenance, label);
   /** @type {Record<string, string>} */
   const normalized = {};
-  for (const name of ROUTE_CAPABILITY_NAMES) {
+  for (const name of capabilityNames) {
     const value = fields[name];
     if (!ROUTE_CAPABILITY_PROVENANCE_VALUES.includes(value)) {
       throw new Error(
@@ -139,7 +143,7 @@ export function validateRouteCapabilityProvenance(provenance, label = "Route cap
     normalized[name] = value;
   }
   for (const name of Object.keys(fields)) {
-    if (!ROUTE_CAPABILITY_NAMES.includes(name)) {
+    if (!capabilityNames.includes(name)) {
       throw new Error(`${label} declares an unknown capability provenance: ${name}.`);
     }
   }
@@ -177,14 +181,18 @@ export function validateRouteCapabilitySnapshot(snapshot, label = "Route capabil
   }
   const values = plainRecordSnapshot(fields.values, `${label} capability values`);
   const maturity = plainRecordSnapshot(fields.maturity, `${label} capability maturity`);
+  const capabilityNames = declaredSchemaVersion < ROUTE_CAPABILITY_SCHEMA_VERSION &&
+      !Object.hasOwn(values, "nativeProgress")
+    ? ROUTE_CAPABILITY_NAMES.filter((name) => name !== "nativeProgress")
+    : ROUTE_CAPABILITY_NAMES;
   const provenance = legacySchema ? null : validateRouteCapabilityProvenance(
-    fields.provenance, `${label} capability provenance`
+    fields.provenance, `${label} capability provenance`, { capabilityNames }
   );
   /** @type {Record<string, string>} */
   const normalizedValues = {};
   /** @type {Record<string, string>} */
   const normalizedMaturity = {};
-  for (const name of ROUTE_CAPABILITY_NAMES) {
+  for (const name of capabilityNames) {
     const value = values[name];
     if (!ROUTE_CAPABILITY_VALUES[name].includes(value)) {
       throw new Error(
@@ -205,7 +213,7 @@ export function validateRouteCapabilitySnapshot(snapshot, label = "Route capabil
   for (const [part, partLabel] of [[values, "capability"], [maturity, "capability maturity"],
     ...(provenance == null ? [] : [[provenance, "capability provenance"]])]) {
     for (const name of Object.keys(part)) {
-      if (!ROUTE_CAPABILITY_NAMES.includes(name)) {
+      if (!capabilityNames.includes(name)) {
         throw new Error(`${label} declares an unknown ${partLabel}: ${name}.`);
       }
     }

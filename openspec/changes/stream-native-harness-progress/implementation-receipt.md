@@ -46,6 +46,13 @@ Both V3 records are now `completed`, carry `progress: null`, preserve their deli
 - MCP `notifications/progress` remains host-log/UI evidence, not a proven model-visible stream. The supported model-facing boundary remains explicit `wait_agent` long-polling.
 - Release/install and a new-task reload remain separate user-authorized actions.
 
+## Retained-Schema Compatibility Correction
+
+- A genuine retained capability-schema v2/v3 Agent without the later `nativeProgress` dimension reproduced the production failure before an unrelated fresh spawn could launch.
+- Stored v2/v3 snapshots now validate only their historical dimensions, without defaulting or rewriting `nativeProgress`; a partial later claim still fails, and every fresh route remains strict schema v4.
+- The public-spawn regression passed for both retained schemas and preserved each historical route byte-for-byte. The exact production schema-v2 terminal route also passed a read-only replay with `nativeProgress` still absent.
+- Focused migration/Driver/public-spawn/worker suites passed **208/208**. Strict OpenSpec validation and `git diff --check` passed. Fresh `npm run check` passed with unit **1710 tests / 1709 passed / 0 failed / 1 skipped** and integration **20/20 passed**.
+
 ## Depth-2 Pilot Receipt
 
 - Lead disposition: accepted candidate.

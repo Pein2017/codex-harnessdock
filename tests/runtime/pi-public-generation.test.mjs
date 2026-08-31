@@ -255,6 +255,48 @@ describe("Pi public generation v3 dispatch", () => {
     }
   });
 
+  it("does not let a genuine pre-v4 terminal Agent poison a fresh v4 spawn", async () => {
+    for (const capabilitySchemaVersion of [2, 3]) {
+      const context = setup();
+      const legacyReceipt = await context.runtime.spawnAgent(spawnInput({ task_name: "pi_pre_v4_peer" }));
+      const store = context.runtime.versionThreeStore();
+      const legacyAgent = store.resolveTarget(legacyReceipt.agent_name);
+      store.updateAgent(legacyAgent.agentId, (current) => ({ ...current, activeJobId: null, status: "completed" }));
+
+      const registryPath = path.join(resolveAgentRegistryDirectory({
+        cwd: legacyAgent.workspaceRoot, ownerRootId: context.ownerRootId,
+      }), "registry.json");
+      const registry = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+      const historical = registry.agents[legacyAgent.agentId];
+      const { provenance: currentProvenance, ...legacyCapabilities } = historical.route.capabilities;
+      const { nativeProgress: _nativeProgressValue, ...values } = legacyCapabilities.values;
+      const { nativeProgress: _nativeProgressMaturity, ...maturity } = legacyCapabilities.maturity;
+      const { nativeProgress: _nativeProgressProvenance, ...provenance } = currentProvenance;
+      historical.route = {
+        ...historical.route,
+        capabilitySchemaVersion,
+        capabilities: {
+          ...legacyCapabilities,
+          capabilitySchemaVersion,
+          values,
+          maturity,
+          ...(capabilitySchemaVersion === 3 ? { provenance } : {}),
+        },
+      };
+      const historicalRoute = JSON.stringify(historical.route);
+      fs.writeFileSync(registryPath, JSON.stringify(registry));
+
+      const freshReceipt = await context.runtime.spawnAgent(spawnInput({ task_name: "pi_fresh_v4_peer" }));
+      const freshAgent = store.resolveTarget(freshReceipt.agent_name);
+      assert.equal(freshAgent.route.capabilitySchemaVersion, 4);
+      assert.equal(freshAgent.route.capabilities.values.nativeProgress, "native_coalesced");
+      assert.equal(context.launches.length, 2);
+
+      const after = JSON.parse(fs.readFileSync(registryPath, "utf8"));
+      assert.equal(JSON.stringify(after.agents[legacyAgent.agentId].route), historicalRoute);
+    }
+  });
+
   it("revalidates a stored v2 Agent into a private v3 execution route without rewriting history", async () => {
     const context = setup();
     const receipt = await context.runtime.spawnAgent(spawnInput({ task_name: "pi_v2_forward" }));

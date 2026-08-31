@@ -22,6 +22,8 @@ Each admitted logical Harness instance SHALL publish a versioned route-specific 
 
 Future Harness proposals SHALL state and test whether their noninteractive native progress and exact terminal-observation surfaces are unavailable, admitted, or deliberately not applicable. Experimental admission MAY report either surface unavailable, but a route SHALL NOT claim validated lifecycle maturity while it ignores a natively available progress surface.
 
+Retained capability snapshots from an explicitly supported older schema SHALL remain readable using only the dimensions required by that declared schema. A later-added dimension MAY be absent from all of the older snapshot's values, maturity, and provenance without being defaulted, fabricated, or written back. If that later dimension is present, its value and companion metadata SHALL still validate as one complete closed claim. Fresh routes SHALL continue to require every dimension in the current schema, and one valid retained terminal Agent SHALL NOT make its root registry unreadable or block an unrelated fresh Agent spawn.
+
 #### Scenario: Active input is unsupported
 - **WHEN** a caller sends a message to a route whose snapshot declares initial input only
 - **THEN** the supervisor durably queues the message and does not claim active delivery
@@ -41,6 +43,14 @@ Future Harness proposals SHALL state and test whether their noninteractive nativ
 #### Scenario: One experimental capability fails
 - **WHEN** an experimental capability is unavailable or fails validation for one route
 - **THEN** the runtime blocks that operation or route without automatically disabling unrelated capabilities or logical instances
+
+#### Scenario: A retained pre-progress Agent shares a root with a fresh spawn
+- **WHEN** a terminal version-three Agent retains a valid capability-schema v2 or v3 route created before `nativeProgress` existed and the same root starts an unrelated current-schema Agent
+- **THEN** the old route remains byte-for-byte unchanged and readable, while the fresh Agent persists and launches only with a complete current capability snapshot
+
+#### Scenario: A fresh route omits native progress
+- **WHEN** a caller or Driver presents a current-schema route without `nativeProgress`, its maturity, or its provenance
+- **THEN** validation fails before Agent, mailbox, lease, native-session, or transport mutation
 
 #### Scenario: Harness requires interactive approval
 - **WHEN** route inspection reports `requires_broker`
