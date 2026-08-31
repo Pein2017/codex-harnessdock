@@ -1056,9 +1056,9 @@ describe("canonical Agent runtime CLI", () => {
       },
     });
     if (delegated.status !== 0) {
-      // This migration writes capability-schema v3; an unrefreshed canonical
-      // checkout still on v2 must fail closed rather than reinterpret it.
-      assert.match(`${delegated.stderr}\n${delegated.stdout}`, /capability schema version 3; this runtime requires 2/);
+      // This migration writes capability-schema v4; an unrefreshed canonical
+      // checkout still on v3 must fail closed rather than reinterpret it.
+      assert.match(`${delegated.stderr}\n${delegated.stdout}`, /capability schema version 4; this runtime requires 3/);
       assert.equal(fs.existsSync(poisonMarker), false);
       return;
     }
@@ -1230,7 +1230,11 @@ describe("canonical Agent runtime CLI", () => {
     const stored = agent(test, spawned.agent_name);
     waitForJob(test, stored.activeJobId, (value) => value.status === "running" && Boolean(value.pid));
     const receipt = run(test, ["interrupt_agent", spawned.agent_name, "--json"], { timeout: 12_000 });
-    assert.deepEqual(receipt, { agent_name: spawned.agent_name, status: "interrupted" });
+    assert.equal(receipt.agent_name, spawned.agent_name);
+    assert.ok(
+      ["interrupt_requested", "still_working", "interrupted"].includes(receipt.status),
+      `unexpected interrupt receipt: ${JSON.stringify(receipt)}`,
+    );
     waitForAgent(test, spawned.agent_name, (value) => value.status === "interrupted", { timeoutMs: 12_000 });
 
     const wait = run(test, ["wait_agent", "--timeout-ms", "0", "--json"]);

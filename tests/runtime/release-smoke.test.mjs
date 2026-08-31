@@ -212,7 +212,7 @@ describe("release smoke", () => {
     });
     assert.equal(report.status, "pass");
     assert.equal(report.promotionEligible, true);
-    assert.deepEqual(report.differentialParity.counts, { pass: 32, fail: 0, hold: 0, not_applicable: 10 });
+    assert.deepEqual(report.differentialParity.counts, { pass: 34, fail: 0, hold: 0, not_applicable: 8 });
     assert.equal(report.differentialParity.blockers.length, 0);
   });
 

@@ -33,6 +33,7 @@ import {
   boundPositiveInteger,
   createFixedOriginFetch,
   createOpencodeDiscoveryClient,
+  createOpencodeObservationClient,
   createOpencodeSession,
   discoverOpencodeCapabilities,
   discoverOpencodeDefaultAgent,
@@ -44,6 +45,9 @@ import {
   isLoopbackOpencodeUrl,
   createOpencodeTurnClient,
   isAdmittedOpencodeTurnRequest,
+  observeOpencodeSession,
+  readOpencodeObservedSession,
+  reduceOpencodeObservationEvent,
   resolveOpencodeResponseCeiling,
   resolveOpencodeServerUrl,
   resolveOpencodeTurnResponseCeiling,
@@ -989,5 +993,87 @@ describe("opencode-client: deadline and response-size constants", () => {
   it("exposes a closed, positive default response byte bound", () => {
     assert.ok(Number.isInteger(OPENCODE_MAX_RESPONSE_BYTES));
     assert.ok(OPENCODE_MAX_RESPONSE_BYTES > 0);
+  });
+});
+
+describe("opencode-client: fixed-origin read-only native observation", () => {
+  it("bounds a header-stalled event connection by the configured deadline and closes it", async () => {
+    const { root, codexHome } = fixtureCodexHome();
+    const { server, url } = await startServer({ eventHangBeforeHeaders: true });
+    const handle = createOpencodeObservationClient({
+      cwd: root,
+      env: baseEnv(codexHome, { OPENCODE_SERVER_URL: url }),
+      timeoutMs: 25,
+    });
+    const controller = new AbortController();
+    const startedAt = Date.now();
+    let timeoutId;
+    const outcome = await Promise.race([
+      observeOpencodeSession(handle, { sessionId: "ses_exact", signal: controller.signal }).then(() => "returned"),
+      new Promise((resolve) => { timeoutId = setTimeout(() => resolve("timed_out"), 500); }),
+    ]);
+    clearTimeout(timeoutId);
+    assert.equal(outcome, "returned", "the advisory observer returns a sanitized bounded failure");
+    assert.ok(Date.now() - startedAt < 500);
+    controller.abort();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.ok(server.requests.some((request) => request.path === "/event"));
+    assert.equal(server.eventConnectionCount(), 0);
+  });
+
+  it("returns promptly and closes a header-stalled event connection when the caller cancels", async () => {
+    const { root, codexHome } = fixtureCodexHome();
+    const { server, url } = await startServer({ eventHangBeforeHeaders: true });
+    const handle = createOpencodeObservationClient({
+      cwd: root,
+      env: baseEnv(codexHome, { OPENCODE_SERVER_URL: url }),
+      timeoutMs: 500,
+    });
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 25);
+    const startedAt = Date.now();
+    const observer = await observeOpencodeSession(handle, { sessionId: "ses_exact", signal: controller.signal });
+    assert.ok(Date.now() - startedAt < 250);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.ok(server.requests.some((request) => request.path === "/event"));
+    assert.equal(server.eventConnectionCount(), 0);
+    observer.dispose();
+  });
+
+  it("uses only event, exact-session messages, and status; filters foreign/raw events before progress subscribers", async () => {
+    const { root, codexHome } = fixtureCodexHome();
+    const { server, url } = await startServer({
+      auth: { username: "observer", password: "secret" },
+      observationStatus: { ses_exact: { type: "busy" } },
+      observationEvents: [
+        { type: "tool.updated", properties: { sessionID: "ses_foreign", part: { id: "prt_foreign", name: "rm" }, input: "secret" } },
+        { type: "tool.updated", properties: { sessionID: "ses_exact", part: { id: "prt_exact", name: "shell" }, output: "private" } },
+        { type: "tool.updated", properties: { sessionID: "ses_exact", part: { id: "prt_exact", name: "shell" }, output: "duplicate" } },
+      ],
+    });
+    const handle = createOpencodeObservationClient({
+      cwd: root,
+      env: baseEnv(codexHome, { OPENCODE_SERVER_URL: url, OPENCODE_SERVER_USERNAME: "observer", OPENCODE_SERVER_PASSWORD: "secret" }),
+    });
+    const observer = await observeOpencodeSession(handle, { sessionId: "ses_exact" });
+    const seen = [];
+    const unsubscribe = observer.subscribeProgress((progress) => seen.push(progress));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    unsubscribe();
+    observer.dispose();
+    assert.deepEqual(seen, [{ activity: "tool", toolName: "shell" }], "subscription replays only the latest coalesced revision");
+    assert.equal(JSON.stringify(seen).includes("secret"), false);
+    assert.equal(JSON.stringify(seen).includes("private"), false);
+    const snapshot = await readOpencodeObservedSession(handle, { sessionId: "ses_exact" });
+    assert.equal(snapshot.ok, true);
+    assert.deepEqual(new Set(server.requests.map((request) => request.path)), new Set(["/event", "/session/ses_exact/message", "/session/status"]));
+    assert.equal(server.requests.every((request) => request.method === "GET" && request.hasAuthorizationHeader), true);
+  });
+
+  it("never reduces foreign or duplicate event identities", () => {
+    const seen = new Set();
+    assert.equal(reduceOpencodeObservationEvent({ type: "message.updated", sessionID: "other", id: "one" }, "ses_exact", seen), null);
+    assert.deepEqual(reduceOpencodeObservationEvent({ type: "message.updated", sessionID: "ses_exact", id: "one" }, "ses_exact", seen), { activity: "responding" });
+    assert.equal(reduceOpencodeObservationEvent({ type: "message.updated", sessionID: "ses_exact", id: "one" }, "ses_exact", seen), null);
   });
 });

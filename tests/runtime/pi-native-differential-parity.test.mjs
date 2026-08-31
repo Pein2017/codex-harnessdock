@@ -114,7 +114,9 @@ async function launch(current, subject, { authority = "behavioral_read_only", ta
   const preparedTurn = subject.driver.prepareTurn({ route, taskInput: task, turnOptions: { effort: "high" } });
   const launchContext = await subject.driver.revalidatePreparedTurn(preparedTurn, scope);
   const live = await subject.driver.startTurn({ scope, preparedTurn, launchContext, ...(nativeSessionRef ? { nativeSessionRef } : {}) });
-  return { inspection, route, scope, live };
+  const progress = [];
+  live.subscribeProgress((value) => progress.push(value));
+  return { inspection, route, scope, live, progress };
 }
 async function completed(current, subject, options) { const output = await launch(current, subject, options); return { ...output, result: await output.live.result }; }
 
@@ -166,6 +168,7 @@ async function evidence() {
 
     const directRead = await directTurn({ ...nativeInput(current, turnArgv(current, "11111111-1111-4111-8111-111111111111")), task: "native parity task" });
     const readHarness = harness(current); const read = await completed(current, readHarness);
+    const observedRead = await readHarness.driver.observeTurn(read.live.nativeTurnRef, { route: read.route, workspaceRoot: current.root });
     const readRecord = sessionRecord(current, read.live.nativeSessionRef.locator.sessionId);
 
     const writeHarness = harness(current); const write = await completed(current, writeHarness, { authority: "behavioral_write", turnId: "driver-write" });
@@ -227,13 +230,14 @@ async function evidence() {
       row("configuration_inheritance_witness", directCatalog.nativeConfiguration.configWitness, driverCatalog.configWitness, () => parityEqual("configuration witness", directCatalog.nativeConfiguration.configWitness, driverCatalog.configWitness)),
       row("prompt_authority_native_input", readAuthorityCapture, writeAuthorityCapture, () => { parityEqual("read/write argv, environment, config, transport, and controls", readAuthorityCapture, writeAuthorityCapture); assert.notEqual(authorityStatement(promptRecord(readRecord).message), authorityStatement(promptRecord(writeRecord).message)); }, { directSource: "Pi Driver behavioral_read_only native capture", harnessdockSource: "Pi Driver behavioral_write native capture" }),
       row("ordered_events", eventTypes(directRead.events), eventTypes(readRecord), () => parityEqual("native event order", eventTypes(directRead.events), eventTypes(readRecord))),
+      row("native_progress_reduction", [{ activity: "tool", toolName: null }], read.progress, () => { assert.deepEqual(read.progress, [{ activity: "tool", toolName: null }]); assert.doesNotMatch(JSON.stringify(read.progress), /secret|path|input|output|delta/); }),
       row("interrupt_request_behavior", { events: eventTypes(directAbort.events), accepted: directAbort.abort.success }, { events: eventTypes(interruptRecord), receipt: interruptReceipt, status: interruptResult.status }, () => { parityEqual("interrupt events", eventTypes(directAbort.events), eventTypes(interruptRecord)); assert.equal(directAbort.abort.success, true); assert.deepEqual(interruptReceipt, { commandId: "interrupt-1", requestState: "accepted", nativeTurnState: "active", settlement: "pending" }); assert.equal(interruptResult.status, "interrupted"); }),
       row("exact_session_continuation", { session: directSession, providerNativeHistoryIds: nativeHistory(directContinuation.afterEntries.entries) }, { sameNativeSession: second.live.nativeSessionRef.locator.sessionId === first.live.nativeSessionRef.locator.sessionId, providerNativeHistoryIds: history.messages.map((message) => message.messageId) }, () => { assert.equal(second.live.nativeSessionRef.locator.sessionId, first.live.nativeSessionRef.locator.sessionId); assert.equal(new Set(history.messages.map((message) => message.messageId)).size, 2); parityEqual("continuation native turn identities", nativeHistory(directContinuation.afterEntries.entries), history.messages.map((message) => message.messageId)); }),
       row("terminal_classification", nativeTurnStop(directRead.events), { status: read.result.status, stopReason: read.result.resultMetadata.stopReason, receipt: read.result.driverReceipt.receipt.outcome }, () => { assert.equal(nativeTurnStop(directRead.events), "stop"); assert.deepEqual({ status: read.result.status, stopReason: read.result.resultMetadata.stopReason, receipt: read.result.driverReceipt.receipt.outcome }, { status: "completed", stopReason: "stop", receipt: "message_end" }); }),
       row("route_drift", directCatalog.models, "driver rejected changed exact native catalog before prompt", () => { assert.ok(directCatalog.models.includes(MODEL)); assert.equal(routeDriftRejected, true); }),
       row("native_usage_source_fields", directUsage, driverUsage, () => parityEqual("provider usage fields", directUsage, driverUsage)),
       row("lifecycle_process_cleanup", directLifecycle, harnessLifecycle, () => { assert.ok(directLifecycle.every(Boolean)); assert.ok(harnessLifecycle.every(Boolean)); assertAllClosed(current); }),
-      unavailable("cross_process_turn_observation_or_reconciliation", "turnObservation", inventory.routes.turnObservation, () => { assert.equal(inventory.routes.turnObservation, "unavailable"); assert.equal(typeof inventoryHarness.driver.observeTurn, "undefined"); }),
+      row("cross_process_turn_observation_or_reconciliation", { nativeTurn: "terminal" }, { nativeTurn: observedRead.nativeTurn, status: observedRead.terminalResult?.status ?? null }, () => { assert.equal(inventory.routes.turnObservation, "terminal_observable"); assert.equal(typeof inventoryHarness.driver.observeTurn, "function"); assert.equal(observedRead.nativeTurn, "terminal"); assert.equal(observedRead.terminalResult.status, "completed"); }),
       unavailable("automatic_recovery_exact_session_transport", "automaticRecovery", inventory.routes.automaticRecovery, () => assert.equal(inventory.routes.automaticRecovery, "none")),
       unavailable("same_session_recovery_prompt", "automaticRecovery", inventory.routes.automaticRecovery, () => assert.equal(inventory.routes.automaticRecovery, "none")),
     ];
@@ -267,7 +271,7 @@ describe("Pi direct-native differential parity", () => {
     const first = await evidence(); const second = await evidence();
     assert.deepEqual(second, first, "repeated zero-model evidence must be byte-identical");
     assert.deepEqual(JSON.parse(fs.readFileSync(RECEIPT, "utf8")), first);
-    assert.deepEqual(first.rows.map((entry) => entry.result), ["pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass", "not_applicable", "not_applicable", "not_applicable"]);
+    assert.deepEqual(first.rows.map((entry) => entry.result), ["pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass", "pass", "not_applicable", "not_applicable"]);
     assert.deepEqual(first.unprovenRows, [{ dimension: "real_user_configuration_loading", reason: "deterministic fake-native config witness only; real Pi user configuration was not loaded" }]);
   });
 

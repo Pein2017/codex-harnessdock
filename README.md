@@ -266,7 +266,7 @@ only the Codex lead or user can make, the Agent ends its turn with the exact
 question and supporting evidence so the same durable session can continue.
 
 An authoritative Driver `usage_or_subscription_limit` failure ends subsequent
-real CC tests in that workflow. Compatibility text fallback is deliberately
+real HarnessDock tests in that workflow. Compatibility text fallback is deliberately
 narrow: explicit subscription, allowance, credit, or quota exhaustion; generic
 HTTP 429 remains eligible for bounded exact-session recovery, and a
 caller-imposed maximum budget is not an account-limit signal. The runtime does
@@ -288,9 +288,10 @@ boundary: they return after the durable detached-worker handoff, so no Codex
 background terminal is needed. `wait_agent` is the explicit synchronous join.
 Model-facing callers use a fixed completion-first 3,600,000 ms (one-hour)
 upper bound and return immediately when completion arrives; they do not pass a
-timeout. Set `wake_on_progress: true` only for one intentional intermediate
+timeout. Set `wake_on_progress: true` only for an intentional intermediate
 progress observation; optionally combine it with exactly one target to observe
-only that fixed Agent turn. The next call defaults back to completion-first.
+only that fixed Agent turn. A later explicit call may observe a newer meaningful
+revision; ordinary joins remain completion-first.
 Cancelling the MCP call stops only that observation; it never interrupts or
 cancels the Agent.
 Codex MCP calls do not expose Unified Exec terminal session IDs, and this
@@ -403,10 +404,8 @@ Claude response, thinking, tool arguments, paths, hook payloads, receipts, and
 session IDs stay private. With exactly one target, that progress observation
 is scoped to the snapshotted target job; unrelated root activity remains
 untouched. Multiple-target barriers never expose progress. Repeated routine
-activity is coalesced into the latest revision and remains subject to an
-adaptive 5, 10, 20, then 30 second
-eligibility backoff. Retry, reconnect, and first-response transitions reset
-that backoff, while completion always bypasses it.
+activity is coalesced into the latest revision; a later explicit long-poll may
+observe only a newer meaningful revision. Completion always bypasses progress.
 
 A completion update includes the complete stored final message and a
 legacy-compatible truncation flag. New completions are not truncated by this
@@ -708,7 +707,7 @@ npm run smoke:release -- --real-claude
 That extension announces and uses exactly `claude-haiku-4-5`, effort `low`, and
 `write: false`. It runs at most one read-only Bash `pwd` task to prove the
 headless permission path; an explicit subscription, quota, credit, or
-usage-limit failure stops paid CC testing immediately. Generic HTTP 429 remains
+usage-limit failure stops paid HarnessDock testing immediately. Generic HTTP 429 remains
 distinct.
 
 ## Environment
@@ -718,7 +717,7 @@ The installed MCP bootstrap and the operator Agent-listing path load exactly
 and disposition recorder need only `CODEX_HOME` and do not initialize Claude.
 `--env-file`,
 `CODEX_HARNESSDOCK_RUNTIME_ENV_FILE`, `${CODEX_HOME}/.env`, and workspace `.codex/.env` are not
-environment selectors for `cc:*`. The public CLI rejects `--env-file` rather
+environment selectors for HarnessDock operations. The public CLI rejects `--env-file` rather
 than pretending to honor it.
 
 The fixed file is parsed as literal `KEY=VALUE`, never evaluated as shell code.
@@ -884,7 +883,7 @@ a placeholder in the current API. The multi-Harness plan of record is
 links rather than restates.
 
 - **Phase R -- physical rename.** This historical pre-admission sequence placed
-  the remaining `cc-`/`CC` rename before a third Harness; it no longer describes
+  the remaining retired-identity rename before a third Harness; it no longer describes
   current route admission.
 - **DeepSeek Harness** and **Grok Build** are later, independent probes. Each
   needs its own accepted OpenSpec, its own Driver, and its own readiness

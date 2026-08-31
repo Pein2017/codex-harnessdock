@@ -238,6 +238,7 @@ exec ${JSON.stringify(realGit)} "$@"
             history: "checkout_declared", interruptRequest: "checkout_declared", turnObservation: "checkout_declared",
             automaticRecovery: "checkout_declared", authorityEnforcement: "checkout_declared",
             leafEnforcement: "checkout_declared", nativeOrchestration: "checkout_declared",
+            nativeProgress: "checkout_declared",
           },
           inspectionGeneration: "unavailable",
           routes: {

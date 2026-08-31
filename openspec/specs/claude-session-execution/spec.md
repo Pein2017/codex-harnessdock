@@ -318,7 +318,7 @@ produce that classification.
 - **THEN** the turn fails as Harness-incompatible and does not accept that result as native-team completion
 
 ### Requirement: Claude Agent turns enable native Auto Memory by default
-Every model-facing Claude Code turn launched by the CC runtime SHALL receive
+Every model-facing Claude Code turn launched by the HarnessDock runtime SHALL receive
 `CLAUDE_CODE_DISABLE_AUTO_MEMORY=0` from the canonical effective environment
 after the one env file is resolved, so a selected file cannot accidentally
 omit or disable it. The runtime SHALL NOT emulate Auto Memory with `CLAUDE.md`,

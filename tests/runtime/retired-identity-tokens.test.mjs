@@ -41,6 +41,7 @@ const UPPER = "CC";
 const LOWER = "cc";
 
 const RETIRED_ENV_PREFIX = "retired-env-prefix";
+const RETIRED_BRAND_SHORTHAND = "retired-brand-shorthand";
 const RETIRED_AGENT_WORDING = "retired-agent-wording";
 const RETIRED_MCP_WORDING = "retired-mcp-wording";
 const RETIRED_PLUGIN_SLUG = "retired-plugin-slug";
@@ -73,6 +74,11 @@ const CHECKOUT_PATH_TOKEN = Object.freeze({
   // The reference-only external clone lives at a different parent and is a
   // deliberate, still-current denial target, so it must not match.
   pattern: new RegExp(`\\\\?/data\\\\?/CoordExp\\\\?/${LOWER}-plugin-codex`),
+});
+
+const PLUGIN_BRAND_TOKEN = Object.freeze({
+  id: RETIRED_BRAND_SHORTHAND,
+  pattern: new RegExp(`\\b${UPPER}\\b`),
 });
 
 const SOURCE_SCOPE_PREFIXES = Object.freeze([
@@ -168,6 +174,7 @@ function scan() {
     const applicable = inSourceScope(relativePath)
       ? [...SOURCE_SCOPE_TOKENS, CHECKOUT_PATH_TOKEN]
       : [CHECKOUT_PATH_TOKEN];
+    if (relativePath.startsWith("plugins/")) applicable.push(PLUGIN_BRAND_TOKEN);
     for (const token of applicable) {
       if (allowed.has(token.id)) continue;
       const lines = text.split(/\r?\n/);

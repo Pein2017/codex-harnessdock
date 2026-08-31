@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Provide a privacy-preserving operator-only record that connects CC runtime use and provider-reported metrics to explicit lead acceptance outcomes without expanding the model-facing Agent API.
+Provide a privacy-preserving operator-only record that connects HarnessDock runtime use and provider-reported metrics to explicit lead acceptance outcomes without expanding the model-facing Agent API.
 
 ## Requirements
 

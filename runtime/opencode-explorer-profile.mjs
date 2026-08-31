@@ -117,7 +117,7 @@ export const OPENCODE_EXPLORER_CONTINUATION = "fresh_only";
  */
 export const OPENCODE_EXPLORER_CAPABILITIES = validateRouteCapabilitySnapshot(
   {
-    capabilitySchemaVersion: 3,
+    capabilitySchemaVersion: 4,
     driverMaturity: "experimental",
     values: {
       activeInput: "initial_only",
@@ -130,6 +130,7 @@ export const OPENCODE_EXPLORER_CAPABILITIES = validateRouteCapabilitySnapshot(
       leafEnforcement: "effective_tool_denial",
       nativeOrchestration: "disabled",
       turnObservation: "unavailable",
+      nativeProgress: "unavailable",
     },
     maturity: Object.fromEntries(ROUTE_CAPABILITY_NAMES.map((name) => [name, "experimental"])),
     provenance: Object.fromEntries(ROUTE_CAPABILITY_NAMES.map((name) => [name, "checkout_declared"])),

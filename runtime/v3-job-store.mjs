@@ -59,6 +59,7 @@ import {
   MAX_FINAL_MESSAGE_CHARS,
   MAX_OPAQUE_FIELD_DEPTH,
   MAX_PROGRESS_BYTES,
+  validateNativeProgress,
   MAX_RESULT_METADATA_BYTES,
 } from "./harness-contract.mjs";
 import {
@@ -85,6 +86,7 @@ const V3_JOB_FIELDS = Object.freeze([
   "ownerRootId", "agentId", "jobId", "attemptId", "workspaceRoot",
   "controlRoot", "executionRoot",
   "route", "nativeTurnRef", "status", "uncertainty", "terminalJob",
+  "progress", "progressDeliveredRevision", "worker",
   "agentProjectionReconciledAt", "completionPublishedAt",
   "createdAt", "updatedAt",
 ]);
@@ -510,7 +512,7 @@ function validateVersionThreeJobRecord(parsed, { storedRoute = false } = {}) {
     throw new Error(`${label} must state controlRoot and executionRoot together.`);
   }
   for (const field of V3_JOB_FIELDS) {
-    if (!["controlRoot", "executionRoot"].includes(field) && !(field in snapshot)) {
+    if (!["controlRoot", "executionRoot", "progress", "progressDeliveredRevision", "worker"].includes(field) && !(field in snapshot)) {
       throw new Error(`${label} is missing required field: ${field}.`);
     }
   }
@@ -558,6 +560,31 @@ function validateVersionThreeJobRecord(parsed, { storedRoute = false } = {}) {
   if (!isTerminal && (completionPublishedAt != null || agentProjectionReconciledAt != null)) {
     throw new Error(`${label} cannot claim a terminal projection or completion before it is terminal.`);
   }
+  const progressDeliveredRevision = snapshot.progressDeliveredRevision == null ? 0 : snapshot.progressDeliveredRevision;
+  if (!Number.isSafeInteger(progressDeliveredRevision) || progressDeliveredRevision < 0) {
+    throw new Error(`${label} progressDeliveredRevision must be a non-negative safe integer.`);
+  }
+  let progress = null;
+  if (snapshot.progress != null) {
+    const value = plainRecordSnapshot(snapshot.progress, `${label} progress`);
+    if (!Object.keys(value).every((key) => ["revision", "activity", "toolName", "updatedAt"].includes(key))) {
+      throw new Error(`${label} progress declares an unknown field.`);
+    }
+    if (!Number.isSafeInteger(value.revision) || value.revision < 1) throw new Error(`${label} progress revision is invalid.`);
+    const reduced = validateNativeProgress({ activity: value.activity, toolName: value.toolName }, `${label} progress`);
+    progress = Object.freeze({ revision: value.revision, ...reduced, updatedAt: assertTimestampText(value.updatedAt, `${label} progress updatedAt`) });
+  }
+  if (progress != null && progressDeliveredRevision > progress.revision) {
+    throw new Error(`${label} progressDeliveredRevision cannot exceed progress revision.`);
+  }
+  if (snapshot.status !== "running" && progress != null) throw new Error(`${label} may only carry progress while running.`);
+  let worker = null;
+  if (snapshot.worker != null) {
+    const value = plainRecordSnapshot(snapshot.worker, `${label} worker`);
+    if (Object.keys(value).sort().join(",") !== "identity,pid") throw new Error(`${label} worker must state exact pid identity.`);
+    if (!Number.isSafeInteger(value.pid) || value.pid < 1) throw new Error(`${label} worker pid is invalid.`);
+    worker = Object.freeze({ pid: value.pid, identity: assertIdentityText(value.identity, `${label} worker identity`) });
+  }
   const workspaceRoot = assertIdentityText(snapshot.workspaceRoot, `${label} workspaceRoot`, 4096);
   const controlRoot = hasControlRoot
     ? assertIdentityText(snapshot.controlRoot, `${label} controlRoot`, 4096)
@@ -581,6 +608,9 @@ function validateVersionThreeJobRecord(parsed, { storedRoute = false } = {}) {
     status: snapshot.status,
     uncertainty,
     terminalJob,
+    progress,
+    progressDeliveredRevision,
+    worker,
     agentProjectionReconciledAt,
     completionPublishedAt,
     createdAt: assertTimestampText(snapshot.createdAt, `${label} createdAt`),
@@ -736,7 +766,7 @@ function persist(identity, generation, build) {
  */
 export function recordVersionThreeTurnRunning({
   generation, ownerRootId, agentId, jobId, attemptId, workspaceRoot,
-  controlRoot = workspaceRoot, executionRoot = workspaceRoot, route, nativeTurnRef,
+  controlRoot = workspaceRoot, executionRoot = workspaceRoot, route, nativeTurnRef, worker = null,
 }) {
   const identity = assertBindingIdentity({ ownerRootId, agentId, jobId });
   return persist(identity, generation, (previous) => {
@@ -755,11 +785,37 @@ export function recordVersionThreeTurnRunning({
       status: "running",
       uncertainty: null,
       terminalJob: null,
+      progress: null,
+      progressDeliveredRevision: 0,
+      worker,
       agentProjectionReconciledAt: null,
       completionPublishedAt: null,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
+  });
+}
+
+/** Persist one new meaningful closed activity snapshot for a running V3 turn. */
+export function publishVersionThreeProgress({ generation, ownerRootId, agentId, jobId, attemptId, progress }) {
+  const identity = assertBindingIdentity({ ownerRootId, agentId, jobId });
+  const reduced = validateNativeProgress(progress, "Version-three progress");
+  return persist(identity, generation, (previous) => {
+    if (previous == null) throw taggedError("not_found", `Version-three job ${identity.jobId} has no durable running record.`);
+    assertAttemptMatches(previous, attemptId, identity);
+    if (previous.status !== "running") return previous;
+    if (previous.progress?.activity === reduced.activity && previous.progress?.toolName === reduced.toolName) return previous;
+    return { ...previous, progress: { revision: Number(previous.progress?.revision ?? 0) + 1, ...reduced, updatedAt: nowIso() }, updatedAt: nowIso() };
+  });
+}
+
+/** Atomically consume one newer V3 progress revision; terminal/unknown never claim. */
+export function claimVersionThreeProgress({ generation, ownerRootId, agentId, jobId }) {
+  const identity = assertBindingIdentity({ ownerRootId, agentId, jobId });
+  return persist(identity, generation, (previous) => {
+    if (previous == null || previous.status !== "running" || previous.progress == null ||
+        previous.progress.revision <= previous.progressDeliveredRevision) return previous;
+    return { ...previous, progressDeliveredRevision: previous.progress.revision, updatedAt: nowIso() };
   });
 }
 
@@ -792,6 +848,7 @@ export function recordVersionThreeTurnUncertain({
       attemptId: candidateAttemptId,
       status: "unknown",
       uncertainty: { reason, detail: sanitizeUncertaintyDetail(detail), recordedAt: nowIso() },
+      progress: null,
       updatedAt: nowIso(),
     };
   });
@@ -819,6 +876,7 @@ export function recordVersionThreeTurnTerminal({ generation, ownerRootId, agentI
       status: terminalJob?.status,
       uncertainty: null,
       terminalJob,
+      progress: null,
       updatedAt: nowIso(),
     };
   });

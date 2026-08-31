@@ -244,7 +244,7 @@ describe("Claude Code Driver Contract v2 admission", () => {
 
     const description = admittedDriverDescription(driver);
     assert.equal(description.contractVersion, DRIVER_CONTRACT_VERSION_V2);
-    assert.equal(description.capabilitySchemaVersion, 3);
+    assert.equal(description.capabilitySchemaVersion, 4);
     assert.deepEqual(description.environmentKeys, ["CLAUDE_CONFIG_DIR"]);
     assert.equal(description.maturity, "experimental");
 
@@ -395,6 +395,7 @@ describe("Claude Code canonical route validation", () => {
       history: "assistant_messages",
       interruptRequest: "supported",
       turnObservation: "unavailable",
+      nativeProgress: "supervisor_projected",
       automaticRecovery: "same_session_recovery_prompt",
       // terminal-parity always passes the dangerous bypass, so write intent
       // stays a prompt-level authority boundary, never a process sandbox.

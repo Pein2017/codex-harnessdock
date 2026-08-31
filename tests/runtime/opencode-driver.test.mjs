@@ -261,11 +261,10 @@ describe("opencode driver: contract surface", () => {
     assert.deepEqual([...description.environmentKeys], [...OPENCODE_DRIVER_ENVIRONMENT_KEYS]);
   });
 
-  it("exposes no observation, history, interrupt, active-input, recovery, or write method", async () => {
+  it("exposes exact read-only observation but no history, interrupt, active-input, recovery, or write method", async () => {
     const { url } = await startFake();
     const driver = driverFor(url);
     for (const method of [
-      "observeTurn",
       "readAssistantHistory",
       "deliverActiveInput",
       "requestInterrupt",
@@ -277,6 +276,7 @@ describe("opencode driver: contract surface", () => {
     ]) {
       assert.equal(method in driver, false, `driver must not expose ${method}`);
     }
+    assert.equal(typeof driver.observeTurn, "function");
     assert.equal(Object.isFrozen(driver), true);
   });
 
@@ -751,14 +751,60 @@ describe("opencode driver: session and turn lineage", () => {
     await live.dispose();
   });
 
-  it("exposes no active-input or interrupt method on the live turn", async () => {
+  it("exposes bounded progress but no active-input or interrupt method on the live turn", async () => {
     const { url } = await startFake();
     const driver = driverFor(url);
     const { live } = await launch(driver, url);
     assert.equal("deliverActiveInput" in live, false);
     assert.equal("requestInterrupt" in live, false);
-    assert.deepEqual(Object.keys(live).sort(), ["dispose", "nativeSessionRef", "nativeTurnRef", "result"]);
+    assert.deepEqual(Object.keys(live).sort(), ["dispose", "nativeSessionRef", "nativeTurnRef", "result", "subscribeProgress"]);
+    const unsubscribe = live.subscribeProgress(() => {});
+    assert.equal(typeof unsubscribe, "function");
+    unsubscribe();
     await live.result;
+    await live.dispose();
+  });
+
+  it("observes only one exact terminal assistant lineage when status is absent or idle and never re-prompts", async () => {
+    const { server, url } = await startFake({ promptDelayMs: 100 });
+    const driver = driverFor(url);
+    const { live, scope, route } = await launch(driver, url);
+    const locator = live.nativeTurnRef.locator;
+    const assistant = fakeAssistantMessage({
+      id: "msg_observed", sessionID: locator.sessionId, parentID: locator.userMessageId,
+      providerID: locator.providerId, modelID: locator.modelId, variant: locator.variant,
+    });
+    server.state.observationMessages = [{
+      info: assistant,
+      parts: [fakeTextPart("Observed final.", { sessionID: locator.sessionId, messageID: assistant.id })],
+    }];
+
+    server.state.observationStatus = {};
+    const observation = await driver.observeTurn(live.nativeTurnRef, scope);
+    assert.equal(observation.nativeTurn, "terminal");
+    const terminal = validateNormalizedTerminalResult(observation.terminalResult, { driver, route });
+    assert.equal(terminal.finalMessage, "Observed final.");
+
+    server.state.observationMessages = [];
+    assert.deepEqual(await driver.observeTurn(live.nativeTurnRef, scope), { nativeTurn: "unknown", terminalResult: null });
+
+    server.state.observationMessages = [{
+      info: assistant,
+      parts: [fakeTextPart("Observed final.", { sessionID: locator.sessionId, messageID: assistant.id })],
+    }];
+    for (const type of ["busy", "retry"]) {
+      server.state.observationStatus = { [locator.sessionId]: { type } };
+      assert.deepEqual(await driver.observeTurn(live.nativeTurnRef, scope), { nativeTurn: "active", terminalResult: null });
+    }
+    server.state.observationStatus = { [locator.sessionId]: { type: "unrecognized" } };
+    assert.deepEqual(await driver.observeTurn(live.nativeTurnRef, scope), { nativeTurn: "unknown", terminalResult: null });
+
+    server.state.observationStatus = { [locator.sessionId]: { type: "idle" } };
+    assert.equal((await driver.observeTurn(live.nativeTurnRef, scope)).nativeTurn, "terminal");
+    server.state.observationMessages.push({ ...server.state.observationMessages[0], info: { ...assistant, id: "msg_duplicate" } });
+    assert.deepEqual(await driver.observeTurn(live.nativeTurnRef, scope), { nativeTurn: "unknown", terminalResult: null });
+    await live.result;
+    assert.equal(postRequests(server).filter((request) => request.path.endsWith("/message")).length, 1, "read-only observation must not submit a second prompt");
     await live.dispose();
   });
 

@@ -41,6 +41,10 @@
       "result": "pass"
     },
     {
+      "dimension": "cross_process_turn_observation_or_reconciliation",
+      "result": "pass"
+    },
+    {
       "dimension": "route_drift",
       "result": "pass"
     },
@@ -73,12 +77,6 @@
       "observed": "fresh_only"
     },
     {
-      "dimension": "cross_process_turn_observation_or_reconciliation",
-      "result": "not_applicable",
-      "capability": "turnObservation",
-      "observed": "unavailable"
-    },
-    {
       "dimension": "automatic_recovery_exact_session_transport",
       "result": "not_applicable",
       "capability": "automaticRecovery",
@@ -92,5 +90,5 @@
     }
   ],
   "unprovenRows": [],
-  "digest": "sha256:0d5cca50c63033fe9ca2be852d662a13aa967e1fb4fc2d44e4c571fde3637415"
+  "digest": "sha256:4c685fb3ca0e1c18b5869eed5b359037948ea19259533f1b036af28b0ca250e3"
 }

@@ -10,7 +10,7 @@ weakening Codex's ownership of final acceptance.
 An orchestrating Claude Agent turn SHALL enable Claude Code's experimental Native
 Agent Teams transport only for that process. The lead SHALL use named native
 teammates rather than silently substituting ordinary unnamed subagents. The
-team SHALL exist only inside the current Claude process/turn: a later CC
+team SHALL exist only inside the current Claude process/turn: a later HarnessDock
 follow-up that resumes the parent Claude session SHALL form a new team and
 SHALL NOT address or resume a teammate from the earlier process. The Plugin
 SHALL NOT create durable Claude Agent identities, mailbox entries, completion

@@ -32,6 +32,7 @@ import { after, describe, it } from "node:test";
 
 import { createAgentStore, resolveAgentRegistryDirectory } from "../../runtime/agent-store.mjs";
 import { createAgentRuntime } from "../../runtime/agent-runtime.mjs";
+import { PI_DRIVER_VERSION, PI_HARNESS_ID } from "../../runtime/pi-driver.mjs";
 import { readUnreadCompletionEvents, resolveCompletionInboxFile } from "../../runtime/completion-inbox.mjs";
 import { FUTURE_WRITE_GENERATION, PUBLIC_WRITE_GENERATION } from "../../runtime/durable-state-v3.mjs";
 import {
@@ -801,6 +802,66 @@ describe("version-three worker loss: during native submission (scenario 2)", () 
 });
 
 describe("version-three worker loss: later observation after exact acceptance (scenarios 3-6)", () => {
+  it("reconciles through the persisted Agent driver with its env-file view and skips driver drift", async () => {
+    const context = setup();
+    await loseTurn(context);
+    tamperJobRecord(context.identity, (record) => { record.worker.pid = 999_999_999; });
+
+    const piConfigDir = path.join(root, `pi-config-${sequence}`);
+    const envFile = path.join(root, `pi-runtime-${sequence}.env`);
+    fs.mkdirSync(piConfigDir);
+    fs.writeFileSync(envFile, `PI_CODING_AGENT_DIR=${piConfigDir}\n`);
+    const env = { ...process.env };
+    delete env.PI_CODING_AGENT_DIR;
+    env.CODEX_THREAD_ID = context.ownerRootId;
+    const runtime = createAgentRuntime({
+      cwd: workspaceRoot,
+      envFile,
+      env,
+    });
+    const piAgent = {
+      ...context.agent(),
+      route: {
+        ...context.route,
+        harnessId: PI_HARNESS_ID,
+        driverVersion: PI_DRIVER_VERSION,
+        instanceKey: "pi-local",
+        model: "provider/model",
+      },
+    };
+    assert.equal(runtime.assertAgentDriver(piAgent).harnessId, PI_HARNESS_ID);
+    assert.throws(
+      () => runtime.assertAgentDriver({
+        ...piAgent,
+        route: { ...piAgent.route, driverVersion: "pi@drift" },
+      }),
+      /accepted Driver pi@drift; but this runtime provides pi@2/,
+    );
+
+    const assertAgentDriver = runtime.assertAgentDriver.bind(runtime);
+    let resolutions = 0;
+    runtime.assertAgentDriver = (agent) => {
+      resolutions += 1;
+      assert.equal(agent.agentId, context.agentId);
+      return assertAgentDriver(piAgent);
+    };
+    await runtime.reconcileLostV3Turns(new Date(Date.now() + 1_000).toISOString());
+    assert.equal(resolutions, 1);
+    assert.equal(context.v3Record().status, "unknown");
+
+    runtime.assertAgentDriver = (agent) => {
+      resolutions += 1;
+      assert.equal(agent.agentId, context.agentId);
+      return assertAgentDriver({
+        ...piAgent,
+        route: { ...piAgent.route, driverVersion: "pi@drift" },
+      });
+    };
+    await runtime.reconcileLostV3Turns(new Date(Date.now() + 1_000).toISOString());
+    assert.equal(resolutions, 2);
+    assert.equal(context.v3Record().status, "unknown");
+  });
+
   it("settles an in-process unknown exit from a later terminal observation, exactly once", async () => {
     const context = setup();
     const controller = new AbortController();

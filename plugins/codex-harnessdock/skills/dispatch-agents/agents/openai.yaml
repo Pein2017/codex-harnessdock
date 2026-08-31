@@ -1,4 +1,4 @@
 interface:
-  display_name: "HD Dispatch Agents"
+  display_name: "HarnessDock Dispatch Agents"
   short_description: "Experimental: launch 1-8 independent Agents from complete ordered rows"
   default_prompt: "Experimental: use $codex-harnessdock:dispatch-agents and invoke mcp__codex_harnessdock__dispatch_agents only for 1-8 independent rows. State task_name, message, harness, full model, reasoning_effort, topology, and write on every row; nothing is inherited. Use singular spawn_agent for one Agent. Never add retry, fallback, defaults, Team, DAG, scheduler, or replay. Never fall back to a shell command; completion cannot reactivate an idle Codex parent."

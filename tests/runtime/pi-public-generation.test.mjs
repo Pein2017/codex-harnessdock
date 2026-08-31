@@ -56,7 +56,7 @@ function setup() {
       maturity: "experimental",
       detailCode: "ready",
       routes: { models: [PI_MODEL], topologies: ["leaf"], interaction: "noninteractive_fixed_policy", effortsByModel: { [PI_MODEL]: ["medium", "high"] }, defaultsByModel: { [PI_MODEL]: "high" } },
-      capabilityProvenance: Object.fromEntries(["interaction", "activeInput", "continuation", "history", "interruptRequest", "turnObservation", "automaticRecovery", "authorityEnforcement", "leafEnforcement", "nativeOrchestration"].map((name) => [name, "checkout_declared"])),
+      capabilityProvenance: Object.fromEntries(["interaction", "activeInput", "continuation", "history", "interruptRequest", "turnObservation", "nativeProgress", "automaticRecovery", "authorityEnforcement", "leafEnforcement", "nativeOrchestration"].map((name) => [name, "checkout_declared"])),
       inspectionGeneration: "unavailable",
     }],
   });
@@ -141,7 +141,7 @@ describe("Pi public generation v3 dispatch", () => {
       driver,
       inspections: ["pi-local-a", "pi-local-b"].map((instanceKey) => ({
         harnessId: PI_HARNESS_ID, instanceKey, readiness: "ready", liveValidated: true, maturity: "experimental", detailCode: "ready", routes: routeFacts,
-        capabilityProvenance: Object.fromEntries(["interaction", "activeInput", "continuation", "history", "interruptRequest", "turnObservation", "automaticRecovery", "authorityEnforcement", "leafEnforcement", "nativeOrchestration"].map((name) => [name, "checkout_declared"])), inspectionGeneration: "unavailable",
+        capabilityProvenance: Object.fromEntries(["interaction", "activeInput", "continuation", "history", "interruptRequest", "turnObservation", "nativeProgress", "automaticRecovery", "authorityEnforcement", "leafEnforcement", "nativeOrchestration"].map((name) => [name, "checkout_declared"])), inspectionGeneration: "unavailable",
       })),
     });
     await assert.rejects(context.runtime.spawnAgent(spawnInput({ task_name: "ambiguous_pi" })), /2 ready logical instances/);
@@ -246,7 +246,7 @@ describe("Pi public generation v3 dispatch", () => {
 
     await context.runtime.followupTask({ target: receipt.agent_name, message: "freshly revalidate this v2 route" });
     const launch = context.launches.at(-1);
-    assert.equal(launch.executionRoute.capabilitySchemaVersion, 3);
+    assert.equal(launch.executionRoute.capabilitySchemaVersion, 4);
     assert.deepEqual(launch.inspectionEvidence.capabilities, launch.executionRoute.capabilities);
     const after = JSON.parse(fs.readFileSync(registryPath, "utf8"));
     assert.equal(JSON.stringify(after.agents[created.agentId].route), historicalRoute);
@@ -258,7 +258,7 @@ describe("Pi public generation v3 dispatch", () => {
         harnessId: PI_HARNESS_ID, instanceKey: "pi-local", readiness: "ready", liveValidated: true,
         maturity: "experimental", detailCode: "ready",
         routes: { models: [], topologies: ["leaf"], interaction: "noninteractive_fixed_policy", effortsByModel: {}, defaultsByModel: {} },
-        capabilityProvenance: Object.fromEntries(["interaction", "activeInput", "continuation", "history", "interruptRequest", "turnObservation", "automaticRecovery", "authorityEnforcement", "leafEnforcement", "nativeOrchestration"].map((name) => [name, "checkout_declared"])),
+        capabilityProvenance: Object.fromEntries(["interaction", "activeInput", "continuation", "history", "interruptRequest", "turnObservation", "nativeProgress", "automaticRecovery", "authorityEnforcement", "leafEnforcement", "nativeOrchestration"].map((name) => [name, "checkout_declared"])),
         inspectionGeneration: `sha256:${"b".repeat(64)}`,
       }],
     });

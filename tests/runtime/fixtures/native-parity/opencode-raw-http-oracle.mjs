@@ -117,6 +117,54 @@ function normalizedRequests(events) {
   });
 }
 
+function observedTurnLocator(reference) {
+  const locator = reference?.locator ?? {};
+  for (const key of ["sessionId", "userMessageId", "providerId", "modelId", "variant"]) {
+    if (typeof locator[key] !== "string" || !locator[key]) throw new Error(`Raw OpenCode observation requires ${key}.`);
+  }
+  return locator;
+}
+
+/**
+ * Read one already-persisted native turn without any HarnessDock import or
+ * prompt submission. The comparison fixture owns the expected terminal
+ * contract; this direct oracle only reports the raw Server observation.
+ */
+export async function runRawHttpOpenCodeObservationOracle({ serverUrl, nativeTurnRef }) {
+  const { sessionId, userMessageId, providerId, modelId, variant } = observedTurnLocator(nativeTurnRef);
+  const [messagesResponse, statusResponse] = await Promise.all([
+    fetch(`${serverUrl}/session/${encodeURIComponent(sessionId)}/message`),
+    fetch(`${serverUrl}/session/status`),
+  ]);
+  if (!messagesResponse.ok || !statusResponse.ok) return { nativeTurn: "unknown", terminal: null };
+  const [messages, status] = await Promise.all([messagesResponse.json(), statusResponse.json()]);
+  if (!Array.isArray(messages) || !status || typeof status !== "object" || Array.isArray(status)) {
+    return { nativeTurn: "unknown", terminal: null };
+  }
+  const sessionStatus = status[sessionId];
+  if (sessionStatus?.type === "busy" || sessionStatus?.type === "retry") return { nativeTurn: "active", terminal: null };
+  if (sessionStatus != null && sessionStatus.type !== "idle") return { nativeTurn: "unknown", terminal: null };
+  const candidates = messages.filter((message) =>
+    message?.info?.role === "assistant" && message.info.sessionID === sessionId && message.info.parentID === userMessageId
+  );
+  if (candidates.length !== 1 || (candidates[0].info.finish == null && candidates[0].info.error == null)) {
+    return { nativeTurn: "unknown", terminal: null };
+  }
+  const message = candidates[0];
+  const info = message.info;
+  const parts = Array.isArray(message.parts) ? message.parts : [];
+  const lineage = info.providerID === providerId && info.modelID === modelId && info.variant === variant ? "matched" : "mismatched";
+  const partsMatch = parts.every((part) => part?.sessionID === sessionId && part?.messageID === info.id);
+  const hasText = parts.some((part) => part?.type === "text" && typeof part.text === "string" && part.text.trim());
+  return {
+    nativeTurn: "terminal",
+    terminal: {
+      lineage,
+      classification: lineage === "matched" && partsMatch && info.finish === "stop" && hasText ? "completed" : "failed",
+    },
+  };
+}
+
 /**
  * A deliberately bounded projection of the native configuration surfaces. It
  * contains no Agent name, pattern, or policy identity; the opaque digests make

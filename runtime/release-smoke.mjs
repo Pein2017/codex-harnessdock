@@ -414,7 +414,7 @@ export function isClaudeSubscriptionLimit(value) {
 
 function paidSmokeError(error) {
   if (!isClaudeSubscriptionLimit(error)) return error;
-  const bounded = new Error("Claude subscription or usage limit reached; paid CC testing stopped.");
+  const bounded = new Error("Claude subscription or usage limit reached; paid HarnessDock testing stopped.");
   /** @type {any} */ (bounded).code = "CLAUDE_SUBSCRIPTION_LIMIT";
   return bounded;
 }
@@ -608,7 +608,7 @@ export function assessNativeHarnessDifferentialParity(receipt) {
       throw new Error("Differential parity cell has an unknown harness or dimension.");
     }
     parityText(row.driverVersion, `cell ${index} driverVersion`);
-    if (row.capabilitySchemaVersion !== 3) throw new Error("Differential parity capability schema must be version 3.");
+    if (row.capabilitySchemaVersion !== 4) throw new Error("Differential parity capability schema must be version 4.");
     parityText(row.directSource, `cell ${index} direct source`);
     parityText(row.harnessdockSource, `cell ${index} HarnessDock source`);
     parityText(row.mode, `cell ${index} mode`);

@@ -104,7 +104,7 @@ import { getProcessIdentity } from "./process-control.mjs";
 import { configureRuntimePaths, resolvePluginStateRoot, samePath } from "./paths.mjs";
 import { renderTaskResult } from "./render.mjs";
 import { resolveWorkspaceRoot } from "./workspace.mjs";
-import { listVersionThreeJobRecords } from "./v3-job-store.mjs";
+import { claimVersionThreeProgress, listVersionThreeJobRecords, resolveVersionThreeJobDirectory } from "./v3-job-store.mjs";
 import { buildLeaseReleaseTargets } from "./v3-worker-loop.mjs";
 import { launchVersionThreeTurn } from "./v3-worker-launch.mjs";
 import {
@@ -598,13 +598,34 @@ function pendingPublicProgress(cwd, ownerRootId, jobId = null, progressJobIds = 
     : Array.isArray(progressJobIds)
       ? progressJobIds.map((candidate) => readJobFile(cwd, candidate)).filter(Boolean)
       : listStoredJobs(cwd);
-  return jobs
+  const legacy = jobs
     .map((job) => projectPublicProgress(job, ownerRootId, jobId))
     .filter(Boolean)
     .sort((left, right) =>
       Date.parse(left.progress.updatedAt ?? 0) - Date.parse(right.progress.updatedAt ?? 0) ||
       left.jobId.localeCompare(right.jobId)
     )[0] ?? null;
+  const eligible = new Set(jobId ? [jobId] : progressJobIds ?? []);
+  const versionThree = listVersionThreeJobRecords({ ownerRootId }).records
+    .filter((record) => record.status === "running" && record.progress && record.progress.revision > record.progressDeliveredRevision)
+    .filter((record) => !jobId || record.jobId === jobId)
+    .filter((record) => eligible.size === 0 || eligible.has(record.jobId))
+    .map((record) => ({
+      kind: "progress", source: "v3", jobId: record.jobId, agentId: record.agentId,
+      progress: {
+        revision: record.progress.revision,
+        activity: record.progress.activity,
+        phase: PUBLIC_PROGRESS_ACTIVITY[record.progress.activity]?.phase ?? "running",
+        summary: record.progress.activity === "tool" && record.progress.toolName
+          ? `Harness is using ${record.progress.toolName}.`
+          : `Harness is ${record.progress.activity}.`,
+        updatedAt: record.progress.updatedAt,
+      },
+    }))
+    .sort((left, right) => Date.parse(left.progress.updatedAt) - Date.parse(right.progress.updatedAt) || left.jobId.localeCompare(right.jobId))[0] ?? null;
+  if (!legacy) return versionThree;
+  if (!versionThree) return legacy;
+  return Date.parse(legacy.progress.updatedAt) <= Date.parse(versionThree.progress.updatedAt) ? legacy : versionThree;
 }
 
 /**
@@ -620,7 +641,7 @@ function pendingPublicProgress(cwd, ownerRootId, jobId = null, progressJobIds = 
 const PUBLIC_ROUTE_FACT_FIELDS = Object.freeze([
   "models", "topologies", "effortsByModel", "capacity", "interaction", "activeInput",
   "continuation", "history", "interruptRequest", "turnObservation", "automaticRecovery",
-  "authorityEnforcement", "leafEnforcement", "nativeOrchestration", "authorities",
+  "nativeProgress", "authorityEnforcement", "leafEnforcement", "nativeOrchestration", "authorities",
 ]);
 
 function publicHarnessRoutes(routes) {
@@ -2312,6 +2333,7 @@ class InternalAgentRuntime {
     const desiredWatchPaths = () => [
       resolveCompletionInboxDir(this.cwd, ownerRootId),
       ...(wakeOnProgress || targetJobIds ? [resolveJobsDirForObservation(this.cwd)] : []),
+      ...(wakeOnProgress || targetJobIds ? [resolveVersionThreeJobDirectory({ ownerRootId })] : []),
     ];
     const observe = () => {
       noteRead("completion");
@@ -2341,11 +2363,19 @@ class InternalAgentRuntime {
           ? readTargetedAgentCompletionSummaries(this.cwd, ownerRootId, targetJobIds, { freeze: false })
           : { events: [], consumed: [] });
       if (inbox.events.length > 0 || (targetJobIds != null && targetBarrierReady())) return;
-      const claimed = claimJobPublicProgress(this.cwd, progress.jobId);
-      if (claimed.claimed && claimed.job) {
-        selectedProgress = projectPublicProgress(claimed.job, ownerRootId, jobId, {
-          requirePending: false,
-        });
+      const progressSource = /** @type {{source?: string}} */ (progress).source;
+      if (progressSource === "v3") {
+        const record = claimVersionThreeProgress({ generation: FUTURE_WRITE_GENERATION, ownerRootId,
+          agentId: progress.agentId, jobId: progress.jobId });
+        if (record.status === "running" && record.progress?.revision === progress.progress.revision &&
+            record.progressDeliveredRevision === progress.progress.revision) selectedProgress = progress;
+      } else {
+        const claimed = claimJobPublicProgress(this.cwd, progress.jobId);
+        if (claimed.claimed && claimed.job) {
+          selectedProgress = projectPublicProgress(claimed.job, ownerRootId, jobId, {
+            requirePending: false,
+          });
+        }
       }
     };
     observe();

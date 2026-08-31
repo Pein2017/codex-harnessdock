@@ -31,6 +31,7 @@ export function versionThreeCapabilities(overrides = {}) {
       history: "unavailable",
       interruptRequest: "supported",
       turnObservation: "terminal_observable",
+      nativeProgress: "unavailable",
       automaticRecovery: "none",
       authorityEnforcement: "harness_policy",
       leafEnforcement: "effective_tool_denial",
@@ -44,6 +45,7 @@ export function versionThreeCapabilities(overrides = {}) {
       history: "validated",
       interruptRequest: "experimental",
       turnObservation: "experimental",
+      nativeProgress: "validated",
       automaticRecovery: "validated",
       authorityEnforcement: "validated",
       leafEnforcement: "validated",
@@ -52,7 +54,7 @@ export function versionThreeCapabilities(overrides = {}) {
     },
     provenance: {
       ...Object.fromEntries([
-        "interaction", "activeInput", "continuation", "history", "interruptRequest", "turnObservation",
+        "interaction", "activeInput", "continuation", "history", "interruptRequest", "turnObservation", "nativeProgress",
         "automaticRecovery", "authorityEnforcement", "leafEnforcement", "nativeOrchestration",
       ].map((name) => [name, "checkout_declared"])),
       ...(overrides.provenance ?? {}),

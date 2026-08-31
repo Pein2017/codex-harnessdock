@@ -1,4 +1,4 @@
 interface:
-  display_name: "CC List Agents"
+  display_name: "HarnessDock List Agents"
   short_description: "Experimental: list current-root durable Agents"
   default_prompt: "Experimental: use $codex-harnessdock:list-agents and invoke mcp__codex_harnessdock__list_agents only for current-root state, where each Card states its own Harness and route maturity; never fall back to a shell command. Listing is not progress and cannot reactivate an idle Codex parent. Never call it solely to recheck completion after a quiet wait_agent timeout; wait_agent again directly instead."

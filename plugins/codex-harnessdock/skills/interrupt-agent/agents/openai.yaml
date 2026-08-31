@@ -1,4 +1,4 @@
 interface:
-  display_name: "CC Interrupt Agent"
+  display_name: "HarnessDock Interrupt Agent"
   short_description: "Experimental: interrupt an Agent current turn"
   default_prompt: "Experimental: use $codex-harnessdock:interrupt-agent and invoke mcp__codex_harnessdock__interrupt_agent to stop an Agent turn while preserving safe continuation. A route proving no interruption answers unsupported and its turn keeps running. Summarize success without raw JSON and never fall back to shell. It cannot reactivate an idle Codex parent."

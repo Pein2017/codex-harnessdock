@@ -178,7 +178,8 @@ describe("HarnessDock Skill guidance neutrality", () => {
     assert.match(wait, /multiple\s+targets form one completion-only all-settled barrier/i);
     assert.match(wait, /wake_on_progress: true[\s\S]*exactly one target/i);
     assert.match(wait, /Completion has priority[\s\S]*completion_message[\s\S]*token/i);
-    assert.match(wait, /progress returns at most one sanitized update/i);
+    assert.match(wait, /it returns at most one sanitized newer meaningful revision/i);
+    assert.match(wait, /do not poll reflexively/i);
     assert.match(wait, /timeout means no eligible completion was visible/i);
     assert.match(wait, /Wait cannot reactivate an ended Codex turn/i);
     assert.match(waitMetadata, /mcp__codex_harnessdock__wait_agent/i);

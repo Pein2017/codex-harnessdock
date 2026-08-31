@@ -46,11 +46,11 @@ The `spawn-agent` skill SHALL receive only a bounded successful projection conta
 - **WHEN** spawn fails or reaches an actionable recovery condition
 - **THEN** Codex reports the actionable condition instead of hiding it behind a generic concise success message
 
-### Requirement: Real CC testing stops on account-limit exhaustion
-The model-facing orchestration policy SHALL explicitly pass Haiku 4.5 with low effort for routine real Plugin smoke, hook, environment-parity, and integration witnesses unless the test specifically targets another model. Haiku SHALL remain fully available for non-test work and all supported effort values. The runtime SHALL NOT inject an omitted effort under `terminal-parity`. When Claude reports explicit subscription, usage, credit, weekly/monthly, or quota-limit exhaustion, the parent SHALL stop subsequent real CC test launches and SHALL NOT retry or fall back to another model. Local code work, fake-Claude fixtures, unit tests, and integration tests MAY continue.
+### Requirement: Real HarnessDock testing stops on account-limit exhaustion
+The model-facing orchestration policy SHALL explicitly pass Haiku 4.5 with low effort for routine real Plugin smoke, hook, environment-parity, and integration witnesses unless the test specifically targets another model. Haiku SHALL remain fully available for non-test work and all supported effort values. The runtime SHALL NOT inject an omitted effort under `terminal-parity`. When Claude reports explicit subscription, usage, credit, weekly/monthly, or quota-limit exhaustion, the parent SHALL stop subsequent real HarnessDock test launches and SHALL NOT retry or fall back to another model. Local code work, fake-Claude fixtures, unit tests, and integration tests MAY continue.
 
 #### Scenario: Routine Plugin smoke selects a model
-- **WHEN** a real CC test needs only a protocol, hook, or environment witness
+- **WHEN** a real HarnessDock test needs only a protocol, hook, or environment witness
 - **THEN** the parent explicitly selects `claude-haiku-4-5` with `low` effort rather than spending Sonnet, Opus, or Fable capacity
 
 #### Scenario: Haiku test omits effort under terminal parity
@@ -62,11 +62,11 @@ The model-facing orchestration policy SHALL explicitly pass Haiku 4.5 with low e
 - **THEN** the parent may launch that exact supported model instead of Haiku
 
 #### Scenario: Claude reports subscription exhaustion
-- **WHEN** a real CC test returns an explicit subscription, usage, credit, periodic, or quota-limit exhaustion
-- **THEN** the parent reports the condition, starts no further real CC tests in that workflow, and does not substitute another model
+- **WHEN** a real HarnessDock test returns an explicit subscription, usage, credit, periodic, or quota-limit exhaustion
+- **THEN** the parent reports the condition, starts no further real HarnessDock tests in that workflow, and does not substitute another model
 
 #### Scenario: Local verification remains available
-- **WHEN** real CC testing has stopped because of account-limit exhaustion
+- **WHEN** real HarnessDock testing has stopped because of account-limit exhaustion
 - **THEN** local edits, fake-Claude tests, and non-Claude integration verification may continue
 
 ### Requirement: Spawn skill uses exact Claude model and effort identifiers
@@ -217,7 +217,7 @@ A pre-v0.3 Agent without `selectedModel` SHALL be backfilled only from an exact 
 - **THEN** follow-up rejects with bounded route-qualified blocking evidence
 
 ### Requirement: wait_agent returns bounded root mailbox activity
-Model-facing `wait_agent` SHALL accept optional `wake_on_progress`, optional non-empty unique exact current-root `targets`, and the CC durable-delivery extension `acknowledge_tokens`; SHALL NOT expose `timeout_ms`; and SHALL use a fixed 3600000 ms observation upper bound. With no targets, wait SHALL preserve the Codex-V2-shaped root-wide next-activity behavior and return at most one current-root update. With one target it SHALL join the concrete active or latest turn snapshotted at call entry; when that one target is combined with `wake_on_progress: true`, the same bounded observation MAY instead return that snapshotted job's one eligible advisory progress update before completion. With multiple targets it SHALL remain completion-only, wait for every concrete snapshotted turn to settle, and return one aggregate barrier receipt in caller target order. A later activation SHALL NOT extend or satisfy that fixed snapshot. Model-facing guidance SHALL make no-target, no-progress wait the canonical ordinary root join and targeted wait the canonical result-required join when the parent knows the dependency set.
+Model-facing `wait_agent` SHALL accept optional `wake_on_progress`, optional non-empty unique exact current-root `targets`, and the HarnessDock durable-delivery extension `acknowledge_tokens`; SHALL NOT expose `timeout_ms`; and SHALL use a fixed 3600000 ms observation upper bound. With no targets, wait SHALL preserve the Codex-V2-shaped root-wide next-activity behavior and return at most one current-root update. With one target it SHALL join the concrete active or latest turn snapshotted at call entry; when that one target is combined with `wake_on_progress: true`, the same bounded observation MAY instead return that snapshotted job's one eligible advisory progress update before completion. With multiple targets it SHALL remain completion-only, wait for every concrete snapshotted turn to settle, and return one aggregate barrier receipt in caller target order. A later activation SHALL NOT extend or satisfy that fixed snapshot. Model-facing guidance SHALL make no-target, no-progress wait the canonical ordinary root join and targeted wait the canonical result-required join when the parent knows the dependency set.
 
 The runtime SHALL process only valid previously delivered acknowledgement tokens, SHALL acknowledge targeted events independently of older unrelated unread events, and SHALL derive compaction only through the highest fully acknowledged or quarantined sequence. It SHALL prioritize eligible target completion over advisory target progress. A delivered completion SHALL include the complete stored Agent final message, legacy-compatible truncation flag, and opaque delivery token. Targeted/barrier output SHALL omit unrelated completions, hook activity, raw inbox state, full Agent records, result pointers, native session evidence, and reconciliation detail, and SHALL NOT acknowledge a newly returned completion in the same call. The checkout CLI and public runtime operation SHALL retain explicit 0..3600000 ms diagnostic selection independently of the fixed model-facing bound.
 

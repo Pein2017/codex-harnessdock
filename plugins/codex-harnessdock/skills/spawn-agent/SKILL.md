@@ -28,7 +28,7 @@ rejection. Do not copy a model or effort roster from this Skill.
 Never infer a model from an Agent label such as Ops5, use partial IDs, or
 substitute another model after rejection. Ask when no model family was selected.
 
-CC subscription, usage, allowance, credit, or quota exhaustion: stop further
+HarnessDock subscription, usage, allowance, credit, or quota exhaustion: stop further
 real Claude tests; do not retry or fall back. A generic transient 429 may use
 bounded reconnect.
 

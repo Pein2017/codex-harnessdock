@@ -314,8 +314,8 @@ export function getOpencodeDiscoveryAudit(handle) {
   return summarizeRequestAudit(requireHandleEntry(handle).requestAudit);
 }
 
-function composeDeadlineSignal(timeoutMs, callerSignal) {
-  const signals = [AbortSignal.timeout(timeoutMs)];
+function composeDeadlineSignal(timeoutMs, callerSignal, deadlineSignal = AbortSignal.timeout(timeoutMs)) {
+  const signals = [deadlineSignal];
   if (callerSignal) signals.push(callerSignal);
   return AbortSignal.any(signals);
 }
@@ -990,4 +990,251 @@ export function submitOpencodePrompt(handle, options) {
     })
     .catch((error) => ({ ok: false, ...classifyDiscoveryFailure(error, undefined), status: null }));
   return dispatched;
+}
+
+// ---------------------------------------------------------------------------
+// Read-only session observation.  This is deliberately separate from the turn
+// SDK handle: its fixed allowlist is smaller and cannot grow a write surface.
+
+export const OPENCODE_EVENT_PATH = "/event";
+export const OPENCODE_SESSION_STATUS_PATH = "/session/status";
+export const OPENCODE_MAX_OBSERVATION_MESSAGES = 128;
+export const OPENCODE_MAX_OBSERVATION_BYTES = 4 * 1024 * 1024;
+export const OPENCODE_MAX_SSE_FRAME_BYTES = 16 * 1024;
+
+function observationPathForSession(sessionId) {
+  return `/session/${encodeURIComponent(sessionId)}/message`;
+}
+
+function assertObservationPath(pathname, sessionId) {
+  if (pathname !== OPENCODE_EVENT_PATH && pathname !== OPENCODE_SESSION_STATUS_PATH &&
+      pathname !== observationPathForSession(sessionId)) {
+    throw new OpencodeClientError("request_not_admitted", "only the fixed read-only observation paths are admitted");
+  }
+}
+
+const OBSERVATION_HANDLE_ENTRIES = new WeakMap();
+
+class OpencodeObservationHandle {
+  constructor(serverUrl) {
+    this.serverUrl = serverUrl;
+    Object.freeze(this);
+  }
+}
+
+function requireObservationEntry(handle) {
+  const entry = handle instanceof OpencodeObservationHandle ? OBSERVATION_HANDLE_ENTRIES.get(handle) : undefined;
+  if (!entry) throw new OpencodeClientError("invalid_observation_handle", "not a valid OpenCode observation handle");
+  return entry;
+}
+
+/** Construct an opaque, GET-only handle for `/event`, one exact session's messages, and session status. */
+export function createOpencodeObservationClient(options = {}) {
+  const rawEnv = options.env ?? process.env;
+  const { env: mergedEnv } = resolveRuntimeEnvironment({ cwd: options.cwd, envFile: options.envFile, env: rawEnv });
+  const serverUrl = resolveOpencodeServerUrl(mergedEnv);
+  const authorizationHeader = buildAuthorizationHeader(readOpencodeSecrets(rawEnv));
+  const handle = new OpencodeObservationHandle(serverUrl);
+  OBSERVATION_HANDLE_ENTRIES.set(handle, {
+    baseOrigin: new URL(serverUrl).origin,
+    authorizationHeader,
+    timeoutMs: boundPositiveInteger(options.timeoutMs, OPENCODE_DEADLINES_MS.turn),
+  });
+  return handle;
+}
+
+/** @param {{signal?: AbortSignal, sse?: boolean}} options */
+async function readObservationResponse(entry, pathname, options = {}) {
+  const { signal, sse = false } = options;
+  assertObservationPath(pathname, entry.sessionId);
+  const url = new URL(pathname, entry.baseOrigin);
+  const headers = entry.authorizationHeader ? { authorization: entry.authorizationHeader } : undefined;
+  let response;
+  try {
+    response = await fetch(new Request(url, { method: "GET", headers, redirect: "error", signal }));
+  } catch (error) {
+    throw new OpencodeClientError(classifyDiscoveryFailure(error).code, "OpenCode observation request failed");
+  }
+  if (!response.ok) throw new OpencodeClientError(response.status === 401 || response.status === 403 ? "auth_failed" : "observation_unavailable", "OpenCode observation request was refused");
+  if (!sse) return boundResponseSize(response, OPENCODE_MAX_OBSERVATION_BYTES);
+  if (!response.body) throw new OpencodeClientError("malformed_response", "OpenCode event stream has no body");
+  return response;
+}
+
+function safeToolName(value) {
+  return typeof value === "string" && /^[A-Za-z0-9_.:-]{1,80}$/.test(value) ? value : null;
+}
+
+function eventSessionId(event) {
+  for (const candidate of [event?.sessionID, event?.sessionId, event?.properties?.sessionID,
+    event?.properties?.sessionId, event?.properties?.info?.sessionID, event?.properties?.part?.sessionID]) {
+    if (typeof candidate === "string") return candidate;
+  }
+  return null;
+}
+
+function eventStableIds(event) {
+  return [event?.id, event?.properties?.id, event?.properties?.info?.id, event?.properties?.part?.id]
+    .filter((value) => typeof value === "string" && value.length <= 128);
+}
+
+/** Reduce a raw native event before it can reach any listener. */
+export function reduceOpencodeObservationEvent(event, sessionId, seen = new Set()) {
+  if (!event || typeof event !== "object" || Array.isArray(event) || eventSessionId(event) !== sessionId) return null;
+  const ids = eventStableIds(event);
+  if (ids.some((id) => seen.has(id))) return null;
+  for (const id of ids) seen.add(id);
+  const type = typeof event.type === "string" ? event.type.toLowerCase() : "";
+  if (type.includes("retry")) return { activity: "retrying" };
+  if (type.includes("tool")) {
+    const toolName = safeToolName(event?.properties?.part?.name ?? event?.properties?.name ?? event?.name);
+    return toolName ? { activity: "tool", toolName } : { activity: "tool" };
+  }
+  if (type.includes("message") || type.includes("part") || type.includes("session")) return { activity: "responding" };
+  return null;
+}
+
+function reduceObservationStatus(status, sessionId) {
+  const value = status && typeof status === "object" ? status[sessionId] : null;
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  if (value.type === "retry") return { activity: "retrying" };
+  if (value.type === "busy") return { activity: "thinking" };
+  return null;
+}
+
+/** Read exactly one bounded session message list and the global status map. */
+export async function readOpencodeObservedSession(handle, options) {
+  const entry = requireObservationEntry(handle);
+  const sessionId = nonEmptyString(options?.sessionId);
+  if (!sessionId || !OPENCODE_SESSION_ID_PATTERN.test(sessionId)) {
+    throw new OpencodeClientError("invalid_session_id", "an exact bounded session identifier is required");
+  }
+  entry.sessionId = sessionId;
+  const signal = composeDeadlineSignal(boundPositiveInteger(options?.timeoutMs, entry.timeoutMs), options?.signal);
+  try {
+    const [messagesResponse, statusResponse] = await Promise.all([
+      readObservationResponse(entry, observationPathForSession(sessionId), { signal }),
+      readObservationResponse(entry, OPENCODE_SESSION_STATUS_PATH, { signal }),
+    ]);
+    const messages = await messagesResponse.json();
+    const status = await statusResponse.json();
+    if (!Array.isArray(messages) || messages.length > OPENCODE_MAX_OBSERVATION_MESSAGES || !status || typeof status !== "object" || Array.isArray(status)) {
+      return { ok: false, code: "malformed_response" };
+    }
+    return { ok: true, messages, status };
+  } catch (error) {
+    return { ok: false, code: error instanceof OpencodeClientError ? error.code : "observation_unavailable" };
+  }
+}
+
+/**
+ * Start one cancellable, finite-reconnect SSE observer. It emits only reduced
+ * progress; message/status payloads remain private to this module/Driver.
+ */
+export async function observeOpencodeSession(handle, options) {
+  const entry = requireObservationEntry(handle);
+  const sessionId = nonEmptyString(options?.sessionId);
+  if (!sessionId || !OPENCODE_SESSION_ID_PATTERN.test(sessionId)) {
+    throw new OpencodeClientError("invalid_session_id", "an exact bounded session identifier is required");
+  }
+  entry.sessionId = sessionId;
+  const controller = new AbortController();
+  const signal = options?.signal ? AbortSignal.any([controller.signal, options.signal]) : controller.signal;
+  const listeners = new Set();
+  const seen = new Set();
+  let latest = null;
+  let disposed = false;
+  let markReady;
+  const ready = new Promise((resolve) => { markReady = resolve; });
+  const emit = (progress) => {
+    if (!progress || (latest && latest.activity === progress.activity && latest.toolName === progress.toolName)) return;
+    latest = Object.freeze(progress.toolName ? { activity: progress.activity, toolName: progress.toolName } : { activity: progress.activity });
+    for (const listener of listeners) { try { listener(latest); } catch {} }
+  };
+  const reduceReplay = async () => {
+    const snapshot = await readOpencodeObservedSession(handle, { sessionId, signal });
+    if (!snapshot.ok) return;
+    emit(reduceObservationStatus(snapshot.status, sessionId));
+    for (const message of snapshot.messages) {
+      if (message?.info?.sessionID !== sessionId) continue;
+      const ids = [message.info.id, ...(Array.isArray(message.parts) ? message.parts.map((part) => part?.id) : [])];
+      if (ids.some((id) => typeof id === "string" && seen.has(id))) continue;
+      for (const id of ids) if (typeof id === "string" && id.length <= 128) seen.add(id);
+      if (Array.isArray(message.parts) && message.parts.some((part) => part?.type === "tool")) {
+        const tool = message.parts.find((part) => part?.type === "tool");
+        const toolName = safeToolName(tool?.name);
+        emit(toolName ? { activity: "tool", toolName } : { activity: "tool" });
+      } else if (message.info.role === "assistant" && message.info.time?.completed == null) emit({ activity: "responding" });
+    }
+  };
+  const consume = async () => {
+    for (let attempt = 0; attempt < 3 && !signal.aborted; attempt += 1) {
+      try {
+        const connectController = new AbortController();
+        const connectTimer = setTimeout(
+          () => connectController.abort(new DOMException("OpenCode event connection timed out", "TimeoutError")),
+          entry.timeoutMs
+        );
+        let response;
+        try {
+          response = await readObservationResponse(entry, OPENCODE_EVENT_PATH, {
+            signal: composeDeadlineSignal(entry.timeoutMs, signal, connectController.signal),
+            sse: true,
+          });
+        } finally {
+          clearTimeout(connectTimer);
+        }
+        // Register first, then reconcile the exact bounded message/status view,
+        // then drain buffered events. This closes the connection-boundary gap.
+        const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+        let buffer = "";
+        const buffered = [];
+        let malformed = false;
+        const drain = (text) => {
+          for (const frame of text.split("\n\n")) {
+            const data = frame.split("\n").filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n");
+            if (!data || Buffer.byteLength(data, "utf8") > OPENCODE_MAX_SSE_FRAME_BYTES) continue;
+            try { buffered.push(JSON.parse(data)); } catch { malformed = true; }
+          }
+        };
+        const initial = reader.read();
+        await reduceReplay();
+        markReady();
+        let pending = initial;
+        while (!signal.aborted) {
+          const { done, value } = await pending;
+          if (done) break;
+          buffer += value.replace(/\r\n/g, "\n");
+          if (Buffer.byteLength(buffer, "utf8") > OPENCODE_MAX_SSE_FRAME_BYTES) {
+            await reader.cancel();
+            return;
+          }
+          const split = buffer.lastIndexOf("\n\n");
+          if (split >= 0) { drain(buffer.slice(0, split)); buffer = buffer.slice(split + 2); }
+          if (malformed) { await reader.cancel(); return; }
+          while (buffered.length) emit(reduceOpencodeObservationEvent(buffered.shift(), sessionId, seen));
+          pending = reader.read();
+        }
+        reader.releaseLock();
+      } catch {
+        markReady();
+        // Observation is advisory: a lost/malformed stream never changes the
+        // original prompt promise or settlement.
+      }
+      if (!signal.aborted && attempt < 2) await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1)));
+    }
+  };
+  // The transport is advisory. Even an implementation/runtime edge the loop
+  // did not classify must never become an unhandled rejection for the prompt.
+  void consume().catch(() => {}).finally(markReady);
+  await ready;
+  return Object.freeze({
+    subscribeProgress(listener) {
+      if (typeof listener !== "function") throw new OpencodeClientError("invalid_progress_listener", "progress listener must be a function");
+      listeners.add(listener);
+      if (latest) { try { listener(latest); } catch {} }
+      return () => listeners.delete(listener);
+    },
+    dispose() { if (!disposed) { disposed = true; controller.abort(); listeners.clear(); } },
+  });
 }

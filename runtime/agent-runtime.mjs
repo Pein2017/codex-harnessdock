@@ -10,7 +10,7 @@ import path from "node:path";
 
 import { createAgentStore } from "./agent-store.mjs";
 import { FUTURE_WRITE_GENERATION, assertSameDurableRouteSemantics } from "./durable-state-v3.mjs";
-import { readVersionThreeJobRecord } from "./v3-job-store.mjs";
+import { listVersionThreeJobRecords, readVersionThreeJobRecord } from "./v3-job-store.mjs";
 import { CLAUDE_CODE_HARNESS_ID, delegationModeForTopology } from "./claude-code-driver.mjs";
 import { deriveBlockedContinuationRejection } from "./agent-blocking.mjs";
 import {
@@ -58,6 +58,8 @@ import { ensureConfiguredOpencodeService } from "./opencode-service-manager.mjs"
 import { enqueueControlCommand } from "./turn-control.mjs";
 import { reconcilePreparedVersionThreeTurns } from "./v3-worker-entry.mjs";
 import { admitTargetWorktree } from "./target-worktree-admission.mjs";
+import { validateProcessIdentity } from "./process-control.mjs";
+import { reconcileVersionThreeWorkerLoss } from "./v3-turn-reconciliation.mjs";
 
 const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "interrupted", "cancelled", "unknown"]);
 const TERMINAL_AGENT_STATUSES = new Set(["completed", "interrupted", "errored"]);
@@ -2304,6 +2306,21 @@ class AgentRuntime {
       return null;
     }
   }
+  async reconcileLostV3Turns(deadlineAt) {
+    const agents = new Map(this.store.listAgents().map((agent) => [agent.agentId, agent]));
+    const records = listVersionThreeJobRecords({ ownerRootId: this.ownerRootId }).records;
+    for (const record of records) {
+      if (!['running', 'unknown'].includes(record.status) || !record.worker ||
+          validateProcessIdentity(record.worker.pid, record.worker.identity)) continue;
+      const agent = agents.get(record.agentId);
+      if (!agent || (agent.activeJobId !== record.jobId && agent.latestJobId !== record.jobId)) continue;
+      let driver;
+      try { driver = this.assertAgentDriver(agent); } catch { continue; }
+      await reconcileVersionThreeWorkerLoss({ generation: FUTURE_WRITE_GENERATION,
+        ownerRootId: this.ownerRootId, agentId: record.agentId, jobId: record.jobId,
+        driver, deadlineAt, signal: this.abortSignal });
+    }
+  }
   async waitAgent(inputValue = {}) {
     const input = assertObject(inputValue, "wait_agent input");
     if (this.abortSignal?.aborted) {
@@ -2344,6 +2361,8 @@ class AgentRuntime {
     if (input.acknowledge_tokens != null && !Array.isArray(input.acknowledge_tokens)) {
       throw new Error("wait_agent acknowledge_tokens must be an array when provided.");
     }
+    const deadlineAt = new Date(Date.now() + timeout).toISOString();
+    await this.reconcileLostV3Turns(deadlineAt);
     // Correct any recoverable terminal fact before the completion payload is
     // first exposed and frozen under its delivery token.
     this.reconcile();
@@ -2416,6 +2435,7 @@ class AgentRuntime {
       // Reconcile once more before the final fixed-snapshot observation. The
       // durable job publication may race the wakeup notification itself.
       this.reconcile();
+      await this.reconcileLostV3Turns(deadlineAt);
       if (!waited.targetReady) {
         const finalObservation = await this.jobs.wait(null, {
           timeoutMs: 0,
@@ -2516,6 +2536,7 @@ class AgentRuntime {
     // at this linearization point replaces a stale timeout or claimed
     // progress instead of leaving the receipt behind durable state.
     this.reconcile();
+    await this.reconcileLostV3Turns(deadlineAt);
     if (waited.update?.kind !== "completion") {
       const finalObservation = await this.jobs.wait(null, {
         timeoutMs: 0,

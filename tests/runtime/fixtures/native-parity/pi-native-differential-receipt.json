@@ -2,7 +2,7 @@
   "schemaVersion": "pi-native-differential-v1",
   "harness": "pi",
   "driverVersion": "pi@2",
-  "capabilitySchemaVersion": 3,
+  "capabilitySchemaVersion": 4,
   "unprovenRows": [
     {
       "dimension": "real_user_configuration_loading",
@@ -56,6 +56,15 @@
       "artifactDigest": "sha256:3bd86eca26bcc81cb0beff57f36db922c6ac96e7f02c3aef2cd1cc7a635a2572"
     },
     {
+      "dimension": "native_progress_reduction",
+      "directSource": "manual Pi JSONL client",
+      "harnessdockSource": "Pi Driver receipt and native invocation capture",
+      "mode": "zero-model deterministic fake native",
+      "comparator": "executed independent behavioral comparison",
+      "result": "pass",
+      "artifactDigest": "sha256:6fd8c054c6af8a9f38b5d967c50f0797d2580296b506d7d2cab708bc495413b9"
+    },
+    {
       "dimension": "interrupt_request_behavior",
       "directSource": "manual Pi JSONL client",
       "harnessdockSource": "Pi Driver receipt and native invocation capture",
@@ -107,18 +116,16 @@
       "mode": "zero-model deterministic fake native",
       "comparator": "executed independent behavioral comparison",
       "result": "pass",
-      "artifactDigest": "sha256:cc6f5e5fd791d50e11f6babbb1044d8f4e1965aa83e804e33c487ad8d5674f6c"
+      "artifactDigest": "sha256:4dca49ba90b0235b2e2d4f8003e8b6c7dd29a85b138000a824faf917a802d697"
     },
     {
       "dimension": "cross_process_turn_observation_or_reconciliation",
-      "directSource": "accepted Pi capability snapshot",
-      "harnessdockSource": "Pi Driver inspection receipt",
-      "mode": "capability-derived",
-      "comparator": "executed capability-derived unavailability check",
-      "result": "not_applicable",
-      "capability": "turnObservation",
-      "observed": "unavailable",
-      "artifactDigest": "sha256:ec833b19d159ba681e50bda3b3397116bad0053bb383e42149b8ac22a17a580f"
+      "directSource": "manual Pi JSONL client",
+      "harnessdockSource": "Pi Driver receipt and native invocation capture",
+      "mode": "zero-model deterministic fake native",
+      "comparator": "executed independent behavioral comparison",
+      "result": "pass",
+      "artifactDigest": "sha256:41e8b33e5a147ec1049f993ecde9a2d7f20041cd73ad03a3db62c2df100c62f4"
     },
     {
       "dimension": "automatic_recovery_exact_session_transport",

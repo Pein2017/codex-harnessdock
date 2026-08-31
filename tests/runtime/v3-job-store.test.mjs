@@ -37,8 +37,10 @@ import {
 } from "../../runtime/job-store.mjs";
 import {
   V3_JOB_STATUSES,
+  claimVersionThreeProgress,
   listVersionThreeJobRecords,
   markVersionThreeTurnProjected,
+  publishVersionThreeProgress,
   readVersionThreeJobRecord,
   recordVersionThreeTurnRunning,
   recordVersionThreeTurnTerminal,
@@ -236,6 +238,52 @@ describe("version-three job store: durable lifecycle", () => {
     assert.equal(settled.status, "completed");
     assert.equal(settled.uncertainty, null);
     assert.equal(context.record().status, "completed");
+  });
+
+  it("clears active progress while preserving its delivered revision on terminal transition", () => {
+    const terminal = setup();
+    terminal.running();
+    const terminalProgress = publishVersionThreeProgress({
+      generation: FUTURE_WRITE_GENERATION,
+      ...terminal.identity,
+      attemptId: terminal.attemptId,
+      progress: { activity: "tool", toolName: "Read" },
+    });
+    assert.equal(terminalProgress.progress.revision, 1);
+    const settled = recordVersionThreeTurnTerminal({
+      generation: FUTURE_WRITE_GENERATION,
+      ...terminal.identity,
+      attemptId: terminal.attemptId,
+      terminalJob: terminal.terminalJob(),
+    });
+    assert.equal(settled.status, "completed");
+    assert.equal(settled.progress, null);
+    assert.equal(settled.progressDeliveredRevision, 0);
+  });
+
+  it("clears active progress while preserving its delivered revision on uncertain transition", () => {
+    const uncertain = setup();
+    uncertain.running();
+    publishVersionThreeProgress({
+      generation: FUTURE_WRITE_GENERATION,
+      ...uncertain.identity,
+      attemptId: uncertain.attemptId,
+      progress: { activity: "tool", toolName: "Read" },
+    });
+    const claimed = claimVersionThreeProgress({
+      generation: FUTURE_WRITE_GENERATION,
+      ...uncertain.identity,
+    });
+    assert.equal(claimed.progressDeliveredRevision, 1);
+    const unknown = recordVersionThreeTurnUncertain({
+      generation: FUTURE_WRITE_GENERATION,
+      ...uncertain.identity,
+      attemptId: uncertain.attemptId,
+      reason: "driver_result_rejected",
+    });
+    assert.equal(unknown.status, "unknown");
+    assert.equal(unknown.progress, null);
+    assert.equal(unknown.progressDeliveredRevision, 1);
   });
 
   it("refuses a terminal record whose evidence is not publishable", () => {

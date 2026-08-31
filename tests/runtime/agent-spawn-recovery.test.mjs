@@ -71,8 +71,8 @@ function seamRouteInspection(runtime) {
       },
       capabilityProvenance: Object.fromEntries([
         "interaction", "activeInput", "continuation", "history", "interruptRequest",
-        "turnObservation", "automaticRecovery", "authorityEnforcement", "leafEnforcement",
-        "nativeOrchestration",
+        "turnObservation", "nativeProgress", "automaticRecovery", "authorityEnforcement", "leafEnforcement",
+        "nativeOrchestration", "nativeProgress",
       ].map((name) => [name, "checkout_declared"])),
       inspectionGeneration: "unavailable",
     };

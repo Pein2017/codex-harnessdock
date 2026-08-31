@@ -117,13 +117,13 @@ describe("Pi Driver v2", () => {
     assert.equal(fake.state.argv.includes("--no-approve"), false);
     assert.equal(fake.state.argv.includes("--tools"), false);
     for (const flag of ["--no-extensions", "--no-skills", "--no-prompt-templates"]) assert.equal(fake.state.argv.includes(flag), false);
-    assert.deepEqual(route.capabilities.values, { interaction: "noninteractive_fixed_policy", activeInput: "acknowledged_active_stream", continuation: "exact_resume", history: "assistant_messages", interruptRequest: "supported", turnObservation: "unavailable", automaticRecovery: "none", authorityEnforcement: "prompt_only", leafEnforcement: "prompt_only", nativeOrchestration: "opaque_bounded" });
+    assert.deepEqual(route.capabilities.values, { interaction: "noninteractive_fixed_policy", activeInput: "acknowledged_active_stream", continuation: "exact_resume", history: "assistant_messages", interruptRequest: "supported", turnObservation: "terminal_observable", nativeProgress: "native_coalesced", automaticRecovery: "none", authorityEnforcement: "prompt_only", leafEnforcement: "prompt_only", nativeOrchestration: "opaque_bounded" });
     assert.equal(Object.hasOwn(inspection.routes, "reasoningEfforts"), false);
     assert.deepEqual(inspection.routes.effortsByModel, { [PI_MODEL]: ["medium", "high"] });
     assert.equal(inspection.routes.continuation, "exact_resume");
-    assert.equal(inspection.routes.turnObservation, "unavailable");
+    assert.equal(inspection.routes.turnObservation, "terminal_observable");
     assert.equal(inspection.routes.automaticRecovery, "none");
-    assert.equal(typeof driver.observeTurn, "undefined");
+    assert.equal(typeof driver.observeTurn, "function");
     assert.deepEqual(fakes[0].state.commands.map((command) => command.type), ["get_available_models", "set_model", "get_available_thinking_levels", "get_state", "get_commands"]);
     assert.deepEqual(fakes[0].state.commands[1], { id: fakes[0].state.commands[1].id, type: "set_model", provider: "openai-codex", modelId: "gpt-5.6-luna" });
     assert.equal(Object.hasOwn(fakes[0].state.commands[1], "model"), false);
@@ -247,9 +247,19 @@ describe("Pi Driver v2", () => {
       { type: "message", id: "a-later", timestamp: Date.parse("2026-01-02T00:00:00.000Z"), message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text: "later turn" }] } },
     ];
     const { driver, route, live } = await started({ entries });
-    assert.equal(route.capabilities.values.turnObservation, "unavailable");
-    assert.equal(typeof driver.observeTurn, "undefined");
+    assert.equal(route.capabilities.values.turnObservation, "terminal_observable");
+    assert.equal(typeof driver.observeTurn, "function");
+    const observation = await driver.observeTurn(live.nativeTurnRef, { route, workspaceRoot: "/tmp" });
+    assert.equal(observation.nativeTurn, "unknown", "multiple post-baseline terminal outcomes remain nonterminal");
     assert.equal(live.nativeTurnRef.locator.turnId, "turn-1");
+  });
+
+  it("observes one exact idle assistant leaf as terminal and rejects foreign state", async () => {
+    const { driver, route, live } = await started();
+    const observed = await driver.observeTurn(live.nativeTurnRef, { route, workspaceRoot: "/tmp" });
+    assert.equal(observed.nativeTurn, "terminal");
+    assert.equal(observed.terminalResult.nativeTurnRef.locator.sessionId, live.nativeTurnRef.locator.sessionId);
+    assert.equal(observed.terminalResult.finalMessage, text);
   });
 
   it("uses --session only for a validated exact UUID resume", async () => {
@@ -279,6 +289,32 @@ describe("Pi Driver v2", () => {
 });
 
 describe("Pi RPC process hardening", () => {
+  it("coalesces only closed native milestones and replays the latest safely", async () => {
+    const fake = fakePi();
+    const rpc = createPiRpcProcess({ argv: [], cwd: "/tmp", env: {}, _test: { spawn: () => fake.child } });
+    const seen = [];
+    const unsubscribe = rpc.subscribeProgress((value) => seen.push(value));
+    const emit = (value) => fake.child.stdout.write(`${JSON.stringify(value)}\n`);
+    emit({ type: "turn_start", prompt: "secret" });
+    emit({ type: "message_delta", delta: "secret" });
+    emit({ type: "message_start", message: { role: "assistant" } });
+    emit({ type: "message_start", message: { role: "assistant" } });
+    emit({ type: "tool_execution_start", toolName: "read_file", input: "/secret" });
+    emit({ type: "tool_execution_start", toolName: "bad tool" });
+    emit({ type: "message_end", message: { role: "assistant", stopReason: "stop", content: "secret" } });
+    emit({ type: "agent_settled" });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(seen, [
+      { activity: "thinking", toolName: null },
+      { activity: "responding", toolName: null },
+      { activity: "tool", toolName: "read_file" },
+    ]);
+    const replay = [];
+    const lateUnsubscribe = rpc.subscribeProgress((value) => replay.push(value));
+    assert.deepEqual(replay, [{ activity: "tool", toolName: "read_file" }]);
+    unsubscribe(); lateUnsubscribe(); await rpc.dispose();
+  });
+
   it("resolves blocking extension UI requests instead of waiting for an unavailable host reply", async () => {
     const fake = fakePi();
     const rpc = createPiRpcProcess({ argv: [], cwd: "/tmp", env: {}, _test: { spawn: () => fake.child } });

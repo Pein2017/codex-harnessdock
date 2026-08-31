@@ -18,7 +18,7 @@ import { createOpencodeDriver, opencodeHeldCapacity } from "../../runtime/openco
 import { createOpencodeServiceManager } from "../../runtime/opencode-service-manager.mjs";
 import { createFakeOpencodeServer } from "./fixtures/fake-opencode-server.mjs";
 import { runDirectOpencodeProcessOracle } from "./fixtures/native-parity/opencode-direct-process-oracle.mjs";
-import { runRawHttpOpenCodeOracle } from "./fixtures/native-parity/opencode-raw-http-oracle.mjs";
+import { runRawHttpOpenCodeObservationOracle, runRawHttpOpenCodeOracle } from "./fixtures/native-parity/opencode-raw-http-oracle.mjs";
 
 const RECEIPT_PATH = new URL("./fixtures/native-parity/opencode-native-differential-parity.receipt.json", import.meta.url);
 const cleanups = [];
@@ -170,6 +170,10 @@ function splitHarnessRequestEvidence(requests) {
   const policyRequests = [];
   let sessionPermission = null;
   for (const request of requests) {
+    // The observer is deliberately outside the synchronous prompt parity
+    // baseline: it is covered by the focused fixed-origin observer fixture.
+    if (request.path === "/event" || request.path === "/session/status" ||
+        (request.method === "GET" && request.path.startsWith("/session/") && request.path.endsWith("/message"))) continue;
     if (request.method === "GET") {
       if (request.path === "/provider" && providerChecks < 2) {
         providerChecks += 1;
@@ -247,7 +251,7 @@ async function runHarnessDockTurn({ server, url, directory, authority = NATIVE_I
   const requests = server.requests.slice(before);
   assert.ok(nativeAdmission, "the Driver must preserve the actual pre-session admission witness for this differential test");
   const session = requests.find((request) => request.path === "/session");
-  const prompt = requests.find((request) => request.path.endsWith("/message"));
+  const prompt = requests.find((request) => request.method === "POST" && request.path.endsWith("/message"));
   const requestEvidence = splitHarnessRequestEvidence(requests);
   return {
     inventory: driverRoutes(inspection),
@@ -304,6 +308,95 @@ function compareEvidence(direct, harness) {
   });
 }
 
+function observationMessageFor(reference, directory) {
+  const locator = reference.locator;
+  return nativePromptResponse(directory)({
+    sessionId: locator.sessionId,
+    body: { messageID: locator.userMessageId },
+    query: { directory },
+  }).body;
+}
+
+function observationEvidence(observation, reference) {
+  const terminal = observation.terminalResult;
+  return {
+    nativeTurn: observation.nativeTurn,
+    terminal: terminal == null ? null : {
+      lineage: terminal.nativeTurnRef?.locator?.sessionId === reference.locator.sessionId &&
+        terminal.nativeTurnRef?.locator?.userMessageId === reference.locator.userMessageId &&
+        terminal.nativeTurnRef?.locator?.providerId === reference.locator.providerId &&
+        terminal.nativeTurnRef?.locator?.modelId === reference.locator.modelId &&
+        terminal.nativeTurnRef?.locator?.variant === reference.locator.variant ? "matched" : "mismatched",
+      classification: terminal.status,
+    },
+  };
+}
+
+function compareCrossProcessObservation(raw, harness) {
+  const expected = {
+    nativeTurn: "terminal",
+    terminal: { lineage: "matched", classification: "completed" },
+  };
+  assert.deepEqual(raw, expected, "raw HTTP must bind the persisted exact lineage to its terminal outcome");
+  assert.deepEqual(harness, expected, "the fresh Driver observer must bind the persisted exact lineage to its terminal outcome");
+  assert.deepEqual(raw, harness, "raw HTTP and the fresh Driver observer must agree on terminal classification");
+  return { dimension: "cross_process_turn_observation_or_reconciliation", result: "pass" };
+}
+
+async function runCrossProcessObservation({ server, url, directory }) {
+  const scope = {
+    env: { OPENCODE_SERVER_URL: url }, workspaceRoot: directory,
+    rootId: "root_native_parity", agentId: "agent_native_parity", turnId: "turn_native_parity", attemptId: "attempt_native_parity",
+  };
+  let persistedNativeTurnRef;
+  {
+    const driver = createOpencodeDriver({
+      env: { OPENCODE_SERVER_URL: url },
+      serviceManager: { ensure: async () => ({ status: "reused" }) },
+    });
+    const [inspection] = await driver.inspectInstances(scope);
+    const route = driver.validateRoute({
+      harnessId: "opencode", model: NATIVE_INPUT.model, topology: "leaf", authority: NATIVE_INPUT.authority, effort: NATIVE_INPUT.effort,
+    }, inspection);
+    const prepared = driver.prepareTurn({ route, taskInput: NATIVE_INPUT.taskInput, turnOptions: { effort: route.effort } });
+    const live = await driver.startTurn({ scope, preparedTurn: prepared, launchContext: await driver.revalidatePreparedTurn(prepared, scope) });
+    persistedNativeTurnRef = JSON.parse(JSON.stringify(live.nativeTurnRef));
+    await live.result;
+    await live.dispose();
+  }
+  assert.equal(opencodeHeldCapacity(persistedNativeTurnRef.instanceKey), 0, "the original live turn must be gone before restart observation");
+  server.state.observationMessages = [observationMessageFor(persistedNativeTurnRef, directory)];
+  server.state.observationStatus = { [persistedNativeTurnRef.locator.sessionId]: { type: "idle" } };
+  const raw = await runRawHttpOpenCodeObservationOracle({ serverUrl: url, nativeTurnRef: persistedNativeTurnRef });
+  const restartedDriver = createOpencodeDriver({
+    env: { OPENCODE_SERVER_URL: url },
+    serviceManager: { ensure: async () => ({ status: "reused" }) },
+  });
+  const harness = observationEvidence(await restartedDriver.observeTurn(persistedNativeTurnRef, scope), persistedNativeTurnRef);
+  return { raw, harness, persistedNativeTurnRef, scope };
+}
+
+async function assertCrossProcessObservationSensitivity({ server, url, persistedNativeTurnRef, scope, raw, harness }) {
+  const original = structuredClone(server.state.observationMessages);
+  server.state.observationMessages[0].info.providerID = "other-provider";
+  try {
+    const changedRaw = await runRawHttpOpenCodeObservationOracle({ serverUrl: url, nativeTurnRef: persistedNativeTurnRef });
+    const changedDriver = createOpencodeDriver({
+      env: { OPENCODE_SERVER_URL: url },
+      serviceManager: { ensure: async () => ({ status: "reused" }) },
+    });
+    const changedHarness = observationEvidence(await changedDriver.observeTurn(persistedNativeTurnRef, scope), persistedNativeTurnRef);
+    assert.throws(
+      () => compareCrossProcessObservation(changedRaw, changedHarness),
+      undefined,
+      "a raw persisted-lineage mutation must fail the cross-process observation comparator",
+    );
+  } finally {
+    server.state.observationMessages = original;
+  }
+  assert.equal(compareCrossProcessObservation(raw, harness).result, "pass");
+}
+
 function assertUnattendedPolicyDelta(policy) {
   assert.deepEqual(
     policy.sessionPermission,
@@ -352,7 +445,6 @@ function capabilityNotApplicableRows(capabilities) {
     ["interrupt", "interruptRequest", "unsupported"],
     ["history", "history", "unavailable"],
     ["exact_session_continuation", "continuation", "fresh_only"],
-    ["cross_process_turn_observation_or_reconciliation", "turnObservation", "unavailable"],
     ["automatic_recovery_exact_session_transport", "automaticRecovery", "none"],
     ["same_session_recovery_prompt", "automaticRecovery", "none"],
   ];
@@ -701,6 +793,9 @@ describe("OpenCode native raw-HTTP differential parity", () => {
     assert.deepEqual(compareEvidence(writeDirect, writeHarness), comparedRows, "the direct native baseline remains stable beside the write-authority Driver turn");
     const authorityRow = assertDriverAuthorityParity(harness, writeHarness);
     const policyRow = assertUnattendedPolicyDelta(harness.unattendedPolicy);
+    const crossProcessObservation = await runCrossProcessObservation({ server, url, directory });
+    await assertCrossProcessObservationSensitivity({ server, url, ...crossProcessObservation });
+    const observationRow = compareCrossProcessObservation(crossProcessObservation.raw, crossProcessObservation.harness);
     assertComparatorSensitivity(direct, harness);
     assertAuthoritySensitivity(harness, writeHarness);
     await assertNativeResponseSensitivity(directory);
@@ -730,7 +825,7 @@ describe("OpenCode native raw-HTTP differential parity", () => {
     const driftRow = compareRouteDrift(directDrift, harnessDrift);
 
     const receipt = renderReceipt({
-      provenRows: [...comparedRows, authorityRow, policyRow, driftRow, ...processRows],
+      provenRows: [...comparedRows, authorityRow, policyRow, observationRow, driftRow, ...processRows],
       notApplicableRows: capabilityNotApplicableRows(harness.capabilities),
       unprovenRows: [],
     });

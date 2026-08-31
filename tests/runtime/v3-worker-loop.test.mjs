@@ -278,7 +278,7 @@ describe("version-three worker loop: durable turn lifecycle", () => {
     const result = await runVersionThreeWorkerLoop(context.input);
     assert.equal(result.status, "completed");
     assert.equal(context.agent().status, "completed");
-    assert.equal(context.v3Record().route.capabilitySchemaVersion, 3);
+    assert.equal(context.v3Record().route.capabilitySchemaVersion, 4);
     const after = JSON.parse(fs.readFileSync(filePath, "utf8"));
     assert.equal(JSON.stringify(after.agents[context.agentId].route), historicalRoute);
   });

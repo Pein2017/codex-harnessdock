@@ -1,4 +1,4 @@
 interface:
-  display_name: "CC Send Message"
+  display_name: "HarnessDock Send Message"
   short_description: "Experimental: deliver or queue a durable Agent message"
   default_prompt: "Experimental: use $codex-harnessdock:send-message and invoke mcp__codex_harnessdock__send_message to deliver or queue a durable Agent message; a route taking only its first input queues instead of steering, and there is no path to an Agent on another Harness. Never fall back to a shell command. Summarize success in one concise disposition-aware sentence, never raw JSON or repeated message text unless debug detail was explicitly requested. Queueing cannot reactivate an idle Codex parent."

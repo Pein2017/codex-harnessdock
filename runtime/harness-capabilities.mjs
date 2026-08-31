@@ -85,7 +85,7 @@ export function assertHarnessCapability(snapshot, name, admitted, detail) {
  * wrapped in Contract v2; the two never merge, because version one encodes
  * process-shaped interruption instead of a request/settlement split.
  */
-export const ROUTE_CAPABILITY_SCHEMA_VERSION = 3;
+export const ROUTE_CAPABILITY_SCHEMA_VERSION = 4;
 
 export const ROUTE_CAPABILITY_VALUES = Object.freeze({
   interaction: Object.freeze(["noninteractive_fixed_policy", "requires_broker"]),
@@ -94,6 +94,7 @@ export const ROUTE_CAPABILITY_VALUES = Object.freeze({
   history: Object.freeze(["assistant_messages", "unavailable"]),
   interruptRequest: Object.freeze(["supported", "unsupported"]),
   turnObservation: Object.freeze(["terminal_observable", "unavailable"]),
+  nativeProgress: Object.freeze(["native_coalesced", "supervisor_projected", "unavailable"]),
   automaticRecovery: Object.freeze(["exact_session_transport", "same_session_recovery_prompt", "none"]),
   authorityEnforcement: Object.freeze(["prompt_only", "harness_policy", "process_sandbox"]),
   leafEnforcement: Object.freeze(["effective_tool_denial", "prompt_only", "unsupported"]),
@@ -145,7 +146,7 @@ export function validateRouteCapabilityProvenance(provenance, label = "Route cap
   return Object.freeze(normalized);
 }
 
-export function validateRouteCapabilitySnapshot(snapshot, label = "Route capability snapshot", { allowSchemaV2 = false } = {}) {
+export function validateRouteCapabilitySnapshot(snapshot, label = "Route capability snapshot", { allowSchemaV2 = false, allowSchemaV3 = false } = {}) {
   // Every field is read exactly once, from one descriptor snapshot of an
   // ordinary object. A Proxy, accessor, hidden, symbol-keyed, or inherited
   // field is refused here: a route snapshot that can answer differently to a
@@ -154,7 +155,8 @@ export function validateRouteCapabilitySnapshot(snapshot, label = "Route capabil
   const declaredSchemaVersion = fields.capabilitySchemaVersion;
   const declaredDriverMaturity = fields.driverMaturity;
   if (declaredSchemaVersion !== ROUTE_CAPABILITY_SCHEMA_VERSION &&
-      !(allowSchemaV2 && declaredSchemaVersion === 2)) {
+      !(allowSchemaV2 && declaredSchemaVersion === 2) &&
+      !(allowSchemaV3 && declaredSchemaVersion === 3)) {
     throw new Error(
       `${label} declares capability schema version ${JSON.stringify(declaredSchemaVersion ?? null)}; ` +
       `this runtime requires ${ROUTE_CAPABILITY_SCHEMA_VERSION}.`
@@ -166,16 +168,16 @@ export function validateRouteCapabilitySnapshot(snapshot, label = "Route capabil
       `Use one of: ${CAPABILITY_MATURITY_VALUES.join(", ")}.`
     );
   }
-  const schemaV2 = declaredSchemaVersion === 2;
+  const legacySchema = declaredSchemaVersion === 2;
   for (const [part, name] of [[fields.values, "values"], [fields.maturity, "maturity"],
-    ...(schemaV2 ? [] : [[fields.provenance, "provenance"]])]) {
+    ...(legacySchema ? [] : [[fields.provenance, "provenance"]])]) {
     if (!part || typeof part !== "object" || Array.isArray(part)) {
       throw new Error(`${label} must carry a capability ${name} object.`);
     }
   }
   const values = plainRecordSnapshot(fields.values, `${label} capability values`);
   const maturity = plainRecordSnapshot(fields.maturity, `${label} capability maturity`);
-  const provenance = schemaV2 ? null : validateRouteCapabilityProvenance(
+  const provenance = legacySchema ? null : validateRouteCapabilityProvenance(
     fields.provenance, `${label} capability provenance`
   );
   /** @type {Record<string, string>} */
@@ -209,7 +211,7 @@ export function validateRouteCapabilitySnapshot(snapshot, label = "Route capabil
     }
   }
   for (const key of Object.keys(fields)) {
-    if (!["capabilitySchemaVersion", "driverMaturity", "values", "maturity", ...(schemaV2 ? [] : ["provenance"])].includes(key)) {
+    if (!["capabilitySchemaVersion", "driverMaturity", "values", "maturity", ...(legacySchema ? [] : ["provenance"])].includes(key)) {
       throw new Error(`${label} declares an unknown field: ${key}.`);
     }
   }

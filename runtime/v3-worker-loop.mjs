@@ -36,6 +36,7 @@
  */
 
 import { types } from "node:util";
+import { getProcessIdentity } from "./process-control.mjs";
 
 import {
   canonicalAgentWorkspaceRoot,
@@ -53,6 +54,7 @@ import {
   assertHarnessId,
   boundedDriverReceipt,
   MAX_DRIVER_RECEIPT_BYTES,
+  validateNativeProgress,
   validateNormalizedTerminalResult,
 } from "./harness-contract.mjs";
 import { sameNativeReference } from "./native-reference.mjs";
@@ -79,6 +81,7 @@ import {
   recordVersionThreeTurnRunning,
   recordVersionThreeTurnTerminal,
   recordVersionThreeTurnUncertain,
+  publishVersionThreeProgress,
   versionThreeCompletionOptions,
 } from "./v3-job-store.mjs";
 
@@ -712,6 +715,7 @@ function createSession(snapshot, liveTurn, launchClaim) {
     /** @type {*} */
     liveOwnershipQuiesce: null,
     durableRecord: "running",
+    progressUnsubscribe: null,
   };
 }
 
@@ -1072,6 +1076,8 @@ function closeLiveControlOwnership(session, normalizedResult) {
 }
 
 async function disposeLiveTurn(session) {
+  try { session.progressUnsubscribe?.(); } catch { /* best-effort source cleanup */ }
+  session.progressUnsubscribe = null;
   try {
     await session.liveTurn.dispose();
     return { disposed: true, disposalFailure: null };
@@ -1449,7 +1455,17 @@ export async function runVersionThreeWorkerLoop(input) {
       executionRoot: snapshot.executionRoot,
       route: snapshot.route,
       nativeTurnRef: launchClaim.nativeTurnRef,
+      worker: { pid: process.pid, identity: getProcessIdentity(process.pid) },
     });
+    if (typeof liveTurn.subscribeProgress === "function") {
+      session.progressUnsubscribe = liveTurn.subscribeProgress((progress) => {
+        try {
+          publishVersionThreeProgress({ generation: FUTURE_WRITE_GENERATION, ownerRootId: snapshot.ownerRootId,
+            agentId: snapshot.agentId, jobId: snapshot.jobId, attemptId: snapshot.attemptId,
+            progress: validateNativeProgress(progress) });
+        } catch { /* advisory progress never changes turn settlement */ }
+      });
+    }
   } catch (error) {
     // Nothing durable can be recorded for this turn at all, so no uncertainty
     // record is possible either. Hold every lease, publish nothing, and say

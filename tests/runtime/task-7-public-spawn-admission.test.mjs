@@ -188,7 +188,7 @@ function seamClaudeReadiness(runtime) {
           topologies: ["leaf", "native_orchestrator"],
           interaction: "noninteractive_fixed_policy",
         },
-        capabilityProvenance: Object.fromEntries(["interaction", "activeInput", "continuation", "history", "interruptRequest", "turnObservation", "automaticRecovery", "authorityEnforcement", "leafEnforcement", "nativeOrchestration"].map((name) => [name, "checkout_declared"])),
+        capabilityProvenance: Object.fromEntries(["interaction", "activeInput", "continuation", "history", "interruptRequest", "turnObservation", "nativeProgress", "automaticRecovery", "authorityEnforcement", "leafEnforcement", "nativeOrchestration"].map((name) => [name, "checkout_declared"])),
         inspectionGeneration: "unavailable",
       }],
     };
@@ -743,14 +743,19 @@ describe("Task 7 — each Harness states exactly one execution lifecycle", () =>
     // The detached worker owns settlement; observe the durable projection.
     const deadline = Date.now() + 20_000;
     let card = null;
+    let agent = null;
     while (Date.now() < deadline) {
       card = runtime.listAgents().agents.find((entry) => entry.agent_name === receipt.agent_name);
-      if (["completed", "failed", "interrupted", "errored"].includes(card?.agent_status)) break;
+      agent = runtime.versionThreeStore().resolveTarget(agentId);
+      if (
+        ["completed", "failed", "interrupted", "errored"].includes(card?.agent_status) &&
+        agent.latestJobId
+      ) break;
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
     assert.equal(card?.agent_status, "completed", "the Explorer turn must settle through the public surface");
 
-    const agent = runtime.versionThreeStore().resolveTarget(agentId);
+    assert.ok(agent?.latestJobId, "the terminal version-three job must be projected onto its Agent");
     const claim = readLaunchClaim({
       ownerRootId: runtime.ownerRootId,
       agentId,

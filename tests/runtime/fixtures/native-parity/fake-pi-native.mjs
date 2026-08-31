@@ -64,6 +64,7 @@ function sessionForCurrentProcess() {
       leaf: 0,
       turns: [],
       stats: { toolCalls: 0, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } },
+      model: activeModel ?? Object.keys(config().catalog ?? {})[0] ?? null,
     };
   }).sessions[sessionId];
 }
@@ -110,7 +111,9 @@ input.on("line", (line) => {
   if (command.type === "get_commands") { response(command, { commands: commands(), configWitness: currentConfig.configWitness ?? null }); return; }
   if (command.type === "get_state") {
     const [provider, id] = (activeModel ?? "").split("/");
-    response(command, { sessionId, model: { provider, id }, thinkingLevel: argValue("--thinking") ?? "high", isStreaming: false, isCompacting: false });
+    const model = sessionForCurrentProcess()?.model ?? `${provider}/${id}`;
+    const [sessionProvider, sessionModel] = (model ?? "").split("/");
+    response(command, { sessionId, model: { provider: sessionProvider, id: sessionModel }, thinkingLevel: argValue("--thinking") ?? "high", isStreaming: false, isCompacting: false });
     return;
   }
   if (command.type === "get_entries") { const current = sessionForCurrentProcess(); response(command, { leafId: current ? `leaf-${current.leaf}` : null, entries: current?.turns ?? [] }); return; }

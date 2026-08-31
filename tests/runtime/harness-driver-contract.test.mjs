@@ -126,6 +126,7 @@ function routeCapabilities(overrides = {}) {
       history: "unavailable",
       interruptRequest: "supported",
       turnObservation: "terminal_observable",
+      nativeProgress: "unavailable",
       automaticRecovery: "none",
       authorityEnforcement: "harness_policy",
       leafEnforcement: "effective_tool_denial",
@@ -138,6 +139,7 @@ function routeCapabilities(overrides = {}) {
       history: "experimental",
       interruptRequest: "validated",
       turnObservation: "experimental",
+      nativeProgress: "validated",
       automaticRecovery: "validated",
       authorityEnforcement: "validated",
       leafEnforcement: "validated",
@@ -151,18 +153,18 @@ function routeCapabilities(overrides = {}) {
 }
 
 describe("Harness Driver contract", () => {
-  it("requires capability-schema v3 provenance and bounded inspection evidence", () => {
+  it("requires capability-schema v4 provenance and bounded inspection evidence", () => {
     const provenance = Object.fromEntries(
       ROUTE_CAPABILITY_NAMES.map((name) => [name, "checkout_declared"]),
     );
     const snapshot = {
-      capabilitySchemaVersion: 3,
+      capabilitySchemaVersion: 4,
       driverMaturity: "experimental",
       values: routeCapabilities().values,
       maturity: routeCapabilities().maturity,
       provenance,
     };
-    assert.equal(ROUTE_CAPABILITY_SCHEMA_VERSION, 3);
+    assert.equal(ROUTE_CAPABILITY_SCHEMA_VERSION, 4);
     assert.deepEqual(validateRouteCapabilitySnapshot(snapshot).provenance, provenance);
 
     const { continuation: _missing, ...missing } = provenance;
@@ -975,8 +977,8 @@ describe("Harness Driver contract", () => {
 });
 
 describe("Driver Contract v2 route capabilities", () => {
-  it("publishes the closed version-three dimensions with independent route maturity", () => {
-    assert.equal(ROUTE_CAPABILITY_SCHEMA_VERSION, 3);
+  it("publishes the closed version-four dimensions with independent route maturity", () => {
+    assert.equal(ROUTE_CAPABILITY_SCHEMA_VERSION, 4);
     assert.deepEqual(ROUTE_CAPABILITY_NAMES, [
       "activeInput",
       "authorityEnforcement",
@@ -987,6 +989,7 @@ describe("Driver Contract v2 route capabilities", () => {
       "interruptRequest",
       "leafEnforcement",
       "nativeOrchestration",
+      "nativeProgress",
       "turnObservation",
     ]);
     assert.deepEqual(ROUTE_CAPABILITY_VALUES.interaction, [
@@ -994,6 +997,7 @@ describe("Driver Contract v2 route capabilities", () => {
       "requires_broker",
     ]);
     assert.deepEqual(ROUTE_CAPABILITY_VALUES.turnObservation, ["terminal_observable", "unavailable"]);
+    assert.deepEqual(ROUTE_CAPABILITY_VALUES.nativeProgress, ["native_coalesced", "supervisor_projected", "unavailable"]);
     assert.deepEqual(ROUTE_CAPABILITY_VALUES.continuation, ["exact_resume", "fresh_only", "none"]);
     assert.deepEqual(CAPABILITY_MATURITY_VALUES, ["experimental", "validated"]);
 

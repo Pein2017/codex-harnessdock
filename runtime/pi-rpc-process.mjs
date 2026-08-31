@@ -9,6 +9,8 @@ import { spawn as nodeSpawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { StringDecoder } from "node:string_decoder";
 
+import { validateNativeProgress } from "./harness-contract.mjs";
+
 export const PI_RPC_MAX_LINE_BYTES = 1024 * 1024;
 export const PI_RPC_RESPONSE_TIMEOUT_MS = 10_000;
 const PI_RPC_DIALOG_METHODS = new Set(["select", "confirm", "input", "editor"]);
@@ -44,6 +46,23 @@ function safeText(value, max = 512) {
   return typeof value === "string" ? value.slice(0, max) : "Pi RPC protocol failed.";
 }
 
+// Keep the native vocabulary private.  Only complete lifecycle transitions
+// reach the process-local sink; deltas and provider payloads never do.
+function nativeProgress(value) {
+  if (value?.type === "message_end" || value?.type === "agent_settled") return null;
+  let candidate = null;
+  if (["agent_start", "turn_start"].includes(value?.type)) candidate = { activity: "thinking" };
+  else if (["message_start"].includes(value?.type) && (value.message?.role ?? value.role) === "assistant") candidate = { activity: "responding" };
+  else if (["tool_call", "tool_call_start", "tool_execution_start", "tool_start"].includes(value?.type)) {
+    const toolName = value.toolName ?? value.tool_name ?? value.name ?? value.tool?.name ?? value.toolCall?.name;
+    candidate = { activity: "tool", ...(toolName == null ? {} : { toolName }) };
+  } else if (["tool_call_end", "tool_execution_end", "tool_end"].includes(value?.type)) candidate = { activity: "responding" };
+  else if (["auto_retry_start", "retry_start"].includes(value?.type)) candidate = { activity: "retrying" };
+  else if (["auto_retry_end", "retry_end"].includes(value?.type)) candidate = { activity: "thinking" };
+  if (candidate == null) return null;
+  try { return validateNativeProgress(candidate, "Pi native progress"); } catch { return null; }
+}
+
 /**
  * Start a fixed Pi RPC process. `_test` is intentionally private: production
  * callers have no process, executable, or session-root selector.
@@ -73,6 +92,9 @@ export function createPiRpcProcess(options) {
   let fatal = null;
   let stderr = "";
   let finalAssistantMessage = null;
+  let latestProgress = null;
+  let disposed = false;
+  const progressListeners = new Set();
   const decoder = new StringDecoder("utf8");
   let buffer = "";
 
@@ -108,6 +130,13 @@ export function createPiRpcProcess(options) {
         request.resolve(value);
       }
       return;
+    }
+    const progress = nativeProgress(value);
+    if (progress && (!latestProgress || latestProgress.activity !== progress.activity || latestProgress.toolName !== progress.toolName)) {
+      latestProgress = progress;
+      for (const listener of [...progressListeners]) {
+        try { listener(progress); } catch { /* progress is advisory */ }
+      }
     }
     if (value.type === "extension_ui_request" && PI_RPC_DIALOG_METHODS.has(value.method)) {
       if (typeof value.id !== "string" || !value.id || value.id.length > 512 || value.id.includes("\0")) {
@@ -210,6 +239,16 @@ export function createPiRpcProcess(options) {
     return gate.promise;
   }
 
+  function subscribeProgress(listener) {
+    if (typeof listener !== "function") throw new TypeError("Pi progress listener must be a function.");
+    if (disposed) return () => {};
+    progressListeners.add(listener);
+    if (latestProgress) {
+      try { listener(latestProgress); } catch { /* progress is advisory */ }
+    }
+    return () => progressListeners.delete(listener);
+  }
+
   return Object.freeze({
     child,
     prompt: (message) => request("prompt", { message }),
@@ -228,7 +267,10 @@ export function createPiRpcProcess(options) {
     setFollowUpMode: (mode) => request("set_follow_up_mode", { mode }),
     waitForSettled: () => settled.promise,
     finalAssistantMessage: () => finalAssistantMessage,
+    subscribeProgress,
     async dispose() {
+      disposed = true;
+      progressListeners.clear();
       if (closed) return;
       child.kill("SIGTERM");
       await new Promise((resolve) => {

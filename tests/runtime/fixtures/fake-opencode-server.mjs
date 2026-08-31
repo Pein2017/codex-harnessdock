@@ -102,8 +102,15 @@ export function createFakeOpencodeServer(scenario = {}) {
     promptMalformed: scenario.promptMalformed === true,
     promptDestroy: scenario.promptDestroy === true,
     promptStatus: scenario.promptStatus ?? 200,
+    // --- read-only observer ---------------------------------------------
+    observationMessages: scenario.observationMessages ?? [],
+    observationStatus: scenario.observationStatus ?? {},
+    observationEvents: scenario.observationEvents ?? [],
+    eventHangBeforeHeaders: scenario.eventHangBeforeHeaders === true,
   };
   const requests = [];
+  const eventClients = new Set();
+  const eventConnections = new Set();
   let sessionSequence = 0;
 
   function nextSessionId() {
@@ -210,6 +217,30 @@ export function createFakeOpencodeServer(scenario = {}) {
       return;
     }
 
+    // --- read-only native observation -----------------------------------
+    if (pathname === "/event" && req.method === "GET") {
+      eventConnections.add(res);
+      req.on("close", () => {
+        eventConnections.delete(res);
+        eventClients.delete(res);
+      });
+      if (state.eventHangBeforeHeaders) return;
+      res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" });
+      res.flushHeaders();
+      eventClients.add(res);
+      for (const event of state.observationEvents) res.write(`data: ${JSON.stringify(event)}\n\n`);
+      return;
+    }
+    if (pathname === "/session/status" && req.method === "GET") {
+      sendJson(res, 200, state.observationStatus);
+      return;
+    }
+    const observedMessages = PROMPT_PATH_PATTERN.exec(pathname);
+    if (observedMessages && req.method === "GET") {
+      sendJson(res, 200, state.observationMessages);
+      return;
+    }
+
     // --- POST /session ----------------------------------------------------
     if (pathname === "/session" && req.method === "POST") {
       readBody(req).then((body) => {
@@ -300,12 +331,18 @@ export function createFakeOpencodeServer(scenario = {}) {
   return {
     requests,
     state,
+    eventConnectionCount() { return eventConnections.size; },
+    emitObservation(event) {
+      for (const response of eventClients) response.write(`data: ${JSON.stringify(event)}\n\n`);
+    },
     async listen() {
       await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
       const { port } = server.address();
       return `http://127.0.0.1:${port}`;
     },
     async close() {
+      for (const response of eventClients) response.end();
+      server.closeAllConnections?.();
       await new Promise((resolve) => server.close(resolve));
     },
   };

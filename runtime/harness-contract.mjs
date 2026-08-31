@@ -69,6 +69,29 @@ const HARNESS_ID_PATTERN = /^[a-z][a-z0-9-]{1,31}$/;
 const NATIVE_SESSION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9_.:-]{0,255}$/;
 const TURN_STATUSES = new Set(["completed", "failed", "interrupted", "unknown"]);
 export const MAX_DRIVER_RECEIPT_BYTES = 16 * 1024;
+export const NATIVE_PROGRESS_ACTIVITIES = Object.freeze(["thinking", "responding", "tool", "retrying", "reconnecting"]);
+export const MAX_NATIVE_PROGRESS_TOOL_NAME_BYTES = 80;
+const NATIVE_PROGRESS_TOOL_NAME_PATTERN = /^[A-Za-z0-9_.:-]{1,80}$/;
+
+/** Validate the sole Driver-to-supervisor activity shape. */
+export function validateNativeProgress(value, label = "Native progress") {
+  if (!value || typeof value !== "object" || Array.isArray(value) || types.isProxy(value)) {
+    throw new Error(`${label} must be a plain progress object.`);
+  }
+  const keys = Object.keys(value);
+  if (!keys.every((key) => key === "activity" || key === "toolName")) {
+    throw new Error(`${label} declares an unknown field.`);
+  }
+  if (!NATIVE_PROGRESS_ACTIVITIES.includes(value.activity)) {
+    throw new Error(`${label} has unsupported activity.`);
+  }
+  if (value.toolName != null && (typeof value.toolName !== "string" ||
+      !NATIVE_PROGRESS_TOOL_NAME_PATTERN.test(value.toolName) ||
+      Buffer.byteLength(value.toolName, "utf8") > MAX_NATIVE_PROGRESS_TOOL_NAME_BYTES)) {
+    throw new Error(`${label} has an unsafe tool name.`);
+  }
+  return Object.freeze({ activity: value.activity, toolName: value.toolName ?? null });
+}
 
 function assertText(value, label) {
   if (typeof value !== "string" || !value.trim() || value.includes("\0")) {
@@ -986,6 +1009,7 @@ export const MAX_FINAL_MESSAGE_CHARS = 256 * 1024;
 const LIVE_TURN_CAPABILITY_METHODS = Object.freeze({
   deliverActiveInput: Object.freeze({ capability: "activeInput", admitted: Object.freeze(["acknowledged_active_stream"]) }),
   requestInterrupt: Object.freeze({ capability: "interruptRequest", admitted: Object.freeze(["supported"]) }),
+  subscribeProgress: Object.freeze({ capability: "nativeProgress", admitted: Object.freeze(["native_coalesced"]) }),
 });
 
 function assertNoProcessShapedFields(value, label) {
@@ -1081,7 +1105,16 @@ export function validateLiveHarnessTurn(live, { driver, route }) {
         `${label} exposes ${method} although the accepted route declares ${capability}=${value}.`
       );
     }
-    if (implemented) {
+    if (implemented && method === "subscribeProgress") {
+      boundOptionalMethods[method] = (listener) => {
+        if (typeof listener !== "function") throw new Error(`${label} subscribeProgress listener must be a function.`);
+        const unsubscribe = implementation.call(live, (progress) => {
+          try { listener(validateNativeProgress(progress, `${label} progress`)); } catch { /* best effort only */ }
+        });
+        if (typeof unsubscribe !== "function") throw new Error(`${label} subscribeProgress must return unsubscribe().`);
+        return unsubscribe;
+      };
+    } else if (implemented) {
       // Bind to the original handle so a class-backed live turn's prototype
       // method keeps operating on its own private fields through the wrapper.
       boundOptionalMethods[method] = implementation.bind(live);

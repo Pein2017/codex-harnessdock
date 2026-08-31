@@ -65,7 +65,7 @@ function cell({ harness, dimension, evidence, directSource, harnessdockSource, a
   const body = {
     harness,
     driverVersion: DRIVER_VERSIONS[harness],
-    capabilitySchemaVersion: 3,
+    capabilitySchemaVersion: 4,
     dimension,
     localEvidence: evidence,
     directSource: safeText(directSource, "direct source"),
@@ -253,7 +253,8 @@ export function composeNativeHarnessDifferentialParity({ claudeReceipt, piReceip
   piPass("event_tool_order", "ordered_events", "ordered native event comparison");
   piPass("interrupt", "interrupt_request_behavior", "native interrupt request comparison");
   piPass("exact_session_continuation", "exact_session_continuation", "same native session and distinct provider-native history identities");
-  for (const dimension of ["cross_process_turn_observation_or_reconciliation", "automatic_recovery_exact_session_transport", "same_session_recovery_prompt"]) {
+  piPass("cross_process_turn_observation_or_reconciliation", "cross_process_turn_observation_or_reconciliation", "cross-process terminal observation comparison");
+  for (const dimension of ["automatic_recovery_exact_session_transport", "same_session_recovery_prompt"]) {
     const { evidence, row, basis } = notApplicableEvidence(piReceipt, piFile, piRows, dimension);
     cells.push(cell({ harness: "pi", dimension, evidence: [evidence], ...piSources(row), mode: "capability-derived", comparator: "capability snapshot unavailability", result: "not_applicable", notApplicableBasis: basis }));
   }
@@ -274,7 +275,12 @@ export function composeNativeHarnessDifferentialParity({ claudeReceipt, piReceip
   opencodePass("native_configuration_inheritance", "native_configuration_inheritance", "independent native config and resolved Agent witness comparison");
   opencodePass("prompt_authority_delta", "driver_authority_non_prompt_invariance", "authority-only non-prompt request comparison");
   opencodePass("event_tool_order", "ordered_request_event_tool_observations", "ordered native request event and tool comparison");
-  for (const dimension of ["interrupt", "exact_session_continuation", "cross_process_turn_observation_or_reconciliation", "automatic_recovery_exact_session_transport", "same_session_recovery_prompt"]) {
+  for (const dimension of ["interrupt", "exact_session_continuation"]) {
+    const { evidence, basis } = notApplicableEvidence(opencodeReceipt, opencodeFile, opencode.notApplicable, dimension);
+    cells.push(cell({ harness: "opencode", dimension, evidence: [evidence], ...opencodeSources([evidence]), mode: "capability-derived", comparator: "capability snapshot unavailability", result: "not_applicable", notApplicableBasis: basis }));
+  }
+  opencodePass("cross_process_turn_observation_or_reconciliation", "cross_process_turn_observation_or_reconciliation", "cross-process terminal observation comparison");
+  for (const dimension of ["automatic_recovery_exact_session_transport", "same_session_recovery_prompt"]) {
     const { evidence, basis } = notApplicableEvidence(opencodeReceipt, opencodeFile, opencode.notApplicable, dimension);
     cells.push(cell({ harness: "opencode", dimension, evidence: [evidence], ...opencodeSources([evidence]), mode: "capability-derived", comparator: "capability snapshot unavailability", result: "not_applicable", notApplicableBasis: basis }));
   }

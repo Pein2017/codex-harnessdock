@@ -238,7 +238,7 @@ describe("public generation: list_harnesses observes without selecting", () => {
     const opencode = harnessOf(listing, OPENCODE_HARNESS_ID);
     assert.equal(opencode.driver_version, OPENCODE_DRIVER_VERSION);
     assert.equal(opencode.maturity, "experimental");
-    assert.equal(opencode.capability_schema_version, 3);
+    assert.equal(opencode.capability_schema_version, 4);
     assert.equal(opencode.instances.length, 1);
     const instance = opencode.instances[0];
     assert.equal(instance.instance, opencodeExplorerInstanceKey(url));
@@ -312,7 +312,7 @@ describe("public generation: list_harnesses observes without selecting", () => {
         interaction: "checkout_declared", activeInput: "checkout_declared", continuation: "checkout_declared",
         history: "checkout_declared", interruptRequest: "checkout_declared", automaticRecovery: "checkout_declared",
         authorityEnforcement: "checkout_declared", leafEnforcement: "checkout_declared",
-        nativeOrchestration: "checkout_declared", turnObservation: "checkout_declared",
+        nativeOrchestration: "checkout_declared", nativeProgress: "checkout_declared", turnObservation: "checkout_declared",
       },
       inspection_generation: "unavailable",
     });

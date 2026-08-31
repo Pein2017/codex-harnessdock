@@ -1,4 +1,4 @@
 interface:
-  display_name: "Read HarnessDock Agent Messages"
+  display_name: "HarnessDock Read Agent Messages"
   short_description: "Experimental: read bound native assistant messages"
   default_prompt: "Experimental: use $codex-harnessdock:read-agent-messages and invoke mcp__codex_harnessdock__read_agent_messages only for retrospective outer-assistant history from an exact current-root Agent; a route proving no readable history answers unsupported with no messages. Never fall back to a shell command. Current completion should come directly from wait-agent, and this skill cannot reactivate an idle Codex parent."

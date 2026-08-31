@@ -376,7 +376,7 @@ describe("native plugin contract", () => {
         assert.doesNotMatch(text, /timeout_ms/);
         assert.match(text, /wake_on_progress: true[\s\S]*an intermediate update/i);
         assert.match(text, /hook[\s\S]*private/i);
-        assert.match(text, /Do not repeat progress waiting/i);
+        assert.match(text, /do not poll reflexively/i);
         assert.match(text, /narrate unchanged timeouts/i);
         assert.match(text, /`list_agents` or\s+`read_agent_messages` immediately\s+afterward merely to recheck completion/i);
         assert.match(text, /call `wait_agent` again directly/i);

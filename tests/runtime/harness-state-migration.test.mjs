@@ -671,7 +671,7 @@ describe("Version-three route identity", () => {
     assert.equal(canonical.driverVersion, V3_DRIVER_VERSION);
     assert.equal(canonical.topology, "leaf");
     assert.equal(canonical.authority, "behavioral_read_only");
-    assert.equal(canonical.capabilitySchemaVersion, 3);
+    assert.equal(canonical.capabilitySchemaVersion, 4);
     assert.equal(canonical.capabilities.values.continuation, "exact_resume");
 
     // The snapshot is deep-frozen and deep-copied: no route fact may stay

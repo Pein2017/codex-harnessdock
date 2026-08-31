@@ -314,7 +314,7 @@ describe("opencode usage: route-keyed identity", () => {
       ["instanceKey", "opencode-server-fedcba9876543210"],
       ["model", "opencode-go/deepseek-v4-pro"],
       ["driverVersion", "opencode@2"],
-      ["capabilitySchemaVersion", 3],
+      ["capabilitySchemaVersion", 4],
       ["topology", "native_orchestrator"],
       ["authority", "behavioral_write"],
     ]) {

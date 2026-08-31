@@ -101,7 +101,7 @@ describe("native Harness differential parity", () => {
     const inputs = localReceipts();
     const receipt = composeNativeHarnessDifferentialParity(inputs);
     const assessment = assessNativeHarnessDifferentialParity(receipt);
-    assert.deepEqual(assessment.counts, { pass: 32, fail: 0, hold: 0, not_applicable: 10 });
+    assert.deepEqual(assessment.counts, { pass: 34, fail: 0, hold: 0, not_applicable: 8 });
     assert.equal(assessment.status, "pass");
     assert.equal(assessment.promotionEligible, true);
     assert.equal(receipt.cells.length, 42);

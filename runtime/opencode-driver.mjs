@@ -70,13 +70,17 @@ import {
 import { ROUTE_CAPABILITY_NAMES, ROUTE_CAPABILITY_SCHEMA_VERSION, validateRouteCapabilitySnapshot } from "./harness-capabilities.mjs";
 import {
   createOpencodeDiscoveryClient,
+  createOpencodeObservationClient,
   createOpencodeSession,
   createOpencodeTurnClient,
+  OPENCODE_DEADLINES_MS,
   discoverOpencodeAgentPolicy,
   discoverOpencodeDefaultAgent,
   discoverOpencodeHealth,
   discoverOpencodeProviderRoutes,
   isLoopbackOpencodeUrl,
+  observeOpencodeSession,
+  readOpencodeObservedSession,
   submitOpencodePrompt,
 } from "./opencode-client.mjs";
 import {
@@ -120,7 +124,8 @@ const OPENCODE_NATIVE_CAPABILITIES = validateRouteCapabilitySnapshot({
     activeInput: "initial_only", authorityEnforcement: "prompt_only", automaticRecovery: "none",
     continuation: "fresh_only", history: "unavailable", interaction: "noninteractive_fixed_policy",
     interruptRequest: "unsupported", leafEnforcement: "prompt_only", nativeOrchestration: "opaque_bounded",
-    turnObservation: "unavailable",
+    turnObservation: "terminal_observable",
+    nativeProgress: "native_coalesced",
   },
   maturity: Object.fromEntries(ROUTE_CAPABILITY_NAMES.map((name) => [name, "experimental"])),
   provenance: Object.fromEntries(ROUTE_CAPABILITY_NAMES.map((name) => [name, "checkout_declared"])),
@@ -926,6 +931,48 @@ export function createOpencodeDriver(options = {}) {
       return reference;
     },
 
+    /** Read-only restart observation for one already-persisted exact turn. */
+    async observeTurn(reference, scope = {}) {
+      try {
+        const validated = driver.validateNativeTurnRef(reference);
+        if (validated.instanceKey !== fixedInstanceKey) return { nativeTurn: "unknown", terminalResult: null };
+        const { sessionId, userMessageId, attemptId, providerId, modelId, variant } = validated.locator;
+        const observer = createOpencodeObservationClient(clientOptions);
+        const snapshot = await readOpencodeObservedSession(observer, { sessionId, signal: scope.signal });
+        if (!snapshot.ok) return { nativeTurn: "unknown", terminalResult: null };
+        const status = snapshot.status?.[sessionId];
+        if (status?.type === "busy" || status?.type === "retry") return { nativeTurn: "active", terminalResult: null };
+        if (status != null && status.type !== "idle") return { nativeTurn: "unknown", terminalResult: null };
+        const candidates = snapshot.messages.filter((message) =>
+          message?.info?.role === "assistant" && message.info.sessionID === sessionId && message.info.parentID === userMessageId
+        );
+        if (candidates.length !== 1) return { nativeTurn: "unknown", terminalResult: null };
+        if (candidates[0].info.finish == null && candidates[0].info.error == null) {
+          return { nativeTurn: "unknown", terminalResult: null };
+        }
+        const terminal = normalizeOutcome({ ok: true, response: candidates[0] }, {
+          nativeTurnRef: validated,
+          sessionId,
+          userMessageId,
+          attemptId,
+          providerId,
+          modelId,
+          variant,
+          usageIdentity: {
+            rootId: scope.rootId ?? null, agentId: scope.agentId ?? null, turnId: scope.turnId ?? null, attemptId,
+            harnessId: OPENCODE_HARNESS_ID, instanceKey: fixedInstanceKey, model: `${providerId}/${modelId}`,
+            driverVersion: OPENCODE_DRIVER_VERSION, capabilitySchemaVersion: ROUTE_CAPABILITY_SCHEMA_VERSION,
+            topology: scope.route?.topology ?? "leaf", authority: scope.route?.authority ?? "behavioral_read_only",
+          },
+          latencyMs: 0,
+          serverVersion: null,
+        });
+        return { nativeTurn: "terminal", terminalResult: terminal };
+      } catch {
+        return { nativeTurn: "unknown", terminalResult: null };
+      }
+    },
+
     /**
      * Create one fresh session, prove its reference, prove this turn's distinct
      * reference from the caller-generated user-message id, dispatch the one
@@ -976,6 +1023,7 @@ export function createOpencodeDriver(options = {}) {
       let nativeSessionRef;
       let nativeTurnRef;
       let userMessageId;
+      let observation = null;
       try {
         const admittedModel = opencodeModelParts(route.model);
         const finalWitness = await inspectNative(scope);
@@ -1028,6 +1076,20 @@ export function createOpencodeDriver(options = {}) {
           );
         } catch (error) {
           throw new OpencodeRouteError("turn_identity_unprovable", error.message);
+        }
+        // The read-only stream is registered before the blocking prompt is
+        // dispatched. Its own failure is advisory and cannot alter prompt
+        // acceptance or settlement.
+        try {
+          observation = await observeOpencodeSession(createOpencodeObservationClient({
+            ...clientOptions,
+            timeoutMs: OPENCODE_DEADLINES_MS.connect,
+          }), {
+            sessionId,
+            signal: scope?.signal ?? undefined,
+          });
+        } catch {
+          observation = null;
         }
         // Everything that can refuse this turn without a prompt has now run.
         // A synchronous throw from here is still proof that nothing was
@@ -1092,15 +1154,19 @@ export function createOpencodeDriver(options = {}) {
               ? error
               : new OpencodeTurnError("unreadable_transport", "The OpenCode prompt outcome could not be read.");
           }
-        );
+        ).finally(() => observation?.dispose());
         return {
           nativeSessionRef,
           nativeTurnRef,
           result,
+          subscribeProgress: observation
+            ? (listener) => observation.subscribeProgress(listener)
+            : () => () => {},
           // Disposal is process-local only. It never aborts, cancels, or
           // observes the native turn -- this route has no interrupt -- and it
           // never releases capacity for an unsettled turn.
           dispose: async () => {
+            observation?.dispose();
             if (settled && releaseCapacity) {
               releaseCapacity();
               releaseCapacity = null;
@@ -1108,6 +1174,7 @@ export function createOpencodeDriver(options = {}) {
           },
         };
       } catch (error) {
+        observation?.dispose();
         if (turnLease && typeof serviceManager.releaseTurnLease === "function") await serviceManager.releaseTurnLease(turnLease);
         if (releaseCapacity) releaseCapacity();
         throw preTransportRejection(error);

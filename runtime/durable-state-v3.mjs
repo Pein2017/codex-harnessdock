@@ -178,7 +178,7 @@ function validateVersionThreeRouteInternal(route, label, allowUnknownEffort) {
   if (!allowUnknownEffort && effort === null) requiredValue(snapshot, "effort", label);
   const capabilitySchemaVersion = requiredValue(snapshot, "capabilitySchemaVersion", label);
   if (capabilitySchemaVersion !== ROUTE_CAPABILITY_SCHEMA_VERSION &&
-      !(allowUnknownEffort && capabilitySchemaVersion === 2)) {
+      !(allowUnknownEffort && [2, 3].includes(capabilitySchemaVersion))) {
     throw new Error(
       `${label} declares capability schema version ${JSON.stringify(capabilitySchemaVersion)}; ` +
       `this runtime requires ${ROUTE_CAPABILITY_SCHEMA_VERSION}.`
@@ -189,7 +189,7 @@ function validateVersionThreeRouteInternal(route, label, allowUnknownEffort) {
   // than the one this record will store.
   const capabilities = validateRouteCapabilitySnapshot(
     plainDataTree(requiredValue(snapshot, "capabilities", label), `${label} capabilities`, 2),
-    `${label} capabilities`, { allowSchemaV2: allowUnknownEffort }
+    `${label} capabilities`, { allowSchemaV2: allowUnknownEffort, allowSchemaV3: allowUnknownEffort }
   );
   if (capabilities.capabilitySchemaVersion !== capabilitySchemaVersion) {
     throw new Error(`${label} disagrees with its own capability schema version.`);

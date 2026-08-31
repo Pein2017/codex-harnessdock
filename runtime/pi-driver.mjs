@@ -85,6 +85,9 @@ function assertNativeStats(value, label) {
   }
   return value;
 }
+function observation(nativeTurn, terminalResult = null) {
+  return Object.freeze({ nativeTurn, terminalResult });
+}
 function messageTimestamp(value) {
   if (typeof value === "string" && value) return value;
   if (!Number.isSafeInteger(value) || value < 0) return null;
@@ -139,8 +142,8 @@ function resultFor({ nativeTurnRef, nativeSessionRef, baseline, after, outcome, 
 }
 function routeCapabilities() {
   return Object.freeze({ capabilitySchemaVersion: ROUTE_CAPABILITY_SCHEMA_VERSION, driverMaturity: "experimental",
-    values: Object.freeze({ interaction: "noninteractive_fixed_policy", activeInput: "acknowledged_active_stream", continuation: "exact_resume", history: "assistant_messages", interruptRequest: "supported", turnObservation: "unavailable", automaticRecovery: "none", authorityEnforcement: "prompt_only", leafEnforcement: "prompt_only", nativeOrchestration: "opaque_bounded" }),
-    maturity: Object.freeze(Object.fromEntries(["interaction", "activeInput", "continuation", "history", "interruptRequest", "turnObservation", "automaticRecovery", "authorityEnforcement", "leafEnforcement", "nativeOrchestration"].map((key) => [key, "experimental"]))),
+    values: Object.freeze({ interaction: "noninteractive_fixed_policy", activeInput: "acknowledged_active_stream", continuation: "exact_resume", history: "assistant_messages", interruptRequest: "supported", turnObservation: "terminal_observable", nativeProgress: "native_coalesced", automaticRecovery: "none", authorityEnforcement: "prompt_only", leafEnforcement: "prompt_only", nativeOrchestration: "opaque_bounded" }),
+    maturity: Object.freeze(Object.fromEntries(["interaction", "activeInput", "continuation", "history", "interruptRequest", "automaticRecovery", "authorityEnforcement", "leafEnforcement", "nativeOrchestration"].map((key) => [key, "experimental"]).concat([["turnObservation", "validated"], ["nativeProgress", "validated"]]))),
     provenance: Object.freeze(Object.fromEntries(ROUTE_CAPABILITY_NAMES.map((key) => [key, "checkout_declared"]))),
   });
 }
@@ -155,7 +158,8 @@ function inspectionRouteFacts(models, effortsByModel) {
     continuation: "exact_resume",
     history: "assistant_messages",
     interruptRequest: "supported",
-    turnObservation: "unavailable",
+    turnObservation: "terminal_observable",
+    nativeProgress: "native_coalesced",
     automaticRecovery: "none",
     nativeOrchestration: "opaque_bounded",
     authorities: Object.freeze({ behavioral_read_only: Object.freeze({ authorityEnforcement: "prompt_only", leafEnforcement: "prompt_only" }), behavioral_write: Object.freeze({ authorityEnforcement: "prompt_only", leafEnforcement: "prompt_only" }) }),
@@ -262,9 +266,70 @@ export function createPiDriver(options = {}) {
     if (["harnessId", "instanceKey", "model", "topology", "authority", "effort", "driverVersion"].some((key) => accepted[key] !== route[key])) throw new Error("Pi route drifted before native operation.");
     return accepted;
   }
-  async function openReadOnly(route, sessionId, scope) {
+  async function openReadOnly(route, sessionId, scope, since = null) {
     const rpc = makeProcess({ route, sessionId, resumeOnly: true, cwd: scope?.workspaceRoot ?? process.cwd() });
-    try { return { rpc, entries: await rpc.getEntries(null) }; } catch (error) { await rpc.dispose(); throw error; }
+    try { return { rpc, entries: await rpc.getEntries(since) }; } catch (error) { await rpc.dispose(); throw error; }
+  }
+  async function observeTurn(nativeTurnRef, scope) {
+    const route = assertRoute(scope?.route, "Pi turn observation route");
+    let ref;
+    try { ref = assertNativeReferenceEnvelope(nativeTurnRef, { driver, route, kind: "turn" }); }
+    catch { return observation("unknown"); }
+    const locator = ref.locator;
+    if (scope?.signal?.aborted || (scope?.deadlineAt && Date.parse(scope.deadlineAt) <= Date.now())) return observation("unknown");
+    let rpc;
+    let rpcEntries;
+    try {
+      rpc = makeProcess({ route, sessionId: locator.sessionId, resumeOnly: true, cwd: scope?.workspaceRoot ?? process.cwd() });
+      const state = (await rpc.getState()).data;
+      const target = modelParts(route.model);
+      if (state?.sessionId !== locator.sessionId || state?.model?.provider !== target.provider || state?.model?.id !== target.model) return observation("unknown");
+      if (state?.isStreaming === true || state?.isCompacting === true) return observation("active");
+      if (state?.isStreaming !== false || state?.isCompacting !== false) return observation("unknown");
+      rpcEntries = await rpc.getEntries(locator.baselineLeafId);
+      const data = rpcEntries.data;
+      const entries = data?.entries;
+      if (!Array.isArray(entries) || entries.length > 1024 || (data.leafId !== null && typeof data.leafId !== "string")) return observation("unknown");
+      let post = entries;
+      if (locator.baselineLeafId != null) {
+        const baselineIndex = entries.findIndex((entry) => entry?.id === locator.baselineLeafId);
+        if (baselineIndex >= 0) post = entries.slice(baselineIndex + 1);
+      }
+      let parent = locator.baselineLeafId;
+      for (const entry of post) {
+        if (!entry || typeof entry !== "object" || Array.isArray(entry)) return observation("unknown");
+        if (entry.sessionId != null && entry.sessionId !== locator.sessionId) return observation("unknown");
+        if (entry.id != null && typeof entry.id !== "string") return observation("unknown");
+        if (entry.parentId != null && entry.parentId !== parent) return observation("unknown");
+        if (typeof entry.id === "string") parent = entry.id;
+        if (entry.type === "message") {
+          if (typeof entry.id !== "string" || !entry.id || !entry.message || typeof entry.message !== "object") return observation("unknown");
+        }
+      }
+      let after;
+      try {
+        after = nativeStats((await rpc.getSessionStats()).data, "Pi observed stats");
+        statsDelta(locator.baselineStats, after);
+      } catch { return observation("unknown"); }
+      const terminalCandidates = post.filter((entry) => entry?.type === "message" && entry.message?.role === "assistant" && ["stop", "length", "error", "aborted"].includes(entry.message.stopReason));
+      if (terminalCandidates.length > 1) return observation("unknown");
+      if (terminalCandidates.length === 1) {
+        const terminal = terminalCandidates[0];
+        if (typeof terminal.timestamp === "string" ? Number.isNaN(Date.parse(terminal.timestamp)) : !Number.isSafeInteger(terminal.timestamp)) return observation("unknown");
+        if (typeof data.leafId === "string" && post.some((entry) => entry.id === data.leafId) && terminal.id !== data.leafId) return observation("unknown");
+        const outcome = messageOutcome(terminal);
+        if (!outcome) return observation("unknown");
+        let terminalResult;
+        try { terminalResult = resultFor({ nativeTurnRef: ref, nativeSessionRef: sessionRefFor(route, locator.sessionId), baseline: { stats: locator.baselineStats }, after, outcome, leafId: data.leafId }); }
+        catch { return observation("unknown"); }
+        return observation("terminal", terminalResult);
+      }
+      return observation("active");
+    } catch {
+      return observation("unknown");
+    } finally {
+      if (rpc) await rpc.dispose().catch(() => {});
+    }
   }
   const driver = {
     harnessId: PI_HARNESS_ID, driverVersion: PI_DRIVER_VERSION, contractVersion: DRIVER_CONTRACT_VERSION_V2,
@@ -311,6 +376,7 @@ export function createPiDriver(options = {}) {
       if (locator.baselineLeafId !== null && (typeof locator.baselineLeafId !== "string" || !locator.baselineLeafId)) throw new Error("Pi native turn baseline leaf is invalid.");
       assertNativeStats(locator.baselineStats, "Pi native turn baseline"); return value;
     },
+    observeTurn,
     async readAssistantHistory(agent, page = {}) {
       const route = assertRoute(agent?.route, "Pi Agent history route"); const sessionId = assertNativeReferenceEnvelope(agent?.nativeSessionRef, { driver, route, kind: "session" }).locator.sessionId;
       const limit = page.limit == null ? 1 : Number(page.limit);
@@ -356,6 +422,7 @@ export function createPiDriver(options = {}) {
       })();
       result.catch(() => {});
       return { nativeSessionRef, nativeTurnRef, result,
+        subscribeProgress(listener) { return rpc.subscribeProgress(listener); },
         async deliverActiveInput(assigned) { try { await rpc.steer(requiredText(assigned?.text, "Pi steering input")); return { accepted: true, sequence: assigned?.messageId ?? null, mode: "pi_rpc_steer" }; } catch (error) { return { accepted: false, reason: "native_turn_did_not_accept_input", detail: String(error?.code ?? "rpc_error") }; } },
         async requestInterrupt(command) { if (command?.kind !== "interrupt") return { commandId: command?.commandId ?? null, requestState: "unsupported", nativeTurnState: settled ? "terminal" : "active", settlement: "pending" }; try { await rpc.abort(); return { commandId: command?.commandId ?? null, requestState: "accepted", nativeTurnState: settled ? "terminal" : "active", settlement: settled ? "settled" : "pending" }; } catch { return { commandId: command?.commandId ?? null, requestState: "rejected", nativeTurnState: settled ? "terminal" : "unknown", settlement: settled ? "settled" : "unknown" }; } },
         dispose: () => rpc.dispose(),

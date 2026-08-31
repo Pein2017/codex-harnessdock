@@ -14,7 +14,7 @@ The repository SHALL use `/data/CoordExp/codex-harnessdock-dev` on branch `devel
 - **THEN** the edit occurs in `/data/CoordExp/codex-harnessdock-dev` without changing files in the live main checkout
 
 #### Scenario: Plugin runtime resolves source
-- **WHEN** Codex invokes an installed CC lifecycle operation
+- **WHEN** Codex invokes an installed HarnessDock lifecycle operation
 - **THEN** executable source resolves only from `/data/CoordExp/codex-harnessdock` and never from the developer worktree
 
 ### Requirement: Local promotion is clean and linear
