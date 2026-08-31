@@ -38,7 +38,7 @@ async function health(url) {
   try {
     const response = await fetch(`${url}/global/health`);
     const body = await response.json();
-    return { reachable: true, healthy: response.status === 200 && body?.healthy === true && body?.version === "1.18.23" };
+    return { reachable: true, healthy: response.status === 200 && body?.healthy === true && body?.version === "1.18.25" };
   } catch {
     return { reachable: false, healthy: false };
   }

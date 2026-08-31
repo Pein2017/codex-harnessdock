@@ -27,7 +27,7 @@ if (command !== "serve" || hostFlag !== "--hostname" || host !== "127.0.0.1" || 
   const server = http.createServer((request, response) => {
     if (request.method === "GET" && new URL(request.url ?? "/", "http://placeholder.invalid").pathname === "/global/health") {
       response.writeHead(200, { "Content-Type": "application/json" });
-      response.end(JSON.stringify({ healthy: process.env.OPENCODE_NATIVE_PARITY_HEALTH !== "unhealthy", version: "1.18.23" }));
+      response.end(JSON.stringify({ healthy: process.env.OPENCODE_NATIVE_PARITY_HEALTH !== "unhealthy", version: "1.18.25" }));
       return;
     }
     response.writeHead(404, { "Content-Type": "application/json" });

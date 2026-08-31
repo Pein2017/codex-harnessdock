@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.25.5 - 2026-08-31
+
+- Revalidate and pin OpenCode 1.18.25 so an upgraded managed service is
+  admitted instead of being mislabeled as an interactive-policy failure.
+
 ## 0.25.4 - 2026-08-30
 
 - Give a complete OpenCode Agent turn the same fixed one-hour window as the

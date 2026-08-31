@@ -67,7 +67,7 @@ async function piRouteCapabilities() {
 
 async function opencodeRouteCapabilities() {
   const server = createFakeOpencodeServer({
-    health: { status: 200, body: { healthy: true, version: "1.18.23" } },
+    health: { status: 200, body: { healthy: true, version: "1.18.25" } },
     config: { status: 200, body: { default_agent: "codex-explorer" } },
     agents: {
       status: 200,

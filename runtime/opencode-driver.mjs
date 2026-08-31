@@ -96,7 +96,7 @@ import { createOpencodeServiceManager } from "./opencode-service-manager.mjs";
 export const OPENCODE_DRIVER_VERSION = "opencode@1";
 export const OPENCODE_DRIVER_TITLE = "OpenCode native routes (experimental)";
 export const OPENCODE_HARNESS_ID = "opencode";
-export const OPENCODE_INTERACTION_VERSION = "1.18.23";
+export const OPENCODE_INTERACTION_VERSION = "1.18.25";
 
 class OpencodeRouteError extends Error {
   constructor(code, message) {

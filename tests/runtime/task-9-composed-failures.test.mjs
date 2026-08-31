@@ -104,7 +104,7 @@ function providerBody(overrides = {}) {
 
 async function startFake(scenario = {}) {
   const server = createFakeOpencodeServer({
-    health: { status: 200, body: { healthy: true, version: "1.18.23" } },
+    health: { status: 200, body: { healthy: true, version: "1.18.25" } },
     config: { status: 200, body: { default_agent: OPENCODE_EXPLORER_PROFILE_NAME } },
     agents: { status: 200, body: explorerAgentBody() },
     provider: { status: 200, body: providerBody() },
