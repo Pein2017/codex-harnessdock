@@ -35,7 +35,7 @@ const NATIVE_TEAM_WITNESS_MEMORY_PREFIXES = Object.freeze([
 const MAX_NATIVE_TEAM_WITNESS_EVENTS = 32;
 const MAX_NATIVE_TEAM_WITNESS_NAME_BYTES = 96;
 const MAX_NATIVE_TEAM_WITNESS_PATHS = 16_384;
-const SKILL_BYTES_LIMIT = 11_500;
+const SKILL_BYTES_LIMIT = 12_000;
 const DEFAULT_PROMPT_CHARS_LIMIT = 800;
 const SAFE_WITNESS_NAME = /^[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 const NATIVE_TEAM_WITNESS_JOB_ID = "native-team-witness";
@@ -770,8 +770,9 @@ export async function probeInstalledMcp(options = {}) {
 
       // Harness discovery is the one multi-Harness observation that is
       // side-effect free by contract: it starts no work, mutates no Agent, and
-      // does not start, stop, or reconfigure any Harness's Server. It is
-      // therefore the only new call this zero-model smoke may add.
+      // does not start an absent OpenCode service, stop, or reconfigure any
+      // Harness Server. It is therefore the only new call this zero-model
+      // smoke may add.
       const firstHarnesses = await client.callTool(
         { name: "list_harnesses", arguments: {}, _meta: meta },
         undefined,
@@ -878,6 +879,7 @@ export async function runReleaseSmoke(options = {}) {
     throw new Error("Installed Plugin guidance exceeds its Skill or default-prompt context budget.");
   }
   const expectedSkills = [
+    "dispatch-agents",
     "followup-task",
     "interrupt-agent",
     "list-agents",
@@ -888,7 +890,7 @@ export async function runReleaseSmoke(options = {}) {
     "wait-agent",
   ];
   if (JSON.stringify(skills) !== JSON.stringify(expectedSkills)) {
-    throw new Error(`Installed Plugin does not expose exactly eight canonical Skills: ${skills.join(", ")}.`);
+    throw new Error(`Installed Plugin does not expose exactly nine canonical Skills: ${skills.join(", ")}.`);
   }
   const compatibilityShells = inspectCompatibilityShells({
     snapshotRoot: parity.installed.snapshotRoot,
@@ -912,7 +914,7 @@ export async function runReleaseSmoke(options = {}) {
     onPaidStart: options.onPaidStart,
     expectedHarnessCount: ADMITTED_GENERATION_HARNESS_IDS.length,
   });
-  if (!mcp.healthy) throw new Error("Installed MCP smoke did not satisfy the eight-tool contract.");
+  if (!mcp.healthy) throw new Error("Installed MCP smoke did not satisfy the nine-tool contract.");
   if (mcp.harnessCount !== ADMITTED_GENERATION_HARNESS_IDS.length) {
     throw new Error(
       `Installed MCP smoke reported ${mcp.harnessCount ?? "no"} admitted Harness count; ` +

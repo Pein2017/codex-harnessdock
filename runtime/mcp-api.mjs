@@ -5,9 +5,11 @@
  * longer call the checkout runtime safely. Compatible runtime implementation
  * edits keep this generation and hot-load on the next isolated MCP call.
  *
- * Generation 8 adds the spawn-only `target_worktree` contract. Older MCP
- * discovery cannot know that a supplied target must be admitted before route
- * inspection and frozen separately from the control root, so it must restart
- * rather than call a runtime that could ignore or partially enforce the field.
+ * Generation 9 added cancellation-safe singular spawn and its bounded public
+ * non-rollback-safe failure projection. Generation 10 adds strict stateless
+ * `dispatch_agents` rows. Older MCP
+ * discovery cannot know that an ordered explicit-row request is distinct from
+ * singular spawn, so it must restart rather than call a runtime that could
+ * accept or misroute batch input.
  */
-export const HARNESSDOCK_MCP_API_GENERATION = 8;
+export const HARNESSDOCK_MCP_API_GENERATION = 10;

@@ -52,7 +52,9 @@ import {
   markAgentProjectionReconciled,
   readJobFile,
 } from "./job-store.mjs";
+import { readLaunchClaim } from "./launch-claim.mjs";
 import { projectAgentCard } from "./agent-card.mjs";
+import { ensureConfiguredOpencodeService } from "./opencode-service-manager.mjs";
 import { enqueueControlCommand } from "./turn-control.mjs";
 import { reconcilePreparedVersionThreeTurns } from "./v3-worker-entry.mjs";
 import { admitTargetWorktree } from "./target-worktree-admission.mjs";
@@ -65,6 +67,47 @@ const MAX_AGENT_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
 const TASK_NAME_PATTERN = /^[a-z0-9_]+$/;
 const CLAUDE_SESSION_MODEL_SCAN_BYTES = 4 * 1024 * 1024;
 const MAX_TARGETED_WAIT_TARGETS = 8;
+const SPAWN_RECOVERY_OUTCOMES = new Set(["lifecycle_owned", "ownership_uncertain"]);
+const SPAWN_RECOVERY_CODES = Object.freeze({
+  lifecycle_owned: "spawn_lifecycle_owned",
+  ownership_uncertain: "spawn_ownership_uncertain",
+});
+const SPAWN_RECOVERY_MESSAGES = Object.freeze({
+  lifecycle_owned: "Agent launch ownership was transferred; join the named Agent to reconcile its turn.",
+  ownership_uncertain: "Agent launch ownership is uncertain; use the named Agent to reconcile its turn.",
+});
+const DISPATCH_ROW_FIELDS = new Set([
+  "task_name",
+  "message",
+  "description",
+  "harness",
+  "model",
+  "reasoning_effort",
+  "topology",
+  "write",
+  "target_worktree",
+]);
+const DISPATCH_REQUIRED_ROW_FIELDS = Object.freeze([
+  "task_name",
+  "message",
+  "harness",
+  "model",
+  "reasoning_effort",
+  "topology",
+  "write",
+]);
+const DISPATCH_ERROR_MESSAGES = Object.freeze({
+  agent_name_conflict: "A requested Agent name already exists in this root.",
+  batch_cancelled: "Batch dispatch was cancelled before this row began.",
+  batch_preflight_stopped: "Batch environment preflight stopped before this row could begin.",
+  batch_stopped_after_ownership_uncertain: "An earlier row has uncertain launch ownership; this row was not attempted.",
+  batch_writer_conflict: "Two write rows target the same canonical execution root.",
+  route_rejected: "The requested row route failed environment preflight.",
+  service_unavailable: "The requested Harness service failed bounded environment preflight.",
+  spawn_rolled_back: "Agent launch was rolled back safely.",
+  target_rejected: "The requested target worktree failed environment preflight.",
+  row_launch_rejected: "The row failed a final gate before durable Agent ownership.",
+});
 
 function assertObject(value, label) {
   if (value == null) return {};
@@ -77,6 +120,151 @@ function assertText(value, label) {
     throw new Error(`${label} must be non-empty text.`);
   }
   return value.trim();
+}
+
+function spawnAbortError() {
+  const error = new Error("HarnessDock Agent spawn was cancelled by the caller.");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfSpawnAborted(signal) {
+  if (signal?.aborted) throw spawnAbortError();
+}
+
+function publicSpawnFailure(error, agent, outcome) {
+  if (!SPAWN_RECOVERY_OUTCOMES.has(outcome)) return error;
+  const failure = error instanceof Error ? error : new Error(String(error));
+  const recovery = {
+    agent_name: agent?.path,
+    outcome,
+    code: SPAWN_RECOVERY_CODES[outcome],
+    message: SPAWN_RECOVERY_MESSAGES[outcome],
+  };
+  /** @type {any} */ (failure).handoffDisposition = outcome;
+  /** @type {any} */ (failure).publicRecovery = Object.freeze(recovery);
+  return failure;
+}
+
+function withBatchOutcome(error, outcome) {
+  const failure = error instanceof Error ? error : new Error(String(error));
+  /** @type {any} */ (failure).batchOutcome = outcome;
+  return failure;
+}
+
+function rollbackSafeSpawnFailure(error, store, agent) {
+  try {
+    if (store.readAgent(agent.agentId)) return publicSpawnFailure(error, agent, "ownership_uncertain");
+  } catch {
+    return publicSpawnFailure(error, agent, "ownership_uncertain");
+  }
+  return withBatchOutcome(error, "rolled_back");
+}
+
+function dispatchError(code) {
+  return Object.freeze({ code, message: DISPATCH_ERROR_MESSAGES[code] });
+}
+
+function dispatchAgentName(taskName) {
+  return `/root/${taskName}`;
+}
+
+function dispatchRowResult(agentName, outcome, options = {}) {
+  const agentExists = ["launched", "lifecycle_owned", "ownership_uncertain"].includes(outcome);
+  const result = { agent_name: agentName, agent_exists: agentExists, outcome };
+  if (outcome === "launched") result.card = options.card;
+  else if (options.error) result.error = options.error;
+  return Object.freeze(result);
+}
+
+function notAttemptedRows(rows, failures = new Map(), fallbackCode = "batch_preflight_stopped") {
+  return rows.map((row, index) => dispatchRowResult(
+    dispatchAgentName(row.task_name),
+    "not_attempted",
+    { error: dispatchError(failures.get(index) ?? fallbackCode) },
+  ));
+}
+
+function validatedDispatchRows(inputValue) {
+  const input = assertObject(inputValue, "dispatch_agents input");
+  if (Object.keys(input).length !== 1 || !Object.hasOwn(input, "rows")) {
+    throw new Error("dispatch_agents accepts exactly one rows field.");
+  }
+  if (!Array.isArray(input.rows) || input.rows.length < 1 || input.rows.length > 8) {
+    throw new Error("dispatch_agents rows must contain between 1 and 8 complete spawn rows.");
+  }
+  const taskNames = new Set();
+  return input.rows.map((value, index) => {
+    const row = assertObject(value, `dispatch_agents rows[${index}]`);
+    const unknown = Object.keys(row).filter((key) => !DISPATCH_ROW_FIELDS.has(key));
+    if (unknown.length) throw new Error(`dispatch_agents rows[${index}] does not support ${unknown[0]}.`);
+    for (const field of DISPATCH_REQUIRED_ROW_FIELDS) {
+      if (!Object.hasOwn(row, field)) throw new Error(`dispatch_agents rows[${index}] requires ${field}.`);
+    }
+    const taskName = assertText(row.task_name, `dispatch_agents rows[${index}] task_name`);
+    if (!TASK_NAME_PATTERN.test(taskName)) {
+      throw new Error(`dispatch_agents rows[${index}] task_name must match [a-z0-9_]+.`);
+    }
+    if (taskNames.has(taskName)) throw new Error(`dispatch_agents repeats task_name ${JSON.stringify(taskName)}.`);
+    taskNames.add(taskName);
+    const message = assertText(row.message, `dispatch_agents rows[${index}] message`);
+    const harness = assertText(row.harness, `dispatch_agents rows[${index}] harness`);
+    const model = assertText(row.model, `dispatch_agents rows[${index}] model`);
+    const reasoningEffort = assertText(row.reasoning_effort, `dispatch_agents rows[${index}] reasoning_effort`);
+    const topology = assertText(row.topology, `dispatch_agents rows[${index}] topology`);
+    if (typeof row.write !== "boolean") throw new Error(`dispatch_agents rows[${index}] requires boolean write.`);
+    let description;
+    if (Object.hasOwn(row, "description")) {
+      description = assertText(row.description, `dispatch_agents rows[${index}] description`);
+    }
+    let targetWorktree;
+    if (Object.hasOwn(row, "target_worktree")) {
+      targetWorktree = assertText(row.target_worktree, `dispatch_agents rows[${index}] target_worktree`);
+      if (!path.isAbsolute(targetWorktree)) {
+        throw new Error(`dispatch_agents rows[${index}] target_worktree must be absolute.`);
+      }
+    }
+    return Object.freeze({
+      task_name: taskName,
+      message,
+      ...(description == null ? {} : { description }),
+      harness,
+      model,
+      reasoning_effort: reasoningEffort,
+      topology,
+      write: row.write,
+      ...(targetWorktree == null ? {} : { target_worktree: targetWorktree }),
+    });
+  });
+}
+
+function admittedBatchRecovery(error, agentName) {
+  const recovery = error?.publicRecovery;
+  if (!recovery || typeof recovery !== "object" || Array.isArray(recovery)) return null;
+  const outcome = String(recovery.outcome ?? "");
+  if (!SPAWN_RECOVERY_OUTCOMES.has(outcome) || recovery.agent_name !== agentName ||
+      recovery.code !== SPAWN_RECOVERY_CODES[outcome] || recovery.message !== SPAWN_RECOVERY_MESSAGES[outcome]) {
+    return null;
+  }
+  return {
+    outcome,
+    error: Object.freeze({ code: recovery.code, message: recovery.message }),
+  };
+}
+
+function versionThreeLaunchDisposition(ownerRootId, agentId, jobId) {
+  let claim = null;
+  try { claim = readLaunchClaim({ ownerRootId, agentId, jobId }); } catch {}
+  if (!claim) return "ownership_uncertain";
+  if (["rollback_in_progress", "rollback_complete"].includes(claim.submissionState)) return "rollback_safe";
+  if (claim.acceptance === "acceptance_proven") return "lifecycle_owned";
+  if (claim.acceptance === "acceptance_rejected" && claim.submissionState !== "started") {
+    return "rollback_safe";
+  }
+  if (claim.acceptance === "not_submitted" && claim.submissionState === "not_started") {
+    return "rollback_safe";
+  }
+  return "ownership_uncertain";
 }
 
 function optionalText(value) {
@@ -1007,6 +1195,7 @@ class AgentRuntime {
    * rolled back so nothing half-exists.
    */
   async spawnVersionThreeAgent({ accepted, taskName, description, message, jobId, turnOptions, executionRoot }) {
+    throwIfSpawnAborted(this.abortSignal);
     const inspectionEvidence = inspectionEvidenceForRoute(
       accepted.route, accepted.inspection, accepted.driver
     );
@@ -1019,21 +1208,92 @@ class AgentRuntime {
       initialMessage: message,
     });
     const initialMessage = store.listMessages(agent.agentId)[0];
-    const activation = store.reserveActivation(agent.agentId, jobId, { initial: true });
-    if (!activation.reserved) {
-      store.rollbackReservation(agent.agentId, { removableMessageId: initialMessage?.messageId });
-      throw new Error(`Unable to activate ${agent.path}: ${activation.reason}.`);
+    try {
+      throwIfSpawnAborted(this.abortSignal);
+      const activation = store.reserveActivation(agent.agentId, jobId, { initial: true });
+      if (!activation.reserved) {
+        store.rollbackReservation(agent.agentId, { removableMessageId: initialMessage?.messageId });
+        throw rollbackSafeSpawnFailure(
+          new Error(`Unable to activate ${agent.path}: ${activation.reason}.`),
+          store,
+          agent,
+        );
+      }
+      throwIfSpawnAborted(this.abortSignal);
+      const attemptId = generateJobId("attempt");
+      let launchAttempted = false;
+      try {
+        launchAttempted = true;
+        await this.jobs.launchVersionThreeWorker({
+          agentId: agent.agentId,
+          jobId,
+          attemptId,
+          turnOptions,
+          executionRoute: accepted.route,
+          inspectionEvidence,
+        });
+        if (this.abortSignal?.aborted) {
+          const outcome = versionThreeLaunchDisposition(this.ownerRootId, agent.agentId, jobId);
+          if (outcome === "rollback_safe") throw spawnAbortError();
+          throw publicSpawnFailure(spawnAbortError(), agent, outcome);
+        }
+        return publicSpawnReceipt(this.cwd, store.resolveTarget(agent.agentId), inspectionEvidence);
+      } catch (error) {
+        const stated = String(error?.handoffDisposition ?? "");
+        const handoffDisposition = SPAWN_RECOVERY_OUTCOMES.has(stated) || stated === "rollback_safe"
+          ? stated
+          : launchAttempted
+            ? versionThreeLaunchDisposition(this.ownerRootId, agent.agentId, jobId)
+            : "rollback_safe";
+        if (handoffDisposition === "rollback_safe") {
+          // The detached worker owns claim rollback once a claim exists. Before
+          // that claim, restore the reserved activation and remove only the
+          // empty initial reservation.
+          let claim = null;
+          try { claim = readLaunchClaim({ ownerRootId: this.ownerRootId, agentId: agent.agentId, jobId }); } catch {
+            throw publicSpawnFailure(error, agent, "ownership_uncertain");
+          }
+          if (!claim) {
+            try {
+              store.rollbackVersionThreeActivation(agent.agentId, {
+                jobId,
+                removableMessageId: initialMessage?.messageId,
+                rollbackClaim: null,
+              });
+            } catch {}
+            try {
+              store.rollbackReservation(agent.agentId, { removableMessageId: initialMessage?.messageId });
+            } catch {}
+          }
+          throw rollbackSafeSpawnFailure(error, store, agent);
+        }
+        throw publicSpawnFailure(error, agent, handoffDisposition);
+      }
+    } catch (error) {
+      // Cancellation and pre-reservation validation must not leave an empty
+      // Agent behind. The guarded store operation is idempotent with a racing
+      // sender and preserves any concurrently queued message.
+      let finalError = error;
+      if (error?.name === "AbortError") {
+        let claim = null;
+        try { claim = readLaunchClaim({ ownerRootId: this.ownerRootId, agentId: agent.agentId, jobId }); } catch {}
+        if (!claim) {
+          try {
+            store.rollbackVersionThreeActivation(agent.agentId, {
+              jobId,
+              removableMessageId: initialMessage?.messageId,
+              rollbackClaim: null,
+            });
+          } catch {}
+          try { store.rollbackReservation(agent.agentId, { removableMessageId: initialMessage?.messageId }); } catch {}
+          finalError = rollbackSafeSpawnFailure(error, store, agent);
+        } else {
+          const outcome = versionThreeLaunchDisposition(this.ownerRootId, agent.agentId, jobId);
+          if (outcome !== "rollback_safe") finalError = publicSpawnFailure(error, agent, outcome);
+        }
+      }
+      throw finalError;
     }
-    const attemptId = generateJobId("attempt");
-    await this.jobs.launchVersionThreeWorker({
-      agentId: agent.agentId,
-      jobId,
-      attemptId,
-      turnOptions,
-      executionRoute: accepted.route,
-      inspectionEvidence,
-    });
-    return publicSpawnReceipt(this.cwd, store.resolveTarget(agent.agentId), inspectionEvidence);
   }
 
   async followupVersionThreeAgent(input, initialAgent) {
@@ -1145,7 +1405,15 @@ class AgentRuntime {
    * refuses, or a capability snapshot needing an approval broker all fail here,
    * before any readiness side effect, durable write, session, or native turn.
    */
-  async acceptStatedRoute(input, label, executionRoot = this.cwd) {
+  async ensureDispatchHarness(harnessId, executionRoot) {
+    if (harnessId !== "opencode") return;
+    await ensureConfiguredOpencodeService({
+      cwd: executionRoot,
+      env: this.jobs.env,
+    });
+  }
+
+  async acceptStatedRoute(input, label, executionRoot = this.cwd, observedRoute = null) {
     const harnessId = assertText(input.harness, `${label} harness`);
     if (!ADMITTED_GENERATION_HARNESS_IDS.includes(harnessId)) {
       throw new Error(
@@ -1162,7 +1430,7 @@ class AgentRuntime {
       throw new Error(`${label} requires explicit reasoning_effort.`);
     }
     // One route-time readiness observation, through the runtime's own seam.
-    const observed = await this.jobs.inspectRouteInstance(harnessId, executionRoot);
+    const observed = observedRoute ?? await this.jobs.inspectRouteInstance(harnessId, executionRoot);
     const driver = observed.driver;
     const request = {
       harnessId,
@@ -1184,8 +1452,160 @@ class AgentRuntime {
     });
   }
 
+  async dispatchAgents(inputValue) {
+    const rows = validatedDispatchRows(inputValue);
+    const cancelled = () => Object.freeze({
+      rows: notAttemptedRows(rows, new Map(), "batch_cancelled"),
+    });
+    if (this.abortSignal?.aborted) return cancelled();
+
+    const executionRoots = [];
+    for (let index = 0; index < rows.length; index += 1) {
+      try {
+        executionRoots.push(admitTargetWorktree({
+          controlRoot: this.cwd,
+          targetWorktree: rows[index].target_worktree,
+        }).executionRoot);
+      } catch {
+        return Object.freeze({
+          rows: notAttemptedRows(rows, new Map([[index, "target_rejected"]])),
+        });
+      }
+    }
+    if (this.abortSignal?.aborted) return cancelled();
+
+    const writersByRoot = new Map();
+    for (let index = 0; index < rows.length; index += 1) {
+      if (!rows[index].write) continue;
+      const indices = writersByRoot.get(executionRoots[index]) ?? [];
+      indices.push(index);
+      writersByRoot.set(executionRoots[index], indices);
+    }
+    const writerFailures = new Map();
+    for (const indices of writersByRoot.values()) {
+      if (indices.length > 1) for (const index of indices) writerFailures.set(index, "batch_writer_conflict");
+    }
+    if (writerFailures.size) {
+      return Object.freeze({ rows: notAttemptedRows(rows, writerFailures) });
+    }
+
+    const store = this.versionThreeStore();
+    const nameFailures = new Map();
+    for (let index = 0; index < rows.length; index += 1) {
+      try {
+        if (store.readAgent(dispatchAgentName(rows[index].task_name))) {
+          nameFailures.set(index, "agent_name_conflict");
+        }
+      } catch {
+        nameFailures.set(index, "route_rejected");
+      }
+    }
+    if (nameFailures.size) {
+      return Object.freeze({ rows: notAttemptedRows(rows, nameFailures) });
+    }
+
+    const observations = new Map();
+    const prepared = [];
+    for (let index = 0; index < rows.length; index += 1) {
+      const row = rows[index];
+      const executionRoot = executionRoots[index];
+      const key = JSON.stringify([row.harness, executionRoot]);
+      let observed = observations.get(key);
+      if (!observed) {
+        try {
+          await this.ensureDispatchHarness(row.harness, executionRoot);
+        } catch {
+          return Object.freeze({
+            rows: notAttemptedRows(rows, new Map([[index, "service_unavailable"]])),
+          });
+        }
+        if (this.abortSignal?.aborted) return cancelled();
+        try {
+          observed = await this.jobs.inspectRouteInstance(row.harness, executionRoot);
+          observations.set(key, observed);
+        } catch {
+          return Object.freeze({
+            rows: notAttemptedRows(rows, new Map([[index, "route_rejected"]])),
+          });
+        }
+      }
+      if (this.abortSignal?.aborted) return cancelled();
+      try {
+        const accepted = await this.acceptStatedRoute(
+          row,
+          `dispatch_agents rows[${index}]`,
+          executionRoot,
+          observed,
+        );
+        prepared.push(Object.freeze({ accepted, executionRoot }));
+      } catch {
+        return Object.freeze({
+          rows: notAttemptedRows(rows, new Map([[index, "route_rejected"]])),
+        });
+      }
+    }
+
+    const results = [];
+    const appendRemaining = (start, code) => {
+      for (let index = start; index < rows.length; index += 1) {
+        results.push(dispatchRowResult(
+          dispatchAgentName(rows[index].task_name),
+          "not_attempted",
+          { error: dispatchError(code) },
+        ));
+      }
+    };
+
+    for (let index = 0; index < rows.length; index += 1) {
+      if (this.abortSignal?.aborted) {
+        appendRemaining(index, "batch_cancelled");
+        break;
+      }
+      const agentName = dispatchAgentName(rows[index].task_name);
+      try {
+        const card = await this.launchDispatchRow(rows[index], prepared[index]);
+        results.push(dispatchRowResult(agentName, "launched", { card }));
+      } catch (error) {
+        const recovery = admittedBatchRecovery(error, agentName);
+        if (recovery) {
+          results.push(dispatchRowResult(agentName, recovery.outcome, { error: recovery.error }));
+          if (recovery.outcome === "ownership_uncertain") {
+            appendRemaining(index + 1, "batch_stopped_after_ownership_uncertain");
+            break;
+          }
+        } else if (error?.batchOutcome === "rolled_back") {
+          results.push(dispatchRowResult(agentName, "rolled_back", {
+            error: dispatchError("spawn_rolled_back"),
+          }));
+        } else {
+          // Change A closes every post-launch error with publicRecovery. An
+          // unmarked error is therefore a final pre-identity rejection (for
+          // example, another caller won the public name); never adopt whatever
+          // Agent may now exist under that deterministic name.
+          results.push(dispatchRowResult(agentName, "not_attempted", {
+            error: dispatchError("row_launch_rejected"),
+          }));
+        }
+      }
+      if (this.abortSignal?.aborted) {
+        appendRemaining(index + 1, "batch_cancelled");
+        break;
+      }
+    }
+    return Object.freeze({ rows: Object.freeze(results) });
+  }
+
   async spawnAgent(inputValue) {
+    return this.spawnAgentWithPreflight(inputValue, null);
+  }
+
+  async launchDispatchRow(inputValue, preflight) {
+    return this.spawnAgentWithPreflight(inputValue, preflight);
+  }
+
+  async spawnAgentWithPreflight(inputValue, preflight) {
     const input = assertObject(inputValue, "spawn_agent input");
+    throwIfSpawnAborted(this.abortSignal);
     assertNoHarnessImplementationSelector(input, "spawn_agent");
     for (const key of [
       "agent_type",
@@ -1218,7 +1638,23 @@ class AgentRuntime {
     });
     // The whole route is the caller's explicit decision, accepted before any
     // readiness side effect or durable Agent reservation exists.
-    const accepted = await this.acceptStatedRoute(input, "spawn_agent", executionRoot);
+    if (preflight && preflight.executionRoot !== executionRoot) {
+      throw new Error("spawn_agent preflight target drifted before launch.");
+    }
+    const accepted = preflight?.accepted ?? await this.acceptStatedRoute(input, "spawn_agent", executionRoot);
+    if (preflight) {
+      const expectedAuthority = input.write ? "behavioral_write" : "behavioral_read_only";
+      if (
+        accepted.route.harnessId !== input.harness ||
+        accepted.route.model !== input.model ||
+        accepted.route.effort !== input.reasoning_effort ||
+        accepted.route.topology !== input.topology ||
+        accepted.route.authority !== expectedAuthority
+      ) {
+        throw new Error("spawn_agent preflight route drifted before launch.");
+      }
+    }
+    throwIfSpawnAborted(this.abortSignal);
     if (input.target_worktree != null) {
       const revalidated = admitTargetWorktree({
         controlRoot: this.cwd,
@@ -1235,6 +1671,7 @@ class AgentRuntime {
     const acceptedTurnOptions = typeof accepted.route.effort === "string"
       ? { effort: accepted.route.effort }
       : (input.reasoning_effort == null ? null : { effort: input.reasoning_effort });
+    throwIfSpawnAborted(this.abortSignal);
     accepted.driver.prepareTurn({
       route: accepted.route,
       taskInput: message,
@@ -1269,9 +1706,11 @@ class AgentRuntime {
     // its Driver stated the version-one receipt from that same observation.
     // Anything less than a proven-ready receipt falls back to observing again,
     // so this can only ever remove a duplicate, never a check.
+    throwIfSpawnAborted(this.abortSignal);
     const readinessReceipt = accepted.launchReadiness?.ready === true
       ? accepted.launchReadiness
       : this.jobs.assertReady(driver.harnessId, executionRoot);
+    throwIfSpawnAborted(this.abortSignal);
     // Every new Agent gets the version-three identity plane: the whole route is
     // immutable from creation. Its TURNS still run on the version-one
     // supervisor, which is a separate question with a separate owner
@@ -1288,6 +1727,7 @@ class AgentRuntime {
     const initialMessage = store.listMessages(agent.agentId)[0];
     let prepared;
     try {
+      throwIfSpawnAborted(this.abortSignal);
       prepared = this.jobs.prepareStart(message, {
         ...executionOptions,
         harnessId: driver.harnessId,
@@ -1305,7 +1745,12 @@ class AgentRuntime {
       store.rollbackReservation(agent.agentId, {
         removableMessageId: initialMessage?.messageId,
       });
-      throw error;
+      throw rollbackSafeSpawnFailure(error, store, agent);
+    }
+    if (this.abortSignal?.aborted) {
+      this.jobs.abortPreparedStart(prepared, { handoffDisposition: "rollback_safe" });
+      store.rollbackReservation(agent.agentId, { removableMessageId: initialMessage?.messageId });
+      throw rollbackSafeSpawnFailure(spawnAbortError(), store, agent);
     }
     const activation = store.reserveActivation(agent.agentId, jobId, { initial: true });
     if (!activation.reserved) {
@@ -1313,30 +1758,51 @@ class AgentRuntime {
       store.rollbackReservation(agent.agentId, {
         removableMessageId: initialMessage?.messageId,
       });
-      throw new Error(`Unable to activate ${agent.path}: ${activation.reason}.`);
+      throw rollbackSafeSpawnFailure(
+        new Error(`Unable to activate ${agent.path}: ${activation.reason}.`),
+        store,
+        agent,
+      );
     }
     let launchAttempted = false;
     try {
       const attached = this.jobs.attachPreparedStart(prepared, agent.agentId);
+      throwIfSpawnAborted(this.abortSignal);
       launchAttempted = true;
       const assigned = activation.assignedMessages;
       await this.jobs.launchPreparedStart(attached, messageText(assigned), {
         assignedMessageIds: assigned.map((message) => message.messageId),
       });
+      if (this.abortSignal?.aborted) {
+        throw publicSpawnFailure(spawnAbortError(), agent, "lifecycle_owned");
+      }
       this.markInitialPromptMessages(agent.agentId, jobId, assigned, store);
       return publicSpawnReceipt(this.cwd, store.resolveTarget(agent.agentId));
     } catch (error) {
-      const handoffDisposition = launchAttempted
-        ? preparedStartDisposition(error)
-        : "rollback_safe";
+      let handoffDisposition;
+      if (launchAttempted) {
+        handoffDisposition = preparedStartDisposition(error);
+      } else if (error?.name === "AbortError") {
+        let current = null;
+        try { current = readJobFile(this.cwd, jobId); } catch { handoffDisposition = "ownership_uncertain"; }
+        if (!handoffDisposition) {
+          handoffDisposition = current?.workerLaunchStartedAt || current?.pid != null
+            ? preparedStartDisposition(error)
+            : "rollback_safe";
+        }
+      } else {
+        handoffDisposition = "rollback_safe";
+      }
       if (handoffDisposition === "rollback_safe") {
         this.jobs.abortPreparedStart(prepared, { handoffDisposition });
         this.rollbackActivation(agent.agentId, jobId, agent, {
           initial: true,
           removableMessageId: initialMessage?.messageId,
         });
+        throw rollbackSafeSpawnFailure(error, store, agent);
+      } else {
+        throw publicSpawnFailure(error, agent, handoffDisposition);
       }
-      throw error;
     }
   }
 

@@ -98,6 +98,209 @@ const METRICS = Object.freeze({
 });
 
 describe("operator usage ledger", () => {
+  it("accounts current explicit multi-Harness spawn routes without retaining task content", async () => {
+    const root = temporaryDirectory("hd-usage-current-routes-");
+    const sessionsRoot = path.join(root, "sessions");
+    const ledgerFile = path.join(root, "operator", "dispositions.jsonl");
+    const privateTaskContent = "PRIVATE_CURRENT_ROUTE_TASK_CONTENT";
+    writeJsonl(path.join(sessionsRoot, "routes.jsonl"), [
+      sessionMeta({ timestamp: "2026-08-01T00:00:00.000Z", id: "current-routes-primary" }),
+      callEnd({
+        timestamp: "2026-08-02T00:00:00.000Z",
+        callId: "claude-native-orchestrator",
+        tool: "spawn_agent",
+        args: {
+          task_name: "private_claude_task",
+          message: privateTaskContent,
+          harness: "claude-code",
+          model: "claude-opus-5",
+          reasoning_effort: "high",
+          topology: "native_orchestrator",
+          write: false,
+        },
+      }),
+      callEnd({
+        timestamp: "2026-08-02T00:01:00.000Z",
+        callId: "pi-route",
+        tool: "spawn_agent",
+        args: {
+          task_name: "private_pi_task",
+          message: privateTaskContent,
+          harness: "pi",
+          model: "openai-codex/gpt-5.6-terra",
+          reasoning_effort: "high",
+          topology: "leaf",
+          write: true,
+        },
+      }),
+      callEnd({
+        timestamp: "2026-08-02T00:02:00.000Z",
+        callId: "opencode-route",
+        tool: "spawn_agent",
+        args: {
+          task_name: "private_opencode_task",
+          message: privateTaskContent,
+          harness: "opencode",
+          model: "openai/gpt-5.6-luna",
+          reasoning_effort: "medium",
+          topology: "leaf",
+          write: false,
+        },
+      }),
+      callEnd({
+        timestamp: "2026-08-02T00:03:00.000Z",
+        callId: "same-model-other-harness",
+        tool: "spawn_agent",
+        args: {
+          task_name: "private_other_task",
+          message: privateTaskContent,
+          harness: "opencode",
+          model: "openai-codex/gpt-5.6-terra",
+          reasoning_effort: "high",
+          topology: "leaf",
+          write: true,
+        },
+      }),
+      callEnd({
+        timestamp: "2026-08-02T00:04:00.000Z",
+        callId: "missing-current-topology",
+        tool: "spawn_agent",
+        args: {
+          task_name: "private_malformed_task",
+          message: privateTaskContent,
+          harness: "pi",
+          model: "openai-codex/gpt-5.6-luna",
+          reasoning_effort: "high",
+          write: false,
+          delegation_mode: "leaf",
+        },
+      }),
+    ]);
+
+    const report = await buildUsageReport({
+      sessionsRoot,
+      ledgerFile,
+      days: 7,
+      until: "2026-08-08T00:00:00.000Z",
+    });
+
+    assert.equal(report.spawn_routes.total, 4);
+    assert.equal(report.spawn_routes.malformed, 1);
+    assert.deepEqual(report.spawn_routes.requested, [
+      {
+        harness: "claude-code",
+        model: "claude-opus-5",
+        reasoning_effort: "high",
+        topology: "native_orchestrator",
+        write: false,
+        calls: 1,
+      },
+      {
+        harness: "opencode",
+        model: "openai-codex/gpt-5.6-terra",
+        reasoning_effort: "high",
+        topology: "leaf",
+        write: true,
+        calls: 1,
+      },
+      {
+        harness: "opencode",
+        model: "openai/gpt-5.6-luna",
+        reasoning_effort: "medium",
+        topology: "leaf",
+        write: false,
+        calls: 1,
+      },
+      {
+        harness: "pi",
+        model: "openai-codex/gpt-5.6-terra",
+        reasoning_effort: "high",
+        topology: "leaf",
+        write: true,
+        calls: 1,
+      },
+    ]);
+    assert.doesNotMatch(JSON.stringify(report), new RegExp(privateTaskContent));
+  });
+
+  it("counts one dispatch call, each strict requested route, and only closed row outcomes", async () => {
+    const root = temporaryDirectory("hd-usage-dispatch-routes-");
+    const sessionsRoot = path.join(root, "sessions");
+    const ledgerFile = path.join(root, "operator", "dispositions.jsonl");
+    const privateTaskContent = "PRIVATE_BATCH_TASK_CONTENT";
+    const rows = [
+      {
+        task_name: "batch_a", message: privateTaskContent, harness: "pi",
+        model: "openai-codex/gpt-5.6-luna", reasoning_effort: "high",
+        topology: "leaf", write: false,
+      },
+      {
+        task_name: "batch_b", message: privateTaskContent, harness: "opencode",
+        model: "openai/gpt-5.6-terra", reasoning_effort: "max",
+        topology: "leaf", write: true, description: "private description",
+      },
+      {
+        task_name: "batch_c", message: privateTaskContent, harness: "claude-code",
+        model: "claude-opus-5", reasoning_effort: "xhigh",
+        topology: "native_orchestrator", write: false,
+      },
+      {
+        task_name: "batch_d", message: privateTaskContent, harness: "pi",
+        model: "openai-codex/gpt-5.6-sol", reasoning_effort: "medium",
+        topology: "leaf", write: true,
+      },
+    ];
+    writeJsonl(path.join(sessionsRoot, "dispatch.jsonl"), [
+      sessionMeta({ timestamp: "2026-08-01T00:00:00.000Z", id: "dispatch-routes" }),
+      callEnd({
+        timestamp: "2026-08-02T00:00:00.000Z",
+        callId: "dispatch-valid",
+        tool: "dispatch_agents",
+        args: { rows },
+        result: okResult({
+          rows: [
+            { agent_name: "/root/batch_a", agent_exists: true, outcome: "launched", card: { agent_name: "/root/batch_a" } },
+            { agent_name: "/root/batch_b", agent_exists: false, outcome: "rolled_back", error: { code: "spawn_rolled_back", message: "closed" } },
+            { agent_name: "/root/batch_c", agent_exists: true, outcome: "lifecycle_owned", error: { code: "spawn_lifecycle_owned", message: "closed" } },
+            { agent_name: "/root/batch_d", agent_exists: true, outcome: "ownership_uncertain", error: { code: "spawn_ownership_uncertain", message: "closed" } },
+          ],
+        }),
+      }),
+      callEnd({
+        timestamp: "2026-08-02T00:01:00.000Z",
+        callId: "dispatch-typed-error",
+        tool: "dispatch_agents",
+        args: { rows: [{ ...rows[0], reasoning_effort: undefined }] },
+        result: { Err: { message: "typed rejection" } },
+      }),
+    ]);
+
+    const report = await buildUsageReport({
+      sessionsRoot,
+      ledgerFile,
+      days: 7,
+      until: "2026-08-08T00:00:00.000Z",
+    });
+
+    assert.deepEqual(report.tools.dispatch_agents, { calls: 2, errors: 1 });
+    assert.deepEqual(report.dispatch, {
+      requested_rows: 4,
+      malformed_invocations: 1,
+      malformed_receipts: 0,
+      outcomes: {
+        launched: 1,
+        rolled_back: 1,
+        lifecycle_owned: 1,
+        ownership_uncertain: 1,
+        not_attempted: 0,
+      },
+    });
+    assert.equal(report.spawn_routes.total, 4);
+    assert.equal(report.spawn_routes.requested.length, 4);
+    assert.doesNotMatch(JSON.stringify(report), new RegExp(privateTaskContent));
+    assert.doesNotMatch(JSON.stringify(report), /private description|typed rejection/);
+  });
+
   it("appends only closed owner-readable token-digest records and uses latest valid disposition", async () => {
     const root = temporaryDirectory("hd-usage-ledger-");
     const ledgerFile = path.join(root, "operator", "dispositions.jsonl");
@@ -232,9 +435,10 @@ describe("operator usage ledger", () => {
         args: {
           task_name: "private_task",
           message: privacySentinels[0],
+          harness: "claude-code",
           model: "claude-sonnet-5",
           reasoning_effort: "high",
-          delegation_mode: "leaf",
+          topology: "leaf",
           write: false,
           cwd: privacySentinels[4],
           env: privacySentinels[5],
@@ -432,11 +636,18 @@ describe("operator usage ledger", () => {
     assert.equal(report.diagnostics.unresolved_session_files, 1);
     assert.equal(report.diagnostics.unresolved_replay_records, 2);
     assert.equal(report.tools.spawn_agent.calls, 1);
-    assert.equal(report.spawn_routes.total, 1);
-    assert.equal(report.spawn_routes.models["claude-sonnet-5"], 1);
-    assert.equal(report.spawn_routes.reasoning_efforts.high, 1);
-    assert.equal(report.spawn_routes.delegation_modes.leaf, 1);
-    assert.equal(report.spawn_routes.authority.behavioral_read, 1);
+    assert.deepEqual(report.spawn_routes, {
+      total: 1,
+      requested: [{
+        harness: "claude-code",
+        model: "claude-sonnet-5",
+        reasoning_effort: "high",
+        topology: "leaf",
+        write: false,
+        calls: 1,
+      }],
+      malformed: 0,
+    });
     assert.deepEqual(report.waits, {
       completion: 2,
       progress: 1,

@@ -55,3 +55,5 @@ Transport never auto-reconnects: an explicit follow-up forms a fresh native team
 
 On success: use the returned Agent Card with `agent_name`, `model`, and `status`; never worktree paths,
 final Harness text, JSON, or internal IDs. Operator diagnostics hold actionable failure/recovery detail.
+On a failed spawn that includes `agent_name`, `outcome`, `code`, and `message`, keep it failed: use the
+public `agent_name` to reconcile with list/join tools; never infer rollback, resend, or expose raw details.

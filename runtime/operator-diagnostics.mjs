@@ -868,7 +868,7 @@ export async function runDoctor(options = {}) {
       checks.push(makeCheck(
         "mcp-tools",
         mcp.healthy ? "pass" : "fail",
-        mcp.healthy ? "Installed MCP bootstrap exposes exactly eight tools and isolated list_agents succeeds." : "Installed MCP discovery did not match the eight-tool contract.",
+        mcp.healthy ? "Installed MCP bootstrap exposes exactly nine tools and isolated list_agents succeeds." : "Installed MCP discovery did not match the nine-tool contract.",
         { toolCount: mcp.tools.length, tools: mcp.tools, isolatedAgentCount: mcp.agentCount },
         mcp.healthy ? null : "Run npm run refresh:local and start a new Codex task.",
       ));

@@ -64,8 +64,22 @@ describe("typed HarnessDock MCP server", () => {
     const { client, server } = await inMemoryClient(() => runtimeMethods(() => ({})));
     closers.push(() => client.close(), () => server.close());
     const listed = await client.listTools();
+    const expectedToolNames = [
+      "list_harnesses",
+      "spawn_agent",
+      "send_message",
+      "followup_task",
+      "wait_agent",
+      "interrupt_agent",
+      "list_agents",
+      "read_agent_messages",
+      "dispatch_agents",
+    ];
     assert.equal(client.getServerVersion()?.version, PACKAGE_VERSION);
-    assert.deepEqual(listed.tools.map((tool) => tool.name), HARNESSDOCK_MCP_TOOL_NAMES);
+    assert.equal(HARNESSDOCK_MCP_API_GENERATION, 10);
+    assert.deepEqual(HARNESSDOCK_MCP_TOOL_NAMES, expectedToolNames);
+    assert.equal(listed.tools.length, 9);
+    assert.deepEqual(listed.tools.map((tool) => tool.name), expectedToolNames);
     for (const tool of listed.tools) assert.equal(tool.inputSchema.additionalProperties, false);
     const listAgents = listed.tools.find((tool) => tool.name === "list_agents");
     assert.deepEqual(listAgents.annotations, {
@@ -86,10 +100,10 @@ describe("typed HarnessDock MCP server", () => {
     assert.deepEqual(spawn.inputSchema.properties.harness.enum, ["claude-code", "opencode", "pi"]);
     assert.deepEqual(spawn.inputSchema.properties.topology.enum, ["leaf", "native_orchestrator"]);
     assert.equal(spawn.inputSchema.properties.target_worktree.type, "string");
-    assert.match(spawn.description, /freshly validated against native discovery[\s\S]*async/i);
-    assert.match(spawn.inputSchema.properties.harness.description, /no default/i);
-    assert.match(spawn.inputSchema.properties.target_worktree.description, /absolute[\s\S]*spawn-only[\s\S]*worktree/i);
-    assert.match(spawn.inputSchema.properties.write.description, /false read[\s\S]*true writes[\s\S]*same access/i);
+    const instructions = client.getInstructions();
+    assert.match(instructions, /Fresh routes; no defaults/i);
+    assert.match(instructions, /stateless ordered rows; preflight, cancellation, outcomes/i);
+    assert.match(instructions, /list_harnesses: no service\/model turn/i);
     const followup = listed.tools.find((tool) => tool.name === "followup_task");
     assert.equal(Object.hasOwn(followup.inputSchema.properties, "allowed_tools"), false);
     assert.deepEqual(Object.keys(followup.inputSchema.properties).sort(), ["message", "target"]);
@@ -102,17 +116,10 @@ describe("typed HarnessDock MCP server", () => {
     assert.equal(wait.inputSchema.properties.targets.maxItems, 8);
     assert.equal(Object.hasOwn(wait.inputSchema.properties, "wake_on_progress"), true);
     assert.equal(wait.inputSchema.required?.includes("wake_on_progress") ?? false, false);
-    assert.match(wait.description, /join\/barrier[\s\S]*progress[\s\S]*fixed hour[\s\S]*completion token/i);
-    assert.match(listed.tools.find((tool) => tool.name === "send_message").description, /no activation/i);
-    assert.match(listed.tools.find((tool) => tool.name === "followup_task").description, /activate idle continuation/i);
-    assert.match(listed.tools.find((tool) => tool.name === "interrupt_agent").description, /stop turn[\s\S]*keep Agent/i);
-    assert.match(listed.tools.find((tool) => tool.name === "read_agent_messages").description, /assistant history[\s\S]*no activation/i);
-    const listAgentsTool = listed.tools.find((tool) => tool.name === "list_agents");
-    assert.match(listAgentsTool.description, /Cards/i);
     const descriptionWords = listed.tools
-      .map((tool) => tool.description.trim().split(/\s+/u).length)
+      .map((tool) => String(tool.description ?? "").trim().split(/\s+/u).filter(Boolean).length)
       .reduce((total, words) => total + words, 0);
-    assert.ok(descriptionWords <= 180, `tool descriptions use ${descriptionWords} words`);
+    assert.ok(descriptionWords <= 3, `tool descriptions use ${descriptionWords} words`);
     const rawClient = mcpExposedDescriptionCharacters(listed.tools, client.getInstructions());
     const projected = mcpProjectedModelVisibleCharacters(listed.tools, client.getInstructions());
     assert.equal(projected, HARNESSDOCK_MCP_HOST_PROJECTION_CHAR_RESERVE + rawClient);
@@ -129,11 +136,155 @@ describe("typed HarnessDock MCP server", () => {
     assert.ok(JSON.stringify(restoredVerboseCatalog).length > 4_500, "catalog guard accepts restored verbose spawn guidance");
   });
 
+  it("strictly decodes ordered explicit dispatch rows and routes only the decoded request to the deferred runtime operation", async () => {
+    const calls = [];
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createCcMcpServer({
+      runtimeInvoker: async ({ operation, input }) => {
+        calls.push({ operation, input });
+        if (operation === "dispatch_agents") {
+          return { rows: input.rows.map((row) => ({
+            agent_name: `/root/${row.task_name}`,
+            agent_exists: true,
+            outcome: "launched",
+          })) };
+        }
+        if (operation === "spawn_agent") return { agent_name: "/root/singular", model: input.model, status: "working" };
+        if (operation === "list_harnesses") return { harnesses: [] };
+        return {};
+      },
+    });
+    const client = new Client({ name: "hd-mcp-dispatch-test", version: "1.0.0" });
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    closers.push(() => client.close(), () => server.close());
+
+    const listed = await client.listTools();
+    const dispatch = listed.tools.find((tool) => tool.name === "dispatch_agents");
+    assert.ok(dispatch);
+    assert.deepEqual(Object.keys(dispatch.inputSchema.properties), ["rows"]);
+    const rows = dispatch.inputSchema.properties.rows;
+    assert.equal(rows.type, "array");
+    assert.equal(rows.minItems, 1);
+    assert.equal(rows.maxItems, 8);
+    assert.equal(rows.items.additionalProperties, false);
+    assert.deepEqual(new Set(rows.items.required), new Set([
+      "task_name", "message", "harness", "model", "reasoning_effort", "topology", "write",
+    ]));
+    assert.deepEqual(Object.keys(rows.items.properties), [
+      "task_name", "message", "description", "harness", "model", "topology", "write", "target_worktree", "reasoning_effort",
+    ]);
+    assert.equal(Object.hasOwn(rows.items.properties, "agent_name"), false);
+    assert.equal(dispatch.description, undefined);
+
+    const first = {
+      task_name: "first_row",
+      message: "first bounded assignment",
+      description: "optional bounded description",
+      harness: "claude-code",
+      model: "claude-sonnet-5",
+      reasoning_effort: "high",
+      topology: "leaf",
+      write: false,
+      target_worktree: "/tmp/dispatch-first",
+    };
+    const second = {
+      task_name: "second_row",
+      message: "second bounded assignment",
+      harness: "pi",
+      model: "openai-codex/gpt-5.6-sol",
+      reasoning_effort: "medium",
+      topology: "leaf",
+      write: true,
+    };
+    const accepted = await client.callTool({
+      name: "dispatch_agents",
+      arguments: { rows: [first, second] },
+      _meta: meta,
+    });
+    assert.equal(accepted.isError, undefined);
+    assert.deepEqual(accepted.structuredContent, {
+      rows: [
+        { agent_name: "/root/first_row", agent_exists: true, outcome: "launched" },
+        { agent_name: "/root/second_row", agent_exists: true, outcome: "launched" },
+      ],
+    });
+    assert.deepEqual(calls, [{ operation: "dispatch_agents", input: { rows: [first, second] } }]);
+
+    const forbiddenRowSelectors = [
+      "agent_name", "inherited_model", "shared_model", "default_model", "retry", "Team", "dag", "session_id", "cwd",
+    ];
+    for (const selector of forbiddenRowSelectors) {
+      const rejected = await client.callTool({
+        name: "dispatch_agents",
+        arguments: { rows: [{ ...first, [selector]: "forbidden" }] },
+        _meta: meta,
+      });
+      assert.equal(rejected.isError, true, selector);
+    }
+    for (const required of ["task_name", "message", "harness", "model", "reasoning_effort", "topology", "write"]) {
+      const row = { ...first };
+      delete row[required];
+      const rejected = await client.callTool({
+        name: "dispatch_agents",
+        arguments: { rows: [row] },
+        _meta: meta,
+      });
+      assert.equal(rejected.isError, true, `missing ${required}`);
+    }
+    for (const argumentsValue of [
+      { rows: [] },
+      { rows: Array.from({ length: 9 }, (_, index) => ({ ...first, task_name: `row_${index}` })) },
+      { rows: [first, { ...second, task_name: first.task_name }] },
+      { rows: [{ ...first, task_name: "not-a-task-name" }] },
+      { rows: [{ ...first, message: "   " }] },
+      { rows: [{ ...first, model: "" }] },
+      { rows: [{ ...first, reasoning_effort: "" }] },
+      { rows: [{ ...first, target_worktree: "relative/worktree" }] },
+      { rows: [first], shared_model: "forbidden" },
+    ]) {
+      const rejected = await client.callTool({ name: "dispatch_agents", arguments: argumentsValue, _meta: meta });
+      assert.equal(rejected.isError, true);
+    }
+    assert.equal(calls.length, 1, "rejected dispatch inputs must not reach a runtime seam");
+
+    const singular = await client.callTool({
+      name: "spawn_agent",
+      arguments: {
+        task_name: "singular",
+        message: "one Agent remains singular",
+        harness: "claude-code",
+        model: "claude-sonnet-5",
+        reasoning_effort: "high",
+        topology: "leaf",
+        write: false,
+      },
+      _meta: meta,
+    });
+    const harnesses = await client.callTool({ name: "list_harnesses", arguments: {}, _meta: meta });
+    assert.equal(singular.isError, undefined);
+    assert.equal(harnesses.isError, undefined);
+    assert.deepEqual(calls.slice(1).map(({ operation, input }) => ({ operation, input })), [
+      {
+        operation: "spawn_agent",
+        input: {
+          task_name: "singular",
+          message: "one Agent remains singular",
+          harness: "claude-code",
+          model: "claude-sonnet-5",
+          reasoning_effort: "high",
+          topology: "leaf",
+          write: false,
+        },
+      },
+      { operation: "list_harnesses", input: {} },
+    ]);
+  });
+
   it("keeps shared server routing short and retains wait semantics in its owner Skill", async () => {
     const { client, server } = await inMemoryClient(() => runtimeMethods(() => ({})));
     closers.push(() => client.close(), () => server.close());
     const instructions = client.getInstructions();
-    assert.equal(instructions, "Experimental tools; trusted Codex metadata.");
+    assert.equal(instructions, "Experimental; trusted Codex metadata. Fresh routes; no defaults. Dispatch: stateless ordered rows; preflight, cancellation, outcomes. list_harnesses: no service/model turn.");
     const waitSkill = fs.readFileSync(path.join(pluginRoot, "skills", "wait-agent", "SKILL.md"), "utf8");
     assert.match(waitSkill, /3600000 ms[\s\S]*wake_on_progress: true[\s\S]*exactly one target/i);
     assert.match(waitSkill, /completion has priority[\s\S]*completion_message[\s\S]*token/i);
@@ -709,6 +860,12 @@ export function createAgentRuntime() {
         /Fixed HarnessDock (MCP checkout is invalid|runtime checkout is unavailable)|Unexpected HarnessDock MCP Plugin identity/i,
       );
       assert.match(`${result.stderr}\n${result.stdout}`, /\/data\/CoordExp\/codex-harnessdock/);
+      return;
+    }
+    const canonicalServerFile = "/data/CoordExp/codex-harnessdock/runtime/mcp-server.mjs";
+    if (!fs.existsSync(canonicalServerFile) || !fs.readFileSync(canonicalServerFile, "utf8").includes('"dispatch_agents"')) {
+      // This unrefreshed checkout is intentionally not a release witness for
+      // the next generation; the in-memory catalog test above owns it.
       return;
     }
     const transport = new StdioClientTransport({

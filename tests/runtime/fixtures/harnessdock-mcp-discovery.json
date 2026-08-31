@@ -1,5 +1,5 @@
 {
-  "generation": 8,
+  "generation": 10,
   "tools": [
     {
       "name": "list_harnesses",
@@ -39,35 +39,28 @@
               "claude-code",
               "opencode",
               "pi"
-            ],
-            "description": "Required; no default."
+            ]
           },
           "model": {
             "type": "string",
             "minLength": 1,
-            "maxLength": 256,
-            "description": "Full model."
+            "maxLength": 256
           },
           "topology": {
             "type": "string",
             "enum": [
               "leaf",
               "native_orchestrator"
-            ],
-            "description": "Required native-proven."
+            ]
           },
           "write": {
-            "type": "boolean",
-            "description": "false read; true writes; same access."
+            "type": "boolean"
           },
           "target_worktree": {
-            "type": "string",
-            "description": "Absolute spawn-only worktree."
+            "type": "string"
           },
           "reasoning_effort": {
-            "type": "string",
-            "minLength": 1,
-            "maxLength": 256
+            "type": "string"
           }
         },
         "required": [
@@ -96,8 +89,7 @@
         "properties": {
           "target": {
             "type": "string",
-            "minLength": 1,
-            "description": "Exact root Agent"
+            "minLength": 1
           },
           "message": {
             "type": "string",
@@ -125,8 +117,7 @@
         "properties": {
           "target": {
             "type": "string",
-            "minLength": 1,
-            "description": "Exact root Agent"
+            "minLength": 1
           },
           "message": {
             "type": "string",
@@ -153,18 +144,15 @@
         "type": "object",
         "properties": {
           "targets": {
-            "description": "1 progress; 2-8 barrier.",
             "minItems": 1,
             "maxItems": 8,
             "type": "array",
             "items": {
               "type": "string",
-              "minLength": 1,
-              "description": "Exact root Agent"
+              "minLength": 1
             }
           },
           "wake_on_progress": {
-            "description": "One safe progress.",
             "type": "boolean"
           },
           "acknowledge_tokens": {
@@ -192,8 +180,7 @@
         "properties": {
           "target": {
             "type": "string",
-            "minLength": 1,
-            "description": "Exact root Agent"
+            "minLength": 1
           }
         },
         "required": [
@@ -236,8 +223,7 @@
         "properties": {
           "target": {
             "type": "string",
-            "minLength": 1,
-            "description": "Exact root Agent"
+            "minLength": 1
           },
           "before": {
             "type": "string",
@@ -260,6 +246,81 @@
         "destructiveHint": false,
         "idempotentHint": true,
         "openWorldHint": false
+      }
+    },
+    {
+      "name": "dispatch_agents",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "rows": {
+            "minItems": 1,
+            "maxItems": 8,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "task_name": {
+                  "type": "string"
+                },
+                "message": {
+                  "type": "string"
+                },
+                "description": {
+                  "type": "string"
+                },
+                "harness": {
+                  "type": "string",
+                  "enum": [
+                    "claude-code",
+                    "opencode",
+                    "pi"
+                  ]
+                },
+                "model": {
+                  "type": "string"
+                },
+                "topology": {
+                  "type": "string",
+                  "enum": [
+                    "leaf",
+                    "native_orchestrator"
+                  ]
+                },
+                "write": {
+                  "type": "boolean"
+                },
+                "target_worktree": {
+                  "type": "string"
+                },
+                "reasoning_effort": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "task_name",
+                "message",
+                "harness",
+                "model",
+                "topology",
+                "write",
+                "reasoning_effort"
+              ],
+              "additionalProperties": false
+            }
+          }
+        },
+        "required": [
+          "rows"
+        ],
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
       }
     }
   ]

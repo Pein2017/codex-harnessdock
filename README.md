@@ -113,29 +113,34 @@ by OpenAI, Anthropic, Pi, or OpenCode.
 
 ## Typed MCP lifecycle
 
-The Plugin exposes one stdio MCP server named `codex_harnessdock`. Its eight typed
+The Plugin exposes one stdio MCP server named `codex_harnessdock`. Its nine typed
 tools delegate to `runtime/index.mjs`, which remains the sole lifecycle owner:
 
 ```text
 list_harnesses({})
-spawn_agent({ task_name, message, harness, model, topology, write, description?, reasoning_effort? })
+spawn_agent({ task_name, message, harness, model, reasoning_effort, topology, write, description?, target_worktree? })
+dispatch_agents({ rows: [{ task_name, message, harness, model, reasoning_effort, topology, write, description?, target_worktree? }, ...] })
 send_message({ target, message })
-followup_task({ target, message, reasoning_effort? })
+followup_task({ target, message })
 wait_agent({ targets?, wake_on_progress?, acknowledge_tokens? })
 interrupt_agent({ target })
 read_agent_messages({ target, before?, limit? })
 list_agents({ path_prefix? })
 ```
 
-`spawn_agent` requires `harness`, `model`, `topology`, and `write` together;
+`spawn_agent` requires `harness`, `model`, `reasoning_effort`, `topology`, and `write` together;
 `followup_task` accepts none of them, because an Agent's route and behavioral
 authority are frozen at creation. A different route means a new Agent.
+`dispatch_agents` is only a stateless ordered convenience for 1..8 independent,
+complete spawn rows. It adds no shared defaults, retry, fallback, Team, DAG,
+scheduler, batch identity, or cross-row rollback; use singular spawn for one Agent.
 
 Codex sees the tools as:
 
 ```text
 mcp__codex_harnessdock__list_harnesses
 mcp__codex_harnessdock__spawn_agent
+mcp__codex_harnessdock__dispatch_agents
 mcp__codex_harnessdock__send_message
 mcp__codex_harnessdock__followup_task
 mcp__codex_harnessdock__wait_agent
@@ -144,12 +149,13 @@ mcp__codex_harnessdock__read_agent_messages
 mcp__codex_harnessdock__list_agents
 ```
 
-The installed Plugin also exposes the same eight namespaced skills as
+The installed Plugin also exposes the same nine namespaced skills as
 orchestration guidance:
 
 ```text
 $codex-harnessdock:list-harnesses
 $codex-harnessdock:spawn-agent
+$codex-harnessdock:dispatch-agents
 $codex-harnessdock:send-message
 $codex-harnessdock:followup-task
 $codex-harnessdock:wait-agent
@@ -594,7 +600,7 @@ reading as an operator fact rather than a Plugin defect. Doctor is
 zero-model-cost and not exposed as a Skill or MCP tool. It checks the
 canonical checkout and installed snapshot, production Node dependencies,
 Claude CLI version/static compatibility and login, the fixed Claude config and
-9090 proxy envelope, exactly eight
+9090 proxy envelope, exactly nine
 MCP tools, bounded checkout-routed compatibility shells, their durable predecessor
 coverage, and aggregate local storage. A first install is reported explicitly with no
 invented predecessor; an unmanaged legacy installation warns that coverage is unavailable.
@@ -659,8 +665,8 @@ npm run smoke:release -- --json
 ```
 
 It resolves the enabled `codex-harnessdock@pein-local` installation, requires an exact
-checkout/snapshot match, discovers exactly eight installed Skills, launches the
-absolute canonical-checkout descriptor bootstrap, lists exactly eight MCP
+checkout/snapshot match, discovers exactly nine installed Skills, launches the
+absolute canonical-checkout descriptor bootstrap, lists exactly nine MCP
 tools, verifies at most two discovery-only compatibility shells plus the durable
 successful-version coverage record, and calls
 `list_agents` with a synthetic root and temporary runtime home. This exercises
@@ -859,7 +865,7 @@ repair coverage with `npm run release:local`, and start a new Codex task wheneve
 MCP returns `HARNESSDOCK_MCP_RESTART_REQUIRED`. Versions older than the two retained
 predecessors are outside this bounded compatibility promise.
 
-Verify the installed snapshot has exactly the eight Experimental skills and
+Verify the installed snapshot has exactly the nine Experimental skills and
 one `codex_harnessdock` MCP server whose descriptor-only bootstrap delegates only to
 `/data/CoordExp/codex-harnessdock`.
 

@@ -2,7 +2,8 @@
  * SPDX-License-Identifier: Apache-2.0
  *
  * Task 7.1/7.2 of add-opencode-explorer-driver: the static two-Harness
- * admission and the eighth operation, `list_harnesses`.
+ * admission and the eighth operation, `list_harnesses`. The later public
+ * typed dispatch catalog is covered here without changing the deferred core.
  *
  * Every OpenCode observation here points at a fake Server on an ephemeral
  * loopback port, or at a deliberately dead port; nothing in this suite touches
@@ -209,13 +210,14 @@ describe("public generation: static three-Harness admission", () => {
 });
 
 // ---------------------------------------------------------------------------
-// 7.2 The eighth operation.
+// 7.2 The eighth operation and later typed dispatch catalog.
 // ---------------------------------------------------------------------------
 
 describe("public generation: list_harnesses observes without selecting", () => {
-  it("exposes exactly eight frozen public operations", () => {
+  it("exposes exactly nine frozen public operations", () => {
     const runtime = runtimeFor(DEAD_SERVER_URL);
     assert.deepEqual(Object.keys(runtime).sort(), [
+      "dispatch_agents",
       "followup_task",
       "interrupt_agent",
       "list_agents",
@@ -362,14 +364,15 @@ describe("public generation: list_harnesses through MCP and the operator CLI", (
     return client;
   }
 
-  it("advertises exactly eight typed tools, with list_harnesses read-only and input-free", async () => {
+  it("advertises exactly nine typed tools, with list_harnesses read-only and input-free", async () => {
     const client = await inMemoryClient(() =>
       Object.fromEntries(HARNESSDOCK_MCP_TOOL_NAMES.map((name) => [name, () => ({ operation: name })]))
     );
     const listed = await client.listTools();
-    assert.equal(listed.tools.length, 8);
+    assert.equal(listed.tools.length, 9);
     assert.deepEqual(listed.tools.map((tool) => tool.name), [...HARNESSDOCK_MCP_TOOL_NAMES]);
     assert.equal(HARNESSDOCK_MCP_TOOL_NAMES.includes("list_harnesses"), true);
+    assert.equal(HARNESSDOCK_MCP_TOOL_NAMES.includes("dispatch_agents"), true);
     const tool = listed.tools.find((entry) => entry.name === "list_harnesses");
     assert.deepEqual(tool.annotations, {
       readOnlyHint: true,

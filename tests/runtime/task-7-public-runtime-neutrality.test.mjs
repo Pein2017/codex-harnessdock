@@ -58,9 +58,11 @@ after(() => fs.rmSync(root, { recursive: true, force: true }));
 
 /**
  * The public operations of the current generation. The multi-Harness generation
- * added `list_harnesses`; the seam itself stays the sole lifecycle surface.
+ * added `list_harnesses`; stateless dispatch adds one ordered launch
+ * convenience while this seam remains the sole lifecycle surface.
  */
 const PUBLIC_OPERATIONS = Object.freeze([
+  "dispatch_agents",
   "followup_task",
   "interrupt_agent",
   "list_agents",
@@ -240,9 +242,12 @@ describe("Task 7.4 — current codex_harnessdock MCP discovery stays generation-
         annotations: tool.annotations,
       }));
       assert.deepEqual(observed, discoveryFixture.tools);
+      // The compact ninth-generation catalog centralizes decision-bearing
+      // guidance in server instructions rather than repeating it per tool.
+      assert.match(client.getInstructions(), /Fresh routes; no defaults/i);
+      assert.match(client.getInstructions(), /stateless ordered rows; preflight, cancellation, outcomes/i);
       for (const tool of listed.tools) {
-        assert.equal(typeof tool.description, "string");
-        assert.ok(tool.description.length > 0);
+        assert.equal(tool.description, undefined);
       }
     } finally {
       await client.close();

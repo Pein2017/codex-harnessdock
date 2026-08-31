@@ -11,6 +11,12 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 
+import {
+  isBoundedRouteAtom,
+  isBoundedRouteText,
+  ROUTE_TOPOLOGY_VALUES,
+} from "./harness-contract.mjs";
+import { ADMITTED_GENERATION_HARNESS_IDS } from "./harness-registry.mjs";
 import { normalizeTerminalMetrics } from "./terminal-metrics.mjs";
 
 export const OPERATOR_USAGE_VERSION = 2;
@@ -25,6 +31,7 @@ const DISPOSITION_SET = new Set(OPERATOR_DISPOSITIONS);
 const DAY_MS = 24 * 60 * 60 * 1000;
 const CANONICAL_TOOLS = Object.freeze([
   "spawn_agent",
+  "dispatch_agents",
   "send_message",
   "followup_task",
   "wait_agent",
@@ -37,19 +44,36 @@ const CURRENT_MCP_SERVER = "codex_harnessdock";
 // The retired identity survives only so its events can be recognised and
 // excluded. It is never a second admitted namespace.
 const RETIRED_MCP_SERVER = "cc_for_pein";
-const MODELS = Object.freeze([
-  "claude-haiku-4-5",
-  "claude-sonnet-5",
-  "claude-opus-5",
-  "claude-fable-5",
-]);
-const MODEL_SET = new Set(MODELS);
-const EFFORTS = Object.freeze(["low", "medium", "high", "xhigh", "max"]);
-const EFFORT_SET = new Set(EFFORTS);
-const DELEGATION_MODES = Object.freeze(["leaf", "claude_orchestrator"]);
-const DELEGATION_MODE_SET = new Set(DELEGATION_MODES);
 const TERMINAL_STATUSES = Object.freeze(["completed", "failed", "interrupted"]);
 const TERMINAL_STATUS_SET = new Set(TERMINAL_STATUSES);
+const DISPATCH_OUTCOMES = Object.freeze([
+  "launched",
+  "rolled_back",
+  "lifecycle_owned",
+  "ownership_uncertain",
+  "not_attempted",
+]);
+const DISPATCH_OUTCOME_SET = new Set(DISPATCH_OUTCOMES);
+const DISPATCH_ROW_FIELDS = Object.freeze([
+  "task_name",
+  "message",
+  "description",
+  "harness",
+  "model",
+  "reasoning_effort",
+  "topology",
+  "write",
+  "target_worktree",
+]);
+const DISPATCH_REQUIRED_ROW_FIELDS = Object.freeze([
+  "task_name",
+  "message",
+  "harness",
+  "model",
+  "reasoning_effort",
+  "topology",
+  "write",
+]);
 const PROVIDER_FIELDS = Object.freeze([
   "duration_ms",
   "duration_api_ms",
@@ -340,15 +364,61 @@ function resultEvidence(result) {
 
 function admittedSpawnRoute(argumentsValue) {
   if (!isPlainObject(argumentsValue)) return null;
+  const harness = argumentsValue.harness;
   const model = argumentsValue.model;
-  const effort = argumentsValue.reasoning_effort ?? "default";
-  const delegationMode = argumentsValue.delegation_mode ?? "leaf";
+  const reasoningEffort = argumentsValue.reasoning_effort;
+  const topology = argumentsValue.topology;
   const write = argumentsValue.write;
-  if (!MODEL_SET.has(model)) return null;
-  if (effort !== "default" && !EFFORT_SET.has(effort)) return null;
-  if (!DELEGATION_MODE_SET.has(delegationMode)) return null;
+  if (!ADMITTED_GENERATION_HARNESS_IDS.includes(harness)) return null;
+  if (!isBoundedRouteText(model) || !isBoundedRouteAtom(reasoningEffort)) return null;
+  if (!ROUTE_TOPOLOGY_VALUES.includes(topology)) return null;
   if (typeof write !== "boolean") return null;
-  return { model, effort, delegationMode, write };
+  return { harness, model, reasoningEffort, topology, write };
+}
+
+function admittedDispatchRoutes(argumentsValue) {
+  if (!exactKeys(argumentsValue, ["rows"])) return null;
+  const rows = argumentsValue.rows;
+  if (!Array.isArray(rows) || rows.length < 1 || rows.length > 8) return null;
+  const taskNames = new Set();
+  const routes = [];
+  for (const row of rows) {
+    if (!isPlainObject(row)) return null;
+    const keys = Object.keys(row);
+    if (keys.some((key) => !DISPATCH_ROW_FIELDS.includes(key))) return null;
+    if (DISPATCH_REQUIRED_ROW_FIELDS.some((key) => !Object.hasOwn(row, key))) return null;
+    if (typeof row.task_name !== "string" || !/^[a-z0-9_]+$/u.test(row.task_name)) return null;
+    if (taskNames.has(row.task_name)) return null;
+    taskNames.add(row.task_name);
+    if (typeof row.message !== "string" || !row.message.trim() || row.message.includes("\0")) return null;
+    if (row.description != null && (typeof row.description !== "string" || !row.description.trim())) return null;
+    if (row.target_worktree != null &&
+        (typeof row.target_worktree !== "string" || !path.isAbsolute(row.target_worktree))) return null;
+    const route = admittedSpawnRoute(row);
+    if (!route) return null;
+    routes.push(route);
+  }
+  return routes;
+}
+
+function admittedDispatchOutcomes(receipt, expectedRows) {
+  if (!exactKeys(receipt, ["rows"]) || !Array.isArray(receipt.rows) || receipt.rows.length !== expectedRows) {
+    return null;
+  }
+  const outcomes = [];
+  for (const row of receipt.rows) {
+    if (!isPlainObject(row) || !/^\/root\/[a-z0-9_]+$/u.test(row.agent_name) ||
+        !DISPATCH_OUTCOME_SET.has(row.outcome) || typeof row.agent_exists !== "boolean") return null;
+    const expectedExists = ["launched", "lifecycle_owned", "ownership_uncertain"].includes(row.outcome);
+    if (row.agent_exists !== expectedExists) return null;
+    if (row.outcome === "launched") {
+      if (!isPlainObject(row.card)) return null;
+    } else if (row.card != null || (row.error != null && !isPlainObject(row.error))) {
+      return null;
+    }
+    outcomes.push(row.outcome);
+  }
+  return outcomes;
 }
 
 function analyzeWaitReceipt(receipt) {
@@ -485,11 +555,14 @@ function initialReport(window) {
     },
     spawn_routes: {
       total: 0,
-      models: zeroCounts(MODELS),
-      reasoning_efforts: zeroCounts([...EFFORTS, "default"]),
-      delegation_modes: zeroCounts(DELEGATION_MODES),
-      authority: { behavioral_read: 0, write: 0 },
+      requested: [],
       malformed: 0,
+    },
+    dispatch: {
+      requested_rows: 0,
+      malformed_invocations: 0,
+      malformed_receipts: 0,
+      outcomes: zeroCounts(DISPATCH_OUTCOMES),
     },
     completions: {
       unique_deliveries: 0,
@@ -546,7 +619,7 @@ function collectCompletion(report, deliveries, candidate) {
   }
 }
 
-function aggregateCall(report, deliveries, record, server) {
+function aggregateCall(report, deliveries, routeCounts, record, server) {
   const payload = record.payload;
   const tool = payload.invocation.tool;
   report.source.qualifying_calls += 1;
@@ -558,15 +631,40 @@ function aggregateCall(report, deliveries, record, server) {
   }
   report.tools[tool].calls += 1;
 
+  const recordRoute = (route) => {
+    report.spawn_routes.total += 1;
+      const key = JSON.stringify([
+        route.harness,
+        route.model,
+        route.reasoningEffort,
+        route.topology,
+        route.write,
+      ]);
+      const current = routeCounts.get(key);
+      if (current) current.calls += 1;
+      else {
+        routeCounts.set(key, {
+          harness: route.harness,
+          model: route.model,
+          reasoning_effort: route.reasoningEffort,
+          topology: route.topology,
+          write: route.write,
+          calls: 1,
+        });
+      }
+  };
+
+  let dispatchRoutes = null;
   if (tool === "spawn_agent") {
     const route = admittedSpawnRoute(payload.invocation.arguments);
     if (!route) report.spawn_routes.malformed += 1;
+    else recordRoute(route);
+  } else if (tool === "dispatch_agents") {
+    dispatchRoutes = admittedDispatchRoutes(payload.invocation.arguments);
+    if (!dispatchRoutes) report.dispatch.malformed_invocations += 1;
     else {
-      report.spawn_routes.total += 1;
-      report.spawn_routes.models[route.model] += 1;
-      report.spawn_routes.reasoning_efforts[route.effort] += 1;
-      report.spawn_routes.delegation_modes[route.delegationMode] += 1;
-      report.spawn_routes.authority[route.write ? "write" : "behavioral_read"] += 1;
+      report.dispatch.requested_rows += dispatchRoutes.length;
+      for (const route of dispatchRoutes) recordRoute(route);
     }
   }
 
@@ -581,6 +679,14 @@ function aggregateCall(report, deliveries, record, server) {
     if (tool === "wait_agent") report.waits.malformed += 1;
     return;
   }
+  if (tool === "dispatch_agents") {
+    if (dispatchRoutes) {
+      const outcomes = admittedDispatchOutcomes(evidence.receipt, dispatchRoutes.length);
+      if (!outcomes) report.dispatch.malformed_receipts += 1;
+      else for (const outcome of outcomes) report.dispatch.outcomes[outcome] += 1;
+    }
+    return;
+  }
   if (tool !== "wait_agent") return;
   const wait = analyzeWaitReceipt(evidence.receipt);
   report.waits[wait.outcome] += 1;
@@ -593,7 +699,7 @@ function aggregateCall(report, deliveries, record, server) {
   }
 }
 
-async function scanRolloutFile(file, sessionKind, window, report, seenCallIds, deliveries) {
+async function scanRolloutFile(file, sessionKind, window, report, seenCallIds, deliveries, routeCounts) {
   let input;
   try {
     input = fs.createReadStream(file, { encoding: "utf8" });
@@ -673,7 +779,7 @@ async function scanRolloutFile(file, sessionKind, window, report, seenCallIds, d
         report.source.calls_without_id += 1;
       }
       if (!inWindow) continue;
-      aggregateCall(report, deliveries, record, server);
+      aggregateCall(report, deliveries, routeCounts, record, server);
     }
   } catch (error) {
     throw new Error("Unable to stream Codex session evidence.", { cause: error });
@@ -699,6 +805,7 @@ export async function buildUsageReport(options = {}) {
   report.diagnostics.unresolved_session_files = sessionEvidence.unresolvedFiles;
   const seenCallIds = new Set();
   const deliveries = new Map();
+  const routeCounts = new Map();
   for (const file of files) {
     await scanRolloutFile(
       file,
@@ -707,8 +814,17 @@ export async function buildUsageReport(options = {}) {
       report,
       seenCallIds,
       deliveries,
+      routeCounts,
     );
   }
+
+  report.spawn_routes.requested = [...routeCounts.values()].sort((left, right) => (
+    left.harness.localeCompare(right.harness) ||
+    left.model.localeCompare(right.model) ||
+    left.reasoning_effort.localeCompare(right.reasoning_effort) ||
+    left.topology.localeCompare(right.topology) ||
+    Number(left.write) - Number(right.write)
+  ));
 
   report.completions.unique_deliveries = deliveries.size;
   for (const [digest, delivery] of deliveries) {

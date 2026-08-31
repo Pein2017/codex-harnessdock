@@ -221,6 +221,7 @@ describe("release smoke", () => {
     let probeOptions;
     const report = await runReleaseSmoke({
       installed: fixture.installed,
+      onPaidStart() { throw new Error("default zero-model smoke must not start a model turn"); },
       probeMcp: async (options) => {
         probeOptions = options;
         return {
@@ -241,8 +242,10 @@ describe("release smoke", () => {
     assert.equal(report.status, "pass");
     assert.equal(report.zeroModelCost, true);
     assert.equal(probeOptions.realClaude, false);
-    assert.equal(report.skills.length, 8);
-    assert.equal(report.tools.length, 8);
+    assert.equal(probeOptions.callListAgents, true);
+    assert.equal(report.skills.length, 9);
+    assert.equal(report.tools.length, 9);
+    assert.equal(report.tools.includes("dispatch_agents"), true);
     // Fresh native-route discovery rides the same zero-model list_harnesses
     // call; an unavailable native Harness is reported, never a smoke failure.
     assert.equal(report.nativeRouteDiscovery.length, 3);
@@ -268,10 +271,7 @@ describe("release smoke", () => {
         options.onPaidStart({ model: "claude-haiku-4-5", reasoningEffort: "low", write: false });
         return {
           healthy: true,
-          tools: [
-            "spawn_agent", "send_message", "followup_task", "wait_agent",
-            "interrupt_agent", "list_agents", "read_agent_messages",
-          ],
+          tools: [...HARNESSDOCK_MCP_TOOL_NAMES],
           agentCount: 0,
           harnessCount: ADMITTED_GENERATION_HARNESS_IDS.length,
           paid: { requested: true, status: "completed" },
@@ -290,10 +290,7 @@ describe("release smoke", () => {
       installed: fixture.installed,
       probeMcp: async () => ({
         healthy: true,
-        tools: [
-          "spawn_agent", "send_message", "followup_task", "wait_agent",
-          "interrupt_agent", "list_agents", "read_agent_messages",
-        ],
+        tools: [...HARNESSDOCK_MCP_TOOL_NAMES],
         agentCount: 0,
         harnessCount: ADMITTED_GENERATION_HARNESS_IDS.length,
         paid: { requested: false, status: "skipped" },
@@ -332,10 +329,7 @@ describe("release smoke", () => {
       installed: fixture.installed,
       probeMcp: async () => ({
         healthy: true,
-        tools: [
-          "spawn_agent", "send_message", "followup_task", "wait_agent",
-          "interrupt_agent", "list_agents", "read_agent_messages",
-        ],
+        tools: [...HARNESSDOCK_MCP_TOOL_NAMES],
         agentCount: 0,
         harnessCount: ADMITTED_GENERATION_HARNESS_IDS.length,
         paid: { requested: false, status: "skipped" },
@@ -372,13 +366,19 @@ describe("release smoke", () => {
       );
       return;
     }
+    const canonicalServer = path.join(CANONICAL_RUNTIME_CHECKOUT, "runtime", "mcp-server.mjs");
+    if (!fs.existsSync(canonicalServer) || !fs.readFileSync(canonicalServer, "utf8").includes('"dispatch_agents"')) {
+      // Refresh is intentionally outside this package; an older checkout is
+      // not a zero-model witness for generation 10.
+      return;
+    }
     const report = await probeInstalledMcp({
       snapshotRoot: path.join(SOURCE_ROOT, "plugins", "codex-harnessdock"),
       workspace: SOURCE_ROOT,
       callListAgents: true,
     });
     assert.equal(report.healthy, true);
-    assert.equal(report.tools.length, 8);
+    assert.equal(report.tools.length, 9);
     assert.equal(report.agentCount, 0);
     assert.deepEqual(report.paid, { requested: false, status: "skipped" });
   });
@@ -894,13 +894,13 @@ describe("release smoke", () => {
 });
 
 describe("release smoke: the installed surface must be complete, not merely present", () => {
-  it("refuses an installed Plugin whose MCP surface is not the eight-tool contract", async () => {
+  it("refuses an installed Plugin whose MCP surface is not the nine-tool contract", async () => {
     const fixture = matchingSnapshot();
     await assert.rejects(
       runReleaseSmoke({
         installed: fixture.installed,
         // `healthy: false` is what the probe reports for a surface that is not
-        // exactly the eight tools, an unexpected Agent, a Harness count that
+        // exactly the nine tools, an unexpected Agent, a Harness count that
         // does not match this release, or a schema that accepted an undeclared
         // argument.
         probeMcp: async () => ({
@@ -912,7 +912,7 @@ describe("release smoke: the installed surface must be complete, not merely pres
           paid: { requested: false, status: "skipped" },
         }),
       }),
-      /eight-tool contract/,
+      /nine-tool contract/,
     );
   });
 
@@ -934,7 +934,7 @@ describe("release smoke: the installed surface must be complete, not merely pres
     // Skills, tools, and Harness admission, and starts no turn.
     assert.equal(report.zeroModelCost, true);
     assert.deepEqual(report.paid, { requested: false, status: "skipped" });
-    assert.equal(report.skills.length, 8);
-    assert.equal(report.tools.length, 8);
+    assert.equal(report.skills.length, 9);
+    assert.equal(report.tools.length, 9);
   });
 });

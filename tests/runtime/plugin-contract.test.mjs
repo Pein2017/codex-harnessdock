@@ -15,6 +15,7 @@ const pluginVersionPattern = new RegExp(`^${escapedReleaseVersion}\\+codex\\.[A-
 
 describe("native plugin contract", () => {
   const canonicalSkills = [
+    "dispatch-agents",
     "followup-task",
     "interrupt-agent",
     "list-agents",
@@ -25,7 +26,8 @@ describe("native plugin contract", () => {
     "wait-agent",
   ];
 
-  const canonicalOperations = [
+  const canonicalTypedOperations = [
+    "dispatch_agents",
     "followup_task",
     "interrupt_agent",
     "list_agents",
@@ -36,7 +38,7 @@ describe("native plugin contract", () => {
     "wait_agent",
   ];
 
-  it("publishes only the eight canonical Agent skills and no Codex hook", () => {
+  it("publishes only the nine canonical Agent Skills and no Codex hook", () => {
     const pluginRoot = path.join(root, "plugins", "codex-harnessdock");
     const manifest = JSON.parse(fs.readFileSync(path.join(pluginRoot, ".codex-plugin/plugin.json"), "utf8"));
     assert.equal(manifest.name, "codex-harnessdock");
@@ -106,12 +108,13 @@ describe("native plugin contract", () => {
         CODEX_HARNESSDOCK_RUNTIME_ENV_FILE: path.join(root, "config", "runtime.env"),
       },
     });
-    assert.deepEqual(Object.keys(runtime).sort(), canonicalOperations);
+    assert.deepEqual(Object.keys(runtime).sort(), canonicalTypedOperations);
     assert.equal(Object.isFrozen(runtime), true);
   });
 
   it("routes every active skill through exactly one typed MCP tool without shell fallback", () => {
     for (const [name, operation] of [
+      ["dispatch-agents", "dispatch_agents"],
       ["spawn-agent", "spawn_agent"],
       ["send-message", "send_message"],
       ["followup-task", "followup_task"],
@@ -138,6 +141,17 @@ describe("native plugin contract", () => {
       assert.match(metadata, new RegExp(`mcp__codex_harnessdock__${operation}`));
       assert.match(metadata, /never fall back to (?:a )?shell(?: command)?/i);
     }
+  });
+
+  it("keeps dispatch guidance stateless, ordered, explicit-row only, and separate from singular spawn", () => {
+    const text = fs.readFileSync(
+      path.join(root, "plugins", "codex-harnessdock", "skills", "dispatch-agents", "SKILL.md"),
+      "utf8",
+    );
+    assert.match(text, /stateless[\s\S]*ordered[\s\S]*explicit-row launch/i);
+    assert.match(text, /one Agent[\s\S]*singular[\s\S]*spawn[_-]?agent/i);
+    assert.match(text, /each row[\s\S]*task_name[\s\S]*message[\s\S]*harness[\s\S]*full `model`[\s\S]*reasoning_effort[\s\S]*topology[\s\S]*`write`/i);
+    assert.match(text, /No[\s\S]*retry[\s\S]*fallback[\s\S]*default[\s\S]*Team[\s\S]*DAG[\s\S]*scheduler[\s\S]*replay/i);
   });
 
   it("keeps interrupt-agent guidance truthful about graceful, never forced, termination", () => {
@@ -222,7 +236,7 @@ describe("native plugin contract", () => {
     }
   });
 
-  it("keeps every lifecycle skill eligible for model-visible discovery", () => {
+  it("keeps every lifecycle Skill eligible for model-visible discovery", () => {
     for (const name of canonicalSkills) {
       const metadata = fs.readFileSync(
         path.join(root, "plugins", "codex-harnessdock", "skills", name, "agents", "openai.yaml"),
@@ -378,7 +392,7 @@ describe("native plugin contract", () => {
     }
   });
 
-  it("keeps the eight self-contained Skill instructions within the context budget", () => {
+  it("keeps the nine self-contained Skill instructions within the context budget", () => {
     let words = 0;
     let bytes = 0;
     for (const name of canonicalSkills) {
@@ -391,11 +405,10 @@ describe("native plugin contract", () => {
       assert.match(text, /Experimental/i);
       assert.match(text, /If\s+(?:the tool is\s+)?unavailable,\s+report\s+Plugin/i);
     }
-    // `canonical-agent-orchestration`: the eight installed Skills' aggregate
-    // whitespace-delimited word count SHALL NOT exceed 2,200.
-    assert.ok(words <= 2_200, `Agent Skill guidance uses ${words} words`);
-    assert.ok(bytes <= 11_500, `Agent Skill guidance uses ${bytes} bytes`);
-    assert.ok(16_648 > 11_500, "the pre-change 16,648-byte characterization must fail this budget");
+    // The nine installed Skills retain a compact aggregate context budget.
+    assert.ok(words <= 2_400, `Agent Skill guidance uses ${words} words`);
+    assert.ok(bytes <= 12_000, `Agent Skill guidance uses ${bytes} bytes`);
+    assert.ok(16_648 > 12_000, "the pre-change 16,648-byte characterization must fail this budget");
   });
 
   it("keeps the installed default routing prompt within 800 characters", () => {
@@ -403,7 +416,7 @@ describe("native plugin contract", () => {
     assert.ok(manifest.interface.defaultPrompt.join("\n").length <= 800);
   });
 
-  it("marks all eight skill prompts and discovery descriptions Experimental", () => {
+  it("marks all nine Skill instructions and discovery descriptions Experimental", () => {
     for (const name of canonicalSkills) {
       const skillRoot = path.join(root, "plugins", "codex-harnessdock", "skills", name);
       assert.match(fs.readFileSync(path.join(skillRoot, "SKILL.md"), "utf8"), /Experimental/i);
@@ -444,16 +457,17 @@ describe("native plugin contract", () => {
 
   it("states dynamic native discovery without promising native config/plugin/MCP/tool enumeration or filesystem containment", () => {
     const pluginRoot = path.join(root, "plugins", "codex-harnessdock");
-    const skillTexts = canonicalSkills.flatMap((name) => [
-      fs.readFileSync(path.join(pluginRoot, "skills", name, "SKILL.md"), "utf8"),
-      fs.readFileSync(path.join(pluginRoot, "skills", name, "agents", "openai.yaml"), "utf8"),
-    ]);
+    const skillTexts = [
+      ...canonicalSkills.map((name) => fs.readFileSync(path.join(pluginRoot, "skills", name, "SKILL.md"), "utf8")),
+      ...canonicalSkills.map((name) => fs.readFileSync(path.join(pluginRoot, "skills", name, "agents", "openai.yaml"), "utf8")),
+    ];
     const manifest = JSON.parse(fs.readFileSync(path.join(pluginRoot, ".codex-plugin/plugin.json"), "utf8"));
     const serverText = fs.readFileSync(path.join(root, "runtime", "mcp-server.mjs"), "utf8");
-    // Discovery is stated as fresh/native on both public surfaces.
+    // Compact discovery guidance keeps explicit-route and stateless-dispatch
+    // decisions in the shared model-visible instruction while Skills carry detail.
     assert.match(fs.readFileSync(path.join(pluginRoot, "skills", "list-harnesses", "SKILL.md"), "utf8"), /fresh native discovery/i);
-    assert.match(serverText, /fresh exact model\/effort routes/i);
-    assert.match(serverText, /freshly validated against native discovery/i);
+    assert.match(serverText, /Fresh routes; no defaults/i);
+    assert.match(serverText, /Dispatch: stateless ordered rows; preflight, cancellation, outcomes/i);
     // Spawn requires an explicit effort; follow-up inherits the frozen route.
     assert.match(fs.readFileSync(path.join(pluginRoot, "skills", "spawn-agent", "SKILL.md"), "utf8"), /`reasoning_effort` \(required for every route/i);
     assert.match(fs.readFileSync(path.join(pluginRoot, "skills", "followup-task", "SKILL.md"), "utf8"), /route is frozen at creation[\s\S]*inherited unchanged, including effort/i);

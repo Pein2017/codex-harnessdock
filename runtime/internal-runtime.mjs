@@ -178,6 +178,25 @@ function withPreparedStartDisposition(error, disposition) {
   return wrapped;
 }
 
+function versionThreeHandoffDisposition(identity) {
+  let claim = null;
+  try {
+    claim = readLaunchClaim(identity);
+  } catch {
+    return "ownership_uncertain";
+  }
+  if (!claim) return "rollback_safe";
+  if (["rollback_in_progress", "rollback_complete"].includes(claim.submissionState)) return "rollback_safe";
+  if (claim.acceptance === "acceptance_proven") return "lifecycle_owned";
+  if (claim.acceptance === "acceptance_rejected" && claim.submissionState !== "started") {
+    return "rollback_safe";
+  }
+  if (claim.acceptance === "not_submitted" && claim.submissionState === "not_started") {
+    return "rollback_safe";
+  }
+  return "ownership_uncertain";
+}
+
 function nonEmptyString(value) {
   const text = String(value ?? "").trim();
   return text || null;
@@ -1367,16 +1386,23 @@ class InternalAgentRuntime {
    * reconciliation's business, not this call's.
    */
   async launchVersionThreeWorker(options) {
-    const ownerRootId = this.assertOwnerRoot();
-    const agentId = assertWorkerIdentityText(options.agentId, "Version-three worker agent ID");
-    const jobId = assertJobId(options.jobId);
-    const attemptId = assertWorkerIdentityText(options.attemptId, "Version-three worker attempt ID");
-    const identity = { ownerRootId, agentId, jobId };
-    const store = createAgentStore({
+    const handoffIdentity = {
+      ownerRootId: String(this.ownerRootId ?? "").trim(),
+      agentId: String(options?.agentId ?? "").trim(),
+      jobId: String(options?.jobId ?? "").trim(),
+      attemptId: String(options?.attemptId ?? "").trim(),
+    };
+    try {
+      const ownerRootId = this.assertOwnerRoot();
+      const agentId = assertWorkerIdentityText(options.agentId, "Version-three worker agent ID");
+      const jobId = assertJobId(options.jobId);
+      const attemptId = assertWorkerIdentityText(options.attemptId, "Version-three worker attempt ID");
+      const identity = { ownerRootId, agentId, jobId };
+      const store = createAgentStore({
       cwd: this.cwd,
       ownerRootId,
       writeGeneration: FUTURE_WRITE_GENERATION,
-    });
+      });
     const agent = store.resolveTarget(agentId);
     if (agent.activeJobId !== jobId) {
       throw new Error(`Version-three Agent ${agent.path} is not active for job ${jobId}.`);
@@ -1611,8 +1637,36 @@ class InternalAgentRuntime {
         workspaceRoot: this.cwd,
         logFile,
       });
-    } finally {
-      try { workerLog.close?.(); } catch {}
+      } finally {
+        try { workerLog.close?.(); } catch {}
+      }
+    } catch (error) {
+      const explicit = String(error?.handoffDisposition ?? "");
+      let disposition = HANDOFF_DISPOSITIONS.has(explicit)
+        ? explicit
+        : versionThreeHandoffDisposition(handoffIdentity);
+      if (disposition === "rollback_safe" && handoffIdentity.attemptId) {
+        let claim = null;
+        try {
+          claim = readLaunchClaim(handoffIdentity);
+        } catch {
+          disposition = "ownership_uncertain";
+        }
+        if (claim && claim.submissionState !== "rollback_complete") {
+          try {
+            rollbackPreparedVersionThreeTurn({
+              cwd: this.cwd,
+              ownerRootId: handoffIdentity.ownerRootId,
+              agentId: handoffIdentity.agentId,
+              jobId: handoffIdentity.jobId,
+              attemptId: handoffIdentity.attemptId,
+            });
+          } catch {
+            disposition = "ownership_uncertain";
+          }
+        }
+      }
+      throw withPreparedStartDisposition(error, disposition);
     }
   }
 

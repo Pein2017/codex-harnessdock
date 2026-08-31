@@ -33,6 +33,7 @@ export const HARNESSDOCK_MCP_TOOL_NAMES = Object.freeze([
   "interrupt_agent",
   "list_agents",
   "read_agent_messages",
+  "dispatch_agents",
 ]);
 
 const SOURCE_ROOT = fs.realpathSync.native(
@@ -52,14 +53,12 @@ const boundedRouteText = z.string().min(1).max(256).refine(
   isBoundedRouteText,
   "must be bounded exact route text",
 );
-const boundedRouteAtom = boundedRouteText.refine(isBoundedRouteAtom, "must be one bounded route atom");
+const boundedRouteAtom = z.string().refine(isBoundedRouteAtom, "must be one bounded route atom");
 const MODEL_FACING_WAIT_TIMEOUT_MS = 3_600_000;
 export const HARNESSDOCK_MCP_EXPOSED_DESCRIPTION_CHAR_LIMIT = 4_500;
 export const HARNESSDOCK_MCP_HOST_PROJECTION_CHAR_RESERVE = 2_932;
 
-const exactTarget = z.string().trim().min(1).describe(
-  "Exact root Agent"
-);
+const exactTarget = z.string().trim().min(1);
 const message = z.string().trim().min(1);
 const targetWorktree = z.string().refine(
   (value) => path.isAbsolute(value) && !value.includes("\0"),
@@ -68,59 +67,66 @@ const targetWorktree = z.string().refine(
 const executionFields = {
   reasoning_effort: boundedRouteAtom,
 };
+// The dispatch decoder retains singular route validation while keeping the
+// ninth serialized catalog compact: the refinements carry the exact bounds.
+const dispatchTaskName = z.string().refine(
+  (value) => /^[a-z0-9_]+$/u.test(value),
+  "must be a lowercase task name",
+);
+const dispatchMessage = z.string().trim().refine(
+  (value) => value.length > 0,
+  "must not be empty",
+);
+const dispatchRouteText = z.string().refine(
+  isBoundedRouteText,
+  "must be bounded exact route text",
+);
+const dispatchRouteAtom = dispatchRouteText.refine(
+  isBoundedRouteAtom,
+  "must be one bounded route atom",
+);
+const dispatchRow = z.object({
+  task_name: dispatchTaskName,
+  message: dispatchMessage,
+  description: dispatchMessage.optional(),
+  harness: z.enum(/** @type {[string, ...string[]]} */ (HARNESS_IDS)),
+  model: dispatchRouteText,
+  topology: z.enum(/** @type {[string, ...string[]]} */ (TOPOLOGIES)),
+  write: z.boolean(),
+  target_worktree: targetWorktree.optional(),
+  reasoning_effort: dispatchRouteAtom,
+}).strict();
 const TOOL_DEFINITIONS = Object.freeze({
   list_harnesses: {
-    description:
-      "Fresh exact model/effort routes.",
     inputSchema: z.object({}).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   spawn_agent: {
-    description:
-      "Freshly validated against native discovery; async.",
     inputSchema: z.object({
       task_name: z.string().regex(/^[a-z0-9_]+$/),
       message,
       description: z.string().trim().min(1).optional(),
-      harness: z.enum(/** @type {[string, ...string[]]} */ (HARNESS_IDS)).describe(
-        "Required; no default."
-      ),
-      model: boundedRouteText.describe("Full model."),
-      topology: z.enum(/** @type {[string, ...string[]]} */ (TOPOLOGIES)).describe(
-        "Required native-proven."
-      ),
-      write: z.boolean().describe(
-        "false read; true writes; same access."
-      ),
-      target_worktree: targetWorktree.describe(
-        "Absolute spawn-only worktree."
-      ).optional(),
+      harness: z.enum(/** @type {[string, ...string[]]} */ (HARNESS_IDS)),
+      model: boundedRouteText,
+      topology: z.enum(/** @type {[string, ...string[]]} */ (TOPOLOGIES)),
+      write: z.boolean(),
+      target_worktree: targetWorktree.optional(),
       ...executionFields,
     }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
   send_message: {
-    description:
-      "Queue/deliver; no activation.",
     inputSchema: z.object({ target: exactTarget, message }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   followup_task: {
-    description:
-      "Deliver; activate idle continuation.",
     inputSchema: z.object({ target: exactTarget, message }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
   wait_agent: {
-    description:
-      "Join/barrier; progress; fixed hour; completion token.",
     inputSchema: z.object({
-      targets: z.array(exactTarget).min(1).max(8).optional().describe(
-        "1 progress; 2-8 barrier."
-      ),
-      wake_on_progress: z.boolean().optional().describe(
-        "One safe progress."
-      ),
+      targets: z.array(exactTarget).min(1).max(8).optional(),
+      wake_on_progress: z.boolean().optional(),
       acknowledge_tokens: z.array(z.string().trim().min(1)).optional(),
     }).strict().superRefine((value, context) => {
       if (value.targets && value.wake_on_progress === true && value.targets.length !== 1) {
@@ -141,26 +147,35 @@ const TOOL_DEFINITIONS = Object.freeze({
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
   },
   interrupt_agent: {
-    description:
-      "Stop turn; keep Agent.",
     inputSchema: z.object({ target: exactTarget }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
   },
   list_agents: {
-    description:
-      "Root Agent cards.",
     inputSchema: z.object({ path_prefix: z.string().trim().min(1).optional() }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   read_agent_messages: {
-    description:
-      "Assistant history; no activation.",
     inputSchema: z.object({
       target: exactTarget,
       before: z.string().trim().min(1).optional(),
       limit: z.number().int().min(1).max(20).optional(),
     }).strict(),
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  dispatch_agents: {
+    inputSchema: z.object({
+      rows: z.array(dispatchRow).min(1).max(8),
+    }).strict().superRefine((value, context) => {
+      const taskNames = value.rows.map((row) => row.task_name);
+      if (new Set(taskNames).size !== taskNames.length) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["rows"],
+          message: "rows must contain unique task_name values",
+        });
+      }
+    }),
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
 });
 
@@ -183,6 +198,11 @@ function contextError(detail) {
 }
 
 const PRIVATE_ID_PATTERNS = [
+  /\b(?:internal\s+)?Agent\s+(?:ID|id)\s*[:=]?\s*[A-Za-z0-9][A-Za-z0-9._:-]*/gi,
+  /\b(?:agent|instance|job|session|attempt)(?:Id|ID|Key)\s*[:=]\s*[A-Za-z0-9][A-Za-z0-9._:-]*/gi,
+  /\bagent-[A-Za-z0-9][A-Za-z0-9._:-]*/gi,
+  /\b(?:instance|attempt|message)-[A-Za-z0-9][A-Za-z0-9._:-]*/gi,
+  /\b(?:internal\s+)?instance(?:\s+(?:ID|id))?\s*[:=]?\s+(?=[A-Za-z0-9._:-]*[0-9_-])[A-Za-z0-9][A-Za-z0-9._:-]*/gi,
   /\b(?:native\s+)?Claude\s+session(?:\s+ID)?\s*[:=]?\s*(?=[A-Za-z0-9._:-]*[0-9_-])[A-Za-z0-9][A-Za-z0-9._:-]*/gi,
   /\b(?:native\s+)?session\s+(?:ID|id)\s*[:=]?\s*[A-Za-z0-9][A-Za-z0-9._:-]*/gi,
   /\b(?:native\s+)?session(?:\s+(?:ID|id))?\s*[:=]?\s+(?=[A-Za-z0-9._:-]*[0-9_-])[A-Za-z0-9][A-Za-z0-9._:-]*/gi,
@@ -190,6 +210,35 @@ const PRIVATE_ID_PATTERNS = [
   /\b(?:session|job)(?:Id|ID)\s*[:=]\s*[A-Za-z0-9][A-Za-z0-9._:-]*/g,
   /\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/gi,
 ];
+
+const PUBLIC_SPAWN_RECOVERY_CODES = Object.freeze({
+  lifecycle_owned: "spawn_lifecycle_owned",
+  ownership_uncertain: "spawn_ownership_uncertain",
+});
+const PUBLIC_SPAWN_RECOVERY_MESSAGES = Object.freeze({
+  lifecycle_owned: "Agent launch ownership was transferred; join the named Agent to reconcile its turn.",
+  ownership_uncertain: "Agent launch ownership is uncertain; use the named Agent to reconcile its turn.",
+});
+const PUBLIC_ERROR_CODES = new Set(["HARNESSDOCK_MCP_RESTART_REQUIRED"]);
+const PUBLIC_RECOVERY_CODE_PATTERN = /^[a-z][a-z0-9_]{0,63}$/u;
+
+function normalizePublicSpawnRecovery(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const agentName = String(value.agent_name ?? "").trim();
+  const outcome = String(value.outcome ?? "").trim();
+  const code = String(value.code ?? "").trim();
+  if (!/^\/root\/[a-z0-9_]+$/u.test(agentName)) return null;
+  if (!Object.hasOwn(PUBLIC_SPAWN_RECOVERY_CODES, outcome)) return null;
+  if (!PUBLIC_RECOVERY_CODE_PATTERN.test(code) || code !== PUBLIC_SPAWN_RECOVERY_CODES[outcome]) return null;
+  return Object.freeze({
+    agent_name: agentName,
+    outcome,
+    code,
+    // Recovery text is closed by outcome; arbitrary provider/runtime text is
+    // never carried through the model-facing boundary.
+    message: PUBLIC_SPAWN_RECOVERY_MESSAGES[outcome],
+  });
+}
 
 function redactAbsolutePaths(message) {
   // Preserve only one flat public Agent path. `/root/.../...` is a private
@@ -201,7 +250,7 @@ function redactAbsolutePaths(message) {
       const pathStart = offset + prefix.length;
       const context = source.slice(Math.max(0, pathStart - 32), pathStart);
       const publicAgentPath = /^\/root\/[a-z0-9_]+$/u.test(candidate)
-        && /\bAgent(?: path)?\s*$/i.test(context);
+        && /\bAgent(?:\s+(?:name|path))?\s*$|\bbelongs\s+to\s*$/i.test(context);
       return publicAgentPath
         ? match
         : `${prefix}<runtime path>`;
@@ -270,18 +319,30 @@ export function runtimeReceiptResult(receipt) {
 }
 
 export function sanitizedError(error) {
+  const recovery = normalizePublicSpawnRecovery(/** @type {any} */ (error)?.publicRecovery);
+  if (recovery) {
+    const sanitized = new Error(recovery.message);
+    /** @type {any} */ (sanitized).publicRecovery = recovery;
+    return sanitized;
+  }
   const messageText = error instanceof Error ? error.message : String(error);
   const sanitized = new Error(redactMcpErrorMessage(messageText));
-  if (typeof /** @type {any} */ (error)?.code === "string") {
+  if (typeof /** @type {any} */ (error)?.code === "string" && PUBLIC_ERROR_CODES.has(/** @type {any} */ (error).code)) {
     /** @type {any} */ (sanitized).code = /** @type {any} */ (error).code;
   }
   return sanitized;
 }
 
 function workerError(payload) {
-  const error = new Error(payload?.message || "HarnessDock MCP isolated runtime call failed.");
-  error.name = payload?.name || "Error";
-  if (typeof payload?.code === "string") /** @type {any} */ (error).code = payload.code;
+  const recovery = normalizePublicSpawnRecovery(payload?.recovery);
+  const error = new Error(
+    recovery?.message || payload?.message || "HarnessDock MCP isolated runtime call failed."
+  );
+  error.name = payload?.name === "AbortError" ? "AbortError" : "Error";
+  if (recovery) /** @type {any} */ (error).publicRecovery = recovery;
+  if (typeof payload?.code === "string" && PUBLIC_ERROR_CODES.has(payload.code)) {
+    /** @type {any} */ (error).code = payload.code;
+  }
   return error;
 }
 
@@ -393,7 +454,7 @@ export function createCcMcpServer(options = {}) {
     { name: "codex-harnessdock", version: PACKAGE_VERSION },
     {
       capabilities: { experimental: { [CODEX_SANDBOX_META_KEY]: {} } },
-      instructions: "Experimental tools; trusted Codex metadata.",
+      instructions: "Experimental; trusted Codex metadata. Fresh routes; no defaults. Dispatch: stateless ordered rows; preflight, cancellation, outcomes. list_harnesses: no service/model turn.",
     }
   );
 
@@ -410,7 +471,15 @@ export function createCcMcpServer(options = {}) {
           : await runtimeInvoker({ operation: name, input: runtimeInput, context, signal: extra.signal });
         return runtimeReceiptResult(receipt);
       } catch (error) {
-        throw sanitizedError(error);
+        const sanitized = sanitizedError(error);
+        const recovery = normalizePublicSpawnRecovery(/** @type {any} */ (sanitized).publicRecovery);
+        if (recovery) {
+          return {
+            ...runtimeReceiptResult(recovery),
+            isError: true,
+          };
+        }
+        throw sanitized;
       } finally {
         try { await onOperationComplete?.(); } catch { /* housekeeping is never an MCP operation failure */ }
       }

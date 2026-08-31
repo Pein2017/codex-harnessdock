@@ -171,14 +171,14 @@ Pick exactly one, by what changed:
 | Same generation, discovery content changed | `npm run refresh:local` | Refreshes the snapshot without a version bump. |
 | Release or MCP API generation change | `npm run release:local` | Bumps the cachebuster first, then refreshes; required whenever the generation changes. |
 
-This activation **is** a generation change: the public surface moves to eight
-tools at MCP API generation 6. Use `npm run release:local`.
+This activation **is** a generation change: the public surface moves to nine
+tools at MCP API generation 10. Use `npm run release:local`.
 
 Then restart Codex and start a **new Codex task**. An older MCP process fails
 closed with `HARNESSDOCK_MCP_RESTART_REQUIRED` before any operation, by design;
 a new task is the only way to pick up the new generation.
 
-**Verification.** `npm run doctor` passes, including the eight-tool contract.
+**Verification.** `npm run doctor` passes, including the nine-tool contract.
 
 **Abort/rollback.** Re-run the install command for the previous version; the
 bounded compatibility shells retain the two previous versions.
@@ -192,7 +192,7 @@ npm run smoke:release -- --json
 ```
 
 This is the zero-model smoke executing `probeInstalledMcp` against the loaded
-snapshot. It verifies exactly eight Skills and eight MCP tools, isolated
+snapshot. It verifies exactly nine Skills and nine MCP tools, isolated
 `list_agents` and `list_harnesses` calls through the production isolated path,
 that the typed schema **rejects** an argument it does not declare, and the
 retained compatibility shells and predecessor coverage. Harness readiness is
@@ -200,7 +200,7 @@ reported, never required: an operator whose OpenCode Server is stopped still
 passes this step.
 
 **Verification.** `status: "pass"`, `zeroModelCost: true`,
-`paid: {requested: false, status: "skipped"}`, eight skills, eight tools,
+`paid: {requested: false, status: "skipped"}`, nine skills, nine tools,
 `schemaRejected: true`.
 
 **Abort/rollback.** A stale-snapshot failure is repaired by returning to step 5.
