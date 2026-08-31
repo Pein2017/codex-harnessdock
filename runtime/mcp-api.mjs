@@ -7,9 +7,10 @@
  *
  * Generation 9 added cancellation-safe singular spawn and its bounded public
  * non-rollback-safe failure projection. Generation 10 adds strict stateless
- * `dispatch_agents` rows. Older MCP
+ * `dispatch_agents` rows. Generation 11 adds the optional descriptor-bound
+ * terminal publisher to initial spawn and dispatch rows. Older MCP
  * discovery cannot know that an ordered explicit-row request is distinct from
  * singular spawn, so it must restart rather than call a runtime that could
  * accept or misroute batch input.
  */
-export const HARNESSDOCK_MCP_API_GENERATION = 10;
+export const HARNESSDOCK_MCP_API_GENERATION = 11;

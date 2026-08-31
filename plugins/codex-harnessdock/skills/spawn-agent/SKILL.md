@@ -8,14 +8,12 @@ description: 'Experimental: start an async durable Agent on one explicit route (
 Call `mcp__codex_harnessdock__spawn_agent` with `task_name`, self-contained
 `message`, and `harness`, `model`, `topology`, `write`, and `reasoning_effort` (required for every route);
 optional `description`. Trusted Codex metadata owns cwd/root.
-`target_worktree`: exact absolute registered sibling; confirm both checkouts. Omission
-uses control; target is spawn-only/frozen. Never pass cwd/directory, env,
-session, or fork selectors. Never pass environment, session, or fork selectors.
-No create/repair/retarget/approval brokerage.
+`target_worktree`: sibling; omission is control/frozen.
+Never pass cwd. Never pass environment, session, or fork selectors.
+`terminal_event_descriptor_path`: reserve/preflight/launch/arm/L0-end; not success.
 No default route. If unavailable, report Plugin startup or discovery failure; never use shell fallback.
 
-Release drift: use the exact retained Skill path; latest-version instructions
-are emergency-only; `HARNESSDOCK_MCP_RESTART_REQUIRED` means new Codex task. Never repair Plugin Cache.
+Release drift: exact retained Skill path; latest-version instructions are emergency-only; `HARNESSDOCK_MCP_RESTART_REQUIRED` means new Codex task. Never repair Plugin Cache.
 
 ## Routes
 

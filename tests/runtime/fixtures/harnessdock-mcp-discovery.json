@@ -1,5 +1,5 @@
 {
-  "generation": 10,
+  "generation": 11,
   "tools": [
     {
       "name": "list_harnesses",
@@ -60,6 +60,9 @@
             "type": "string"
           },
           "reasoning_effort": {
+            "type": "string"
+          },
+          "terminal_event_descriptor_path": {
             "type": "string"
           }
         },
@@ -294,6 +297,9 @@
                   "type": "string"
                 },
                 "reasoning_effort": {
+                  "type": "string"
+                },
+                "terminal_event_descriptor_path": {
                   "type": "string"
                 }
               },

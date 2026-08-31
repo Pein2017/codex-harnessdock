@@ -32,6 +32,8 @@ const SUPPORTED_KEYS = new Set([
   "OPENCODE_EXECUTABLE",
   "OPENCODE_SERVER_URL",
   "HARNESSDOCK_OPENCODE_IDLE_TTL_SECONDS",
+  "CODEX_HARNESSDOCK_WAKE_PUBLISHER_BIN",
+  "CODEX_HARNESSDOCK_WAKE_RUNTIME_ROOT",
 ]);
 
 // Official OpenCode Basic-auth credentials. These are intentionally excluded

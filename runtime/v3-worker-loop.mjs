@@ -44,6 +44,7 @@ import {
   resolveAgentRegistryDirectory,
 } from "./agent-store.mjs";
 import { reconcileTerminalJobCompletion } from "./completion-inbox.mjs";
+import { publishBoundTerminalEvent } from "./terminal-event-publisher.mjs";
 import {
   FUTURE_WRITE_GENERATION,
   JOB_STATE_VERSION_V3,
@@ -1266,6 +1267,7 @@ async function settleTerminal(session, rawResult) {
     );
     published = completion.reconciled || completion.event != null;
     publishReason = completion.reason;
+    if (published) publishBoundTerminalEvent({ store: session.agentStore, agentId: snapshot.agentId, terminalJob, env: process.env });
   } catch (error) {
     publishFailure = detailOf(error);
   }

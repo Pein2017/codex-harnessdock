@@ -60,6 +60,7 @@ import { reconcilePreparedVersionThreeTurns } from "./v3-worker-entry.mjs";
 import { admitTargetWorktree } from "./target-worktree-admission.mjs";
 import { validateProcessIdentity } from "./process-control.mjs";
 import { reconcileVersionThreeWorkerLoss } from "./v3-turn-reconciliation.mjs";
+import { preflightTerminalEventDescriptor } from "./terminal-event-publisher.mjs";
 
 const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "interrupted", "cancelled", "unknown"]);
 const TERMINAL_AGENT_STATUSES = new Set(["completed", "interrupted", "errored"]);
@@ -88,6 +89,7 @@ const DISPATCH_ROW_FIELDS = new Set([
   "topology",
   "write",
   "target_worktree",
+  "terminal_event_descriptor_path",
 ]);
 const DISPATCH_REQUIRED_ROW_FIELDS = Object.freeze([
   "task_name",
@@ -226,6 +228,11 @@ function validatedDispatchRows(inputValue) {
         throw new Error(`dispatch_agents rows[${index}] target_worktree must be absolute.`);
       }
     }
+    let terminalEventDescriptorPath;
+    if (Object.hasOwn(row, "terminal_event_descriptor_path")) {
+      terminalEventDescriptorPath = assertText(row.terminal_event_descriptor_path, `dispatch_agents rows[${index}] terminal_event_descriptor_path`);
+      if (!path.isAbsolute(terminalEventDescriptorPath)) throw new Error(`dispatch_agents rows[${index}] terminal_event_descriptor_path must be absolute.`);
+    }
     return Object.freeze({
       task_name: taskName,
       message,
@@ -236,6 +243,7 @@ function validatedDispatchRows(inputValue) {
       topology,
       write: row.write,
       ...(targetWorktree == null ? {} : { target_worktree: targetWorktree }),
+      ...(terminalEventDescriptorPath == null ? {} : { terminal_event_descriptor_path: terminalEventDescriptorPath }),
     });
   });
 }
@@ -1532,6 +1540,17 @@ class AgentRuntime {
         }
       }
       if (this.abortSignal?.aborted) return cancelled();
+      let terminalEventBinding = null;
+      try {
+        if (row.terminal_event_descriptor_path != null) {
+          terminalEventBinding = preflightTerminalEventDescriptor({
+            descriptorPath: row.terminal_event_descriptor_path,
+            agentName: dispatchAgentName(row.task_name), env: this.jobs.env,
+          });
+        }
+      } catch {
+        return Object.freeze({ rows: notAttemptedRows(rows, new Map([[index, "route_rejected"]])) });
+      }
       try {
         const accepted = await this.acceptStatedRoute(
           row,
@@ -1539,7 +1558,7 @@ class AgentRuntime {
           executionRoot,
           observed,
         );
-        prepared.push(Object.freeze({ accepted, executionRoot }));
+        prepared.push(Object.freeze({ accepted, executionRoot, terminalEventBinding }));
       } catch {
         return Object.freeze({
           rows: notAttemptedRows(rows, new Map([[index, "route_rejected"]])),
@@ -1628,6 +1647,14 @@ class AgentRuntime {
       "env_file",
     ]) {
       if (input[key] != null) throw new Error(`spawn_agent does not support ${key}.`);
+    }
+    let terminalEventBinding = null;
+    if (input.terminal_event_descriptor_path != null) {
+      const descriptorPath = assertText(input.terminal_event_descriptor_path, "spawn_agent terminal_event_descriptor_path");
+      if (!path.isAbsolute(descriptorPath)) throw new Error("spawn_agent terminal_event_descriptor_path must be absolute.");
+      terminalEventBinding = preflight?.terminalEventBinding ?? preflightTerminalEventDescriptor({
+        descriptorPath, agentName: dispatchAgentName(assertText(input.task_name, "spawn_agent task_name")), env: this.jobs.env,
+      });
     }
     const taskName = assertText(input.task_name, "spawn_agent task_name");
     if (!TASK_NAME_PATTERN.test(taskName)) {
@@ -1725,6 +1752,7 @@ class AgentRuntime {
       route: accepted.route,
       executionRoot,
       initialMessage: message,
+      ...(terminalEventBinding == null ? {} : { terminalEventBinding: { ...terminalEventBinding, jobId } }),
     });
     const initialMessage = store.listMessages(agent.agentId)[0];
     let prepared;

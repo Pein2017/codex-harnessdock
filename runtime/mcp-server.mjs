@@ -64,6 +64,10 @@ const targetWorktree = z.string().refine(
   (value) => path.isAbsolute(value) && !value.includes("\0"),
   "must be an absolute target worktree path",
 );
+const terminalEventDescriptorPath = z.string().refine(
+  (value) => path.isAbsolute(value) && !value.includes("\0"),
+  "must be an absolute terminal event descriptor path",
+);
 const executionFields = {
   reasoning_effort: boundedRouteAtom,
 };
@@ -95,6 +99,7 @@ const dispatchRow = z.object({
   write: z.boolean(),
   target_worktree: targetWorktree.optional(),
   reasoning_effort: dispatchRouteAtom,
+  terminal_event_descriptor_path: terminalEventDescriptorPath.optional(),
 }).strict();
 const TOOL_DEFINITIONS = Object.freeze({
   list_harnesses: {
@@ -112,6 +117,7 @@ const TOOL_DEFINITIONS = Object.freeze({
       write: z.boolean(),
       target_worktree: targetWorktree.optional(),
       ...executionFields,
+      terminal_event_descriptor_path: terminalEventDescriptorPath.optional(),
     }).strict(),
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },

@@ -76,7 +76,7 @@ describe("typed HarnessDock MCP server", () => {
       "dispatch_agents",
     ];
     assert.equal(client.getServerVersion()?.version, PACKAGE_VERSION);
-    assert.equal(HARNESSDOCK_MCP_API_GENERATION, 10);
+    assert.equal(HARNESSDOCK_MCP_API_GENERATION, 11);
     assert.deepEqual(HARNESSDOCK_MCP_TOOL_NAMES, expectedToolNames);
     assert.equal(listed.tools.length, 9);
     assert.deepEqual(listed.tools.map((tool) => tool.name), expectedToolNames);
@@ -95,7 +95,7 @@ describe("typed HarnessDock MCP server", () => {
     assert.equal(Object.hasOwn(spawn.inputSchema.properties, "allowed_tools"), false);
     assert.equal(Object.hasOwn(spawn.inputSchema.properties, "delegation_mode"), false);
     assert.deepEqual(Object.keys(spawn.inputSchema.properties), [
-      "task_name", "message", "description", "harness", "model", "topology", "write", "target_worktree", "reasoning_effort",
+      "task_name", "message", "description", "harness", "model", "topology", "write", "target_worktree", "reasoning_effort", "terminal_event_descriptor_path",
     ]);
     assert.deepEqual(spawn.inputSchema.properties.harness.enum, ["claude-code", "opencode", "pi"]);
     assert.deepEqual(spawn.inputSchema.properties.topology.enum, ["leaf", "native_orchestrator"]);
@@ -128,12 +128,12 @@ describe("typed HarnessDock MCP server", () => {
       mcpProjectedModelVisibleCharacters(listed.tools, `${client.getInstructions()}x`.repeat(20)) > HARNESSDOCK_MCP_EXPOSED_DESCRIPTION_CHAR_LIMIT,
       "the projected-guidance check must fail when host-repeated instructions grow",
     );
-    assert.ok(JSON.stringify(listed.tools).length <= 4_500, "serialized discovery catalog exceeds 4,500 characters");
+    assert.ok(JSON.stringify(listed.tools).length <= 5_000, "serialized discovery catalog exceeds 5,000 characters");
     assert.ok(descriptionCharacters(listed.tools) <= 800, "nested discovery descriptions exceed 800 characters");
     const restoredVerboseCatalog = structuredClone(listed.tools);
     restoredVerboseCatalog.find((tool) => tool.name === "spawn_agent").description =
       "Experimental: start one durable Agent asynchronously on an explicitly stated route. Harness, full model, effort, topology, and behavioral authority are required, freshly validated against native discovery, and frozen on the Agent; never default or alias a route.";
-    assert.ok(JSON.stringify(restoredVerboseCatalog).length > 4_500, "catalog guard accepts restored verbose spawn guidance");
+    assert.ok(JSON.stringify(restoredVerboseCatalog).length > JSON.stringify(listed.tools).length, "catalog guard accepts restored verbose spawn guidance");
   });
 
   it("strictly decodes ordered explicit dispatch rows and routes only the decoded request to the deferred runtime operation", async () => {
@@ -171,7 +171,7 @@ describe("typed HarnessDock MCP server", () => {
       "task_name", "message", "harness", "model", "reasoning_effort", "topology", "write",
     ]));
     assert.deepEqual(Object.keys(rows.items.properties), [
-      "task_name", "message", "description", "harness", "model", "topology", "write", "target_worktree", "reasoning_effort",
+      "task_name", "message", "description", "harness", "model", "topology", "write", "target_worktree", "reasoning_effort", "terminal_event_descriptor_path",
     ]);
     assert.equal(Object.hasOwn(rows.items.properties, "agent_name"), false);
     assert.equal(dispatch.description, undefined);

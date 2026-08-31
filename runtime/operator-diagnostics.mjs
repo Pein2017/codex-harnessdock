@@ -22,6 +22,7 @@ import {
 import { resolveNativeTeamPolicy } from "./claude-native-team-policy.mjs";
 import { resolveRuntimeEnvironment } from "./environment.mjs";
 import { inspectConfiguredOpencodeService } from "./opencode-service-manager.mjs";
+import { terminalPublisherReadiness } from "./terminal-event-publisher.mjs";
 import {
   inspectCompatibilityShells,
   inspectInstalledPluginParity,
@@ -902,6 +903,17 @@ export async function runDoctor(options = {}) {
   } catch {
     checks.push(diagnoseOpencodeServiceReadiness({ status: "unavailable" }));
   }
+  const terminalPublisher = terminalPublisherReadiness(environment?.env ?? options.env ?? process.env);
+  checks.push(makeCheck(
+    "terminal-publisher",
+    terminalPublisher.configured && !terminalPublisher.ready ? "fail" : "pass",
+    terminalPublisher.ready
+      ? "Terminal publisher is configured and ready."
+      : terminalPublisher.configured
+        ? "Terminal publisher configuration is unusable."
+        : "Terminal publisher is not configured; descriptor-free Agents are unaffected.",
+    terminalPublisher,
+  ));
 
   const requiredFailed = checks.some((check) => check.status === "fail");
   const warned = checks.some((check) => check.status === "warn");

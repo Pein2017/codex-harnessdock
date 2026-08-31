@@ -42,6 +42,7 @@ import path from "node:path";
 
 import { createAgentStore } from "./agent-store.mjs";
 import { reconcileTerminalJobCompletion } from "./completion-inbox.mjs";
+import { publishBoundTerminalEvent } from "./terminal-event-publisher.mjs";
 import { recoverStaleDirectoryLock, sameFileIdentity } from "./durable-directory-lock.mjs";
 import {
   JOB_STATE_VERSION_V3,
@@ -979,6 +980,7 @@ export function reconcileVersionThreeTerminalJob({ generation, record }) {
     );
     completionPublished = completion.reconciled || completion.event != null;
     if (!completionPublished) reason = completion.reason ?? "completion_refused";
+    if (completionPublished) publishBoundTerminalEvent({ store, agentId: record.agentId, terminalJob: record.terminalJob });
   }
   if (agentProjected || completionPublished) {
     markVersionThreeTurnProjected({

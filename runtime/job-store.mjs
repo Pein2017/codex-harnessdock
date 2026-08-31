@@ -22,8 +22,10 @@ import {
   markCompletionDetailedResultUnavailable,
   reconcileTerminalJobCompletion,
 } from "./completion-inbox.mjs";
+import { publishBoundTerminalEvent } from "./terminal-event-publisher.mjs";
 import {
   AGENT_RECORD_VERSION_V3,
+  FUTURE_WRITE_GENERATION,
   assertUnderstoodJobRecord,
   isUnderstoodJobRecord,
 } from "./durable-state-v3.mjs";
@@ -883,7 +885,12 @@ export function reconcileCompletionEvents(cwd, jobs = readAllJobs(cwd)) {
     const ownerRootId = ownerRootIdOf(prepared);
     if (!ownerRootId) continue;
     try {
-      receipts.push(reconcileTerminalJobCompletion(cwd, ownerRootId, prepared));
+      const completion = reconcileTerminalJobCompletion(cwd, ownerRootId, prepared);
+      receipts.push(completion);
+      if (completion.reconciled || completion.event != null) {
+        const store = createAgentStore({ cwd, ownerRootId, writeGeneration: FUTURE_WRITE_GENERATION });
+        publishBoundTerminalEvent({ store, agentId: prepared.agentId, terminalJob: prepared });
+      }
     } catch (error) {
       receipts.push({
         reconciled: false,

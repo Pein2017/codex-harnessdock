@@ -472,6 +472,22 @@ function validateVersionThreeAgent(agent) {
     throw new Error(`${label} requires one immutable route; version alone is not a migration.`);
   }
   const route = validateStoredVersionThreeRoute(agent.route, `${label} route`);
+  if (agent.terminalEventBinding != null) {
+    const binding = agent.terminalEventBinding;
+    if (!binding || typeof binding !== "object" || Array.isArray(binding) ||
+        typeof binding.descriptorPath !== "string" || !path.isAbsolute(binding.descriptorPath) ||
+        typeof binding.reservationId !== "string" || !binding.reservationId ||
+        typeof binding.tokenFingerprint !== "string" || !binding.tokenFingerprint) {
+      throw new Error(`${label} terminal event binding is invalid.`);
+    }
+  }
+  if (agent.terminalEventPublication != null) {
+    const publication = agent.terminalEventPublication;
+    if (!publication || typeof publication !== "object" || Array.isArray(publication) ||
+        !["published", "failed"].includes(publication.state) || typeof publication.jobId !== "string") {
+      throw new Error(`${label} terminal event publication is invalid.`);
+    }
+  }
   const ownership = validateTurnOwnership(agent.liveTurnOwnership, `${label} live turn ownership`);
   if (ownership && agent.activeJobId != null && ownership.jobId !== agent.activeJobId) {
     throw new Error(`${label} live turn ownership names a job that is not its active job.`);
@@ -1098,6 +1114,7 @@ function recordFromVersionThreeInput(input, rootThreadId, workspaceRoot) {
     path: agentPath(name),
     description: input?.description == null ? null : assertText(input.description, "Agent description"),
     route,
+    ...(input?.terminalEventBinding == null ? {} : { terminalEventBinding: { ...input.terminalEventBinding } }),
     activeJobId: null,
     latestJobId: null,
     nativeSessionRef: null,
@@ -1333,6 +1350,28 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir, harness, w
     try { return publicAgent(internalAgent(registry, target)); } catch { return null; }
   }
 
+  function terminalEventBinding(target) {
+    const registry = getRegistry();
+    if (!registry) return null;
+    const agent = internalAgent(registry, target);
+    return agent.terminalEventBinding == null ? null : {
+      binding: clone(agent.terminalEventBinding),
+      publication: agent.terminalEventPublication == null ? null : clone(agent.terminalEventPublication),
+    };
+  }
+
+  function recordTerminalEventPublication(target, publication) {
+    const nextPublication = { state: publication?.state, jobId: publication?.jobId };
+    if (!["published", "failed"].includes(nextPublication.state) || typeof nextPublication.jobId !== "string") {
+      throw new Error("Terminal event publication must state its terminal result and job.");
+    }
+    return updateAgent(target, (agent) => {
+      if (agent.terminalEventBinding == null || agent.terminalEventBinding.jobId !== nextPublication.jobId) return agent;
+      if (agent.terminalEventPublication != null) return agent;
+      return { ...agent, terminalEventPublication: nextPublication };
+    });
+  }
+
   function resolveTarget(target) {
     const agent = readAgent(target);
     if (!agent) throw new Error("No Agent with that exact ID, path, or name exists in this root.");
@@ -1395,6 +1434,7 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir, harness, w
         "path",
         "delegationMode",
         "createdAt",
+        "terminalEventBinding",
         // A version-2 Agent's Harness and model route are fixed at creation.
         // Version-1 records still allow the legacy model backfill to complete.
         ...(current.version === AGENT_RECORD_VERSION
@@ -2421,6 +2461,8 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir, harness, w
     readAgent,
     listAgents,
     listAllAgents,
+    terminalEventBinding,
+    recordTerminalEventPublication,
     updateAgent,
     reserveActivation,
     rollbackVersionThreeActivation,
