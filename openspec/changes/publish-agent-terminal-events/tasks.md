@@ -67,3 +67,7 @@
   commit, or push; a later authorized production-shaped smoke must prove one
   mixed native/HarnessDock all-settled wake and one independently monitored
   first-settlement wake from a fresh Codex task.
+- [x] 5.5 After the authorized installed smoke exposed dropped descriptor
+  binding on the `version_three_worker` early-return path, add a RED Pi-path
+  regression, forward the preflighted binding into `spawnVersionThreeAgent`,
+  and replay full source, promotion, installed, and mixed-wake acceptance.

@@ -133,6 +133,37 @@ describe("Pi public generation admission", () => {
 });
 
 describe("Pi public generation v3 dispatch", () => {
+  it("persists the preflighted terminal binding on the version-three Agent", async () => {
+    const context = setup();
+    const request = spawnInput({ task_name: "pi_terminal_binding" });
+    const accepted = await context.runtime.acceptStatedRoute(request, "spawn_agent");
+    const terminalEventBinding = {
+      descriptorPath: "/private/pi-terminal.publisher.json",
+      reservationId: "pi-terminal-reservation",
+      tokenFingerprint: "0123456789ab",
+    };
+    const receipt = await context.runtime.spawnVersionThreeAgent({
+      accepted,
+      taskName: request.task_name,
+      description: null,
+      message: request.message,
+      jobId: "hd-agent-pi-terminal-binding",
+      turnOptions: { effort: accepted.route.effort },
+      executionRoot: context.runtime.cwd,
+      terminalEventBinding,
+    });
+
+    const store = context.runtime.versionThreeStore();
+    const agent = store.resolveTarget(receipt.agent_name);
+    assert.deepEqual(store.terminalEventBinding(agent.agentId), {
+      binding: {
+      ...terminalEventBinding,
+      jobId: "hd-agent-pi-terminal-binding",
+      },
+      publication: null,
+    });
+  });
+
   it("fails Agent admission closed when Pi reports multiple ready instances", async () => {
     const context = setup();
     const driver = resolveDriverV2(PI_HARNESS_ID, { env: {} });

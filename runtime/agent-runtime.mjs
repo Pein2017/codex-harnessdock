@@ -1204,7 +1204,7 @@ class AgentRuntime {
    * cannot be handed the turn, the activation and its unread first message are
    * rolled back so nothing half-exists.
    */
-  async spawnVersionThreeAgent({ accepted, taskName, description, message, jobId, turnOptions, executionRoot }) {
+  async spawnVersionThreeAgent({ accepted, taskName, description, message, jobId, turnOptions, executionRoot, terminalEventBinding = null }) {
     throwIfSpawnAborted(this.abortSignal);
     const inspectionEvidence = inspectionEvidenceForRoute(
       accepted.route, accepted.inspection, accepted.driver
@@ -1216,6 +1216,9 @@ class AgentRuntime {
       route: accepted.route,
       executionRoot,
       initialMessage: message,
+      ...(terminalEventBinding == null ? {} : {
+        terminalEventBinding: { ...terminalEventBinding, jobId },
+      }),
     });
     const initialMessage = store.listMessages(agent.agentId)[0];
     try {
@@ -1716,6 +1719,7 @@ class AgentRuntime {
         jobId,
         turnOptions: acceptedTurnOptions,
         executionRoot,
+        terminalEventBinding,
       });
     }
     const driver = this.jobs.driverForHarness(accepted.route.harnessId);
