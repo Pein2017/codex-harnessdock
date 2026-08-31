@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.27.0 - 2026-08-31
+
+- Make bounded native progress a first-class capability: Pi consumes RPC JSONL
+  events and OpenCode consumes fixed-origin SSE plus exact-session message/status
+  reads, while raw text, thinking, tool payloads, paths, prompts, and transcripts
+  remain private.
+- Persist only the latest meaningful version-three progress revision and let an
+  explicit `wait_agent(wake_on_progress: true)` observe later revisions without
+  changing ordinary completion-only waits, fixed barriers, or completion priority.
+- Reconcile exact dead-worker turns from Driver-owned native evidence, including
+  Pi baseline-entry lineage and OpenCode user-message lineage; fix terminal
+  transitions with retained progress, omitted OpenCode idle-status entries,
+  env-file Driver resolution, and bounded SSE header connection waits.
+- Advance route capability snapshots to schema v4 with explicit
+  `nativeProgress`, requiring future Harness lifecycle proposals to integrate or
+  honestly classify their noninteractive progress surface. Direct-Harness
+  differential parity now records 34 pass and 8 not-applicable cells.
+- Remove the remaining current Plugin `CC`/`HD` display names and guidance in
+  favor of `HarnessDock`, including all nine Skill metadata cards and branded
+  assets; keep only the historical identity-transition specification.
+
 ## 0.26.0 - 2026-08-31
 
 - Add `dispatch_agents` as the ninth typed MCP operation and matching Skill for
