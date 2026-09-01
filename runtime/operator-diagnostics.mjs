@@ -613,7 +613,15 @@ function fixedEnvironment(cwd, options = {}) {
     env.CLAUDE_NATIVE_CONFIG_DIR === EXPECTED_CLAUDE_CONFIG_DIR
   );
   const noProxyMatches = env.no_proxy === "127.0.0.1,localhost" && env.NO_PROXY === "127.0.0.1,localhost";
-  const condaConfigured = Boolean(String(env.CONDA_EXE ?? "").trim());
+  const configuredExecutables = [
+    env.CODEX_HARNESSDOCK_CLAUDE_BIN,
+    env.OPENCODE_EXECUTABLE,
+    env.CODEX_HARNESSDOCK_WAKE_PUBLISHER_BIN,
+  ];
+  const rootIndependent = configuredExecutables.every((value) => {
+    const executable = String(value ?? "").trim();
+    return executable.startsWith("/data/CoordExp/") && !executable.startsWith("/root/");
+  });
   return {
     env,
     receipt: {
@@ -623,9 +631,9 @@ function fixedEnvironment(cwd, options = {}) {
       proxyMatches,
       configMatches,
       noProxyMatches,
-      condaConfigured,
+      rootIndependent,
     },
-    healthy: proxyMatches && configMatches && noProxyMatches && condaConfigured,
+    healthy: proxyMatches && configMatches && noProxyMatches && rootIndependent,
   };
 }
 

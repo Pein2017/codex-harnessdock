@@ -15,7 +15,6 @@ const SUPPORTED_KEYS = new Set([
   "CLAUDE_NATIVE_CONFIG_DIR",
   "CLAUDE_CONFIG_DIR",
   "CLAUDE_CODE_DISABLE_AUTO_MEMORY",
-  "CONDA_EXE",
   "PATH",
   "XDG_CONFIG_HOME",
   "XDG_DATA_HOME",
@@ -134,6 +133,9 @@ export function resolveRuntimeEnvironment(options = {}) {
     ...inherited,
     ...selectedValues,
   };
+  for (const key of ["CONDA_EXE", "CONDA_PREFIX", "CONDA_DEFAULT_ENV", "VIRTUAL_ENV", "_CE_CONDA", "_CE_M"]) {
+    delete env[key];
+  }
   const effectiveClaudeConfigDir = nonEmpty(env.CLAUDE_NATIVE_CONFIG_DIR)
     ?? nonEmpty(env.CLAUDE_CONFIG_DIR)
     ?? DEFAULT_CLAUDE_CONFIG_DIR;

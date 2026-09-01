@@ -230,7 +230,11 @@ describe("native plugin contract", () => {
     assert.match(env, /^CLAUDE_CONFIG_DIR=\/data\/CoordExp\/\.claude$/m);
     assert.match(env, /^CLAUDE_CODE_DISABLE_AUTO_MEMORY=0$/m);
     assert.doesNotMatch(env, /autoMemoryDirectory/);
-    assert.match(env, /^CONDA_EXE=\/root\/miniconda3\/bin\/conda$/m);
+    assert.match(env, /^PATH=\/data\/CoordExp\//m);
+    assert.match(env, /^CODEX_HARNESSDOCK_CLAUDE_BIN=\/data\/CoordExp\//m);
+    assert.match(env, /^OPENCODE_EXECUTABLE=\/data\/CoordExp\//m);
+    assert.match(env, /^CODEX_HARNESSDOCK_WAKE_PUBLISHER_BIN=\/data\/CoordExp\//m);
+    assert.doesNotMatch(env, /\/root\//);
     for (const key of ["http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"]) {
       assert.match(env, new RegExp(`^${key}=http:\\/\\/127\\.0\\.0\\.1:9090$`, "m"));
     }

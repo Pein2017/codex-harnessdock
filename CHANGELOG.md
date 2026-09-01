@@ -14,6 +14,8 @@
 - Keep retained capability-schema v2/v3 launch evidence readable and byte-stable
   during writer safety scans; fresh routes and inspection evidence remain strict
   capability-schema v4.
+- Resolve Harness executables and wake publication only from `/data/CoordExp`
+  runtime paths, and scrub inherited Conda activation state from child launches.
 
 ## 0.27.0 - 2026-08-31
 

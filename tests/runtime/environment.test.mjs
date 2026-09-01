@@ -20,7 +20,7 @@ function fixture() {
 }
 
 describe("runtime environment", () => {
-  it("uses CODEX_HOME/.env as one authoritative file and preserves CONDA_EXE", () => {
+  it("uses CODEX_HOME/.env as one authoritative file without importing Conda state", () => {
     const { root, codexHome } = fixture();
     const envFile = path.join(codexHome, ".env");
     fs.writeFileSync(envFile, [
@@ -35,7 +35,7 @@ describe("runtime environment", () => {
       env: { PATH: "/usr/bin", CODEX_HOME: codexHome, HTTP_PROXY: "http://old:1" },
     });
     assert.deepEqual(result.receipt.sources, [envFile]);
-    assert.equal(result.env.CONDA_EXE, "/opt/conda/bin/conda");
+    assert.equal(result.env.CONDA_EXE, undefined);
     assert.equal(result.env.HTTP_PROXY, "http://127.0.0.1:9090");
     assert.equal(result.env.PATH, "/usr/bin");
   });
@@ -118,21 +118,22 @@ describe("runtime environment", () => {
       env: { CODEX_HOME: path.join(root, "missing-codex-home") },
     });
     assert.deepEqual(result.receipt.sources, [envFile]);
-    assert.equal(result.env.CONDA_EXE, "/ancestor/conda");
+    assert.equal(result.env.CONDA_EXE, undefined);
   });
 
-  it("keeps CONDA_EXE in the packaged fallback", () => {
+  it("does not import a root-owned CONDA_EXE into the packaged fallback", () => {
     const { root } = fixture();
     const result = resolveRuntimeEnvironment({
       cwd: root,
       env: {
         CODEX_HOME: path.join(root, "missing"),
         CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+        CONDA_EXE: "/root/miniconda3/bin/conda",
       },
     });
     assert.equal(result.receipt.sources.length, 1);
     assert.match(result.receipt.sources[0], /config[/\\]runtime\.env$/);
-    assert.equal(result.env.CONDA_EXE, "/root/miniconda3/bin/conda");
+    assert.equal(result.env.CONDA_EXE, undefined);
     assert.equal(result.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY, "0");
     assert.equal(JSON.stringify(result.receipt).includes("AUTO_MEMORY"), false);
   });

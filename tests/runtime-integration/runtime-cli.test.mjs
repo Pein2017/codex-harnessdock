@@ -1024,7 +1024,7 @@ describe("canonical Agent runtime CLI", () => {
     assert.equal(invocation.args[invocation.args.indexOf("--name") + 1], "parity");
     assert.equal(invocation.env.CLAUDE_CONFIG_DIR, path.join(path.dirname(test.workspace), ".claude"));
     assert.equal(invocation.env.CLAUDE_CODE_DISABLE_AUTO_MEMORY, "0");
-    assert.equal(invocation.env.CONDA_EXE, "/opt/conda/bin/conda");
+    assert.equal(invocation.env.CONDA_EXE, undefined);
     assert.equal(invocation.env.HTTP_PROXY, "http://127.0.0.1:9090");
     assert.equal(invocation.env.HTTPS_PROXY, "http://127.0.0.1:9090");
     assert.equal(invocation.env.NO_PROXY, "127.0.0.1,localhost");
