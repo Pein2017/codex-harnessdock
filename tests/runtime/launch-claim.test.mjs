@@ -50,6 +50,7 @@ import {
   beginPreSubmissionRollback,
   completePreSubmissionRollback,
   launchClaimRollbackEligibility,
+  listLegacyIncompleteWriterAuthorityClaims,
   listLaunchClaimsForOwnerRoot,
   markNativeSubmissionStarted,
   readLaunchClaim,
@@ -285,7 +286,59 @@ function materializeLegacyIncompleteWriter(record) {
   return { filePath, bytes, legacy };
 }
 
+function materializePreV4Route(record, capabilitySchemaVersion = 3) {
+  const filePath = path.join(
+    resolveLaunchClaimDirectory(record),
+    `${createHash("sha256").update(record.attemptId).digest("hex")}.json`,
+  );
+  const { nativeProgress: _value, ...values } = record.route.capabilities.values;
+  const { nativeProgress: _maturity, ...maturity } = record.route.capabilities.maturity;
+  const { nativeProgress: _provenance, ...provenance } = record.route.capabilities.provenance;
+  const capabilities = {
+    ...record.route.capabilities,
+    capabilitySchemaVersion,
+    values,
+    maturity,
+    ...(capabilitySchemaVersion === 3 ? { provenance } : {}),
+  };
+  if (capabilitySchemaVersion === 2) delete capabilities.provenance;
+  const route = { ...record.route, capabilitySchemaVersion, capabilities };
+  const routeDigest = createHash("sha256").update(JSON.stringify(route)).digest("hex");
+  const projectReceipt = (receipt) => {
+    const projected = { ...receipt, routeDigest };
+    projected.evidenceDigest = createHash("sha256").update(JSON.stringify({
+      kind: projected.kind,
+      keyFields: projected.keyFields,
+      capacity: projected.capacity,
+      routeDigest,
+      ownerRootId: projected.ownerRootId,
+      agentId: projected.agentId,
+      jobId: projected.jobId,
+    })).digest("hex");
+    return projected;
+  };
+  const historical = {
+    ...record,
+    route,
+    inspectionEvidence: { ...record.inspectionEvidence, capabilities },
+    leaseIntent: record.leaseIntent.map(projectReceipt),
+    leaseBindings: record.leaseBindings.map(projectReceipt),
+  };
+  const bytes = Buffer.from(`${JSON.stringify(historical, null, 2)}\n`);
+  fs.writeFileSync(filePath, bytes);
+  return { bytes, filePath };
+}
+
 describe("launch claim: closed identity and durable binding", () => {
+  it("does not let retained pre-v4 evidence poison the global writer scan", () => {
+    setup();
+    const record = createLaunchClaim(claimInput());
+    const { bytes, filePath } = materializePreV4Route(record);
+
+    assert.deepEqual(listLegacyIncompleteWriterAuthorityClaims(), []);
+    assert.deepEqual(fs.readFileSync(filePath), bytes);
+  });
+
   it("creates a launch claim as not_submitted/not_started with no native turn/session reference", () => {
     setup();
     const record = createLaunchClaim(claimInput());
@@ -1485,7 +1538,7 @@ describe("launch claim: pre-submission rollback eligibility, gated on submission
     assert.throws(() => launchClaimRollbackEligibility(new Proxy(real, {})), /Proxy/);
   });
 
-  it("imports exactly the two narrow proof seams it needs (acquiredLeaseEvidence, durableTurnEvidence), never an acquire/release/inventory/Driver-registry/mailbox/completion export", () => {
+  it("imports only narrow proof/validation seams, never acquire/release/inventory/Driver-registry/mailbox/completion", () => {
     const moduleUrl = new URL("../../runtime/launch-claim.mjs", import.meta.url);
     const source = fs.readFileSync(moduleUrl, "utf8");
     const importStatements = [...source.matchAll(/^import\s+(\{[\s\S]*?\}|\S+)\s+from\s+["'](.+?)["'];/gm)];
@@ -1502,7 +1555,7 @@ describe("launch claim: pre-submission rollback eligibility, gated on submission
     assert.ok(bySpecifier.has("./harness-contract.mjs"));
     assert.deepEqual(
       [...bySpecifier.get("./harness-contract.mjs").matchAll(/[\w$]+/g)].map((m) => m[0]),
-      ["durableTurnEvidence", "validateRouteInspectionEvidence"],
+      ["durableTurnEvidence", "validateRouteInspectionEvidence", "validateStoredRouteInspectionEvidence"],
       "must import only bounded evidence validators, never validateLiveHarnessTurn or a Driver-invoking export"
     );
 

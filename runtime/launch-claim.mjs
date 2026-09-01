@@ -111,7 +111,11 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { validateStoredVersionThreeRoute, validateVersionThreeRoute } from "./durable-state-v3.mjs";
-import { durableTurnEvidence, validateRouteInspectionEvidence } from "./harness-contract.mjs";
+import {
+  durableTurnEvidence,
+  validateRouteInspectionEvidence,
+  validateStoredRouteInspectionEvidence,
+} from "./harness-contract.mjs";
 import { acquiredLeaseEvidence } from "./instance-admission-lease.mjs";
 import {
   assertNativeReferenceEnvelopeShape,
@@ -1042,7 +1046,7 @@ function validateLaunchClaimRecord(parsed) {
     ? assertLifecycleOwner(snapshot.lifecycleOwner, `${label} lifecycleOwner`)
     : null;
   const inspectionEvidence = hasInspectionEvidence
-    ? validateRouteInspectionEvidence(snapshot.inspectionEvidence, route, `${label} inspection evidence`)
+    ? validateStoredRouteInspectionEvidence(snapshot.inspectionEvidence, route, `${label} inspection evidence`)
     : null;
   const leaseState = ["intended", "acquired"].includes(snapshot.leaseState) ? snapshot.leaseState : null;
   if (leaseState == null) throw new Error(`${label} has an unsupported leaseState.`);

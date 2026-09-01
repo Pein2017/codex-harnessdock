@@ -881,6 +881,26 @@ export function validateRouteInspectionEvidence(evidence, route, label = "Route 
   });
 }
 
+/** Read retained attempt evidence without promoting an older route schema. */
+export function validateStoredRouteInspectionEvidence(evidence, route, label = "Stored route inspection evidence") {
+  const fields = snapshotClosedPlainObject(evidence, ["generation", "capabilities"], label);
+  const options = { allowSchemaV2: true, allowSchemaV3: true };
+  const capabilities = validateRouteCapabilitySnapshot(route?.capabilities, `${label} route capabilities`, options);
+  const evidenceCapabilities = validateRouteCapabilitySnapshot(fields.capabilities, `${label} capabilities`, options);
+  if (JSON.stringify(evidenceCapabilities) !== JSON.stringify(capabilities)) {
+    throw new Error(`${label} capabilities do not exactly match the retained attempt route.`);
+  }
+  for (const value of Object.values(evidenceCapabilities.provenance ?? {})) {
+    if (value === "session_negotiated") {
+      throw new Error(`${label} cannot claim session-negotiated provenance before an exact accepted native session.`);
+    }
+  }
+  return Object.freeze({
+    generation: validateInspectionGeneration(fields.generation, `${label} generation`),
+    capabilities: evidenceCapabilities,
+  });
+}
+
 /**
  * Validate the canonical route a Driver returns for one explicit request. A
  * Driver may refuse a request; it may never answer a different one, and it
