@@ -746,7 +746,7 @@ export async function runDoctor(options = {}) {
     checks.push(makeCheck(
       "fixed-environment",
       environment.healthy ? "pass" : "fail",
-      environment.healthy ? "Fixed Claude config, 9090 proxy, no-proxy, and Conda envelope are active." : "Fixed runtime environment does not match the checkout contract.",
+      environment.healthy ? "Fixed Claude config, 9090 proxy, no-proxy, and data-rooted executables are active." : "Fixed runtime environment does not match the checkout contract.",
       environment.receipt,
       environment.healthy ? null : `Repair ${path.join(SOURCE_ROOT, "config", "runtime.env")}.`,
     ));
