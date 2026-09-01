@@ -60,6 +60,17 @@ afterEach(async () => {
 });
 
 describe("typed HarnessDock MCP server", () => {
+  it("keeps the idle MCP frontend outside Driver implementation imports", () => {
+    const frontendSource = fs.readFileSync(new URL("../../runtime/mcp-server.mjs", import.meta.url), "utf8");
+    const apiSource = fs.readFileSync(new URL("../../runtime/mcp-api.mjs", import.meta.url), "utf8");
+
+    assert.equal(/from\s+["']\.\/harness-registry\.mjs["']/u.test(frontendSource), false,
+      "mcp-server must not import harness-registry");
+    assert.equal(/from\s+["']\.\/[^"']*-driver\.mjs["']/u.test(frontendSource), false,
+      "mcp-server must not import a Driver module");
+    assert.equal(/^\s*import\s/mu.test(apiSource), false, "mcp-api must remain import-free");
+  });
+
   it("advertises exactly the canonical typed tools", async () => {
     const { client, server } = await inMemoryClient(() => runtimeMethods(() => ({})));
     closers.push(() => client.close(), () => server.close());

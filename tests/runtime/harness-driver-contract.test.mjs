@@ -68,6 +68,7 @@ import {
   resolveDriverV2,
   resolveHarnessDriver,
 } from "../../runtime/harness-registry.mjs";
+import * as mcpApi from "../../runtime/mcp-api.mjs";
 import {
   HARNESS_TURN_FAILURE_CLASSES,
   HARNESS_TURN_FAILURE_SCOPES,
@@ -1461,7 +1462,14 @@ describe("Driver Contract v2 registry and scope", () => {
     // The version-two table holds exactly the in-tree Drivers this checkout
     // implements on Contract v2. A fixture can never register itself, and admission is not
     // activation: no public lifecycle path resolves a v2 Driver here.
-    assert.deepEqual([...ADMITTED_DRIVER_V2_HARNESS_IDS], ["claude-code", "opencode", "pi"]);
+    assert.ok(
+      Object.hasOwn(mcpApi, "HARNESSDOCK_MCP_HARNESS_IDS"),
+      "mcp-api must export the public Harness enum",
+    );
+    const harnessIds = mcpApi.HARNESSDOCK_MCP_HARNESS_IDS;
+    assert.equal(Object.isFrozen(harnessIds), true);
+    assert.deepEqual(harnessIds, ["claude-code", "opencode", "pi"]);
+    assert.deepEqual([...ADMITTED_DRIVER_V2_HARNESS_IDS], harnessIds);
     assert.throws(() => resolveDriverV2("fake-service"), /Unknown Harness fake-service/);
     assert.equal(resolveDriverV2("claude-code").contractVersion, 2);
     assert.equal(admitDriverV2(service), service);

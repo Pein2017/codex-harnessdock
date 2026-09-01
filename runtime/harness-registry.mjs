@@ -17,6 +17,7 @@ import {
 } from "./claude-code-driver.mjs";
 import { createOpencodeDriver, OPENCODE_HARNESS_ID } from "./opencode-driver.mjs";
 import { createPiDriver, PI_HARNESS_ID } from "./pi-driver.mjs";
+import { HARNESSDOCK_MCP_HARNESS_IDS } from "./mcp-api.mjs";
 import {
   ROUTE_AUTHORITY_VALUES,
   ROUTE_REQUEST_FIELDS,
@@ -189,6 +190,13 @@ const DRIVER_V2_FACTORIES = Object.freeze({
 
 export const ADMITTED_DRIVER_V2_HARNESS_IDS = Object.freeze(Object.keys(DRIVER_V2_FACTORIES).sort());
 
+if (
+  ADMITTED_DRIVER_V2_HARNESS_IDS.length !== HARNESSDOCK_MCP_HARNESS_IDS.length ||
+  ADMITTED_DRIVER_V2_HARNESS_IDS.some((harnessId, index) => harnessId !== HARNESSDOCK_MCP_HARNESS_IDS[index])
+) {
+  throw new Error("Driver Contract v2 Harness IDs must exactly match the MCP generation Harness IDs.");
+}
+
 /**
  * Every Harness the multi-Harness public generation admits, in one
  * deterministic order.
@@ -203,7 +211,7 @@ export const ADMITTED_DRIVER_V2_HARNESS_IDS = Object.freeze(Object.keys(DRIVER_V
  * meaning for, so non-Claude resolution keeps failing closed while the
  * version-two contract is where all generation Harnesses are admitted.
  */
-export const ADMITTED_GENERATION_HARNESS_IDS = ADMITTED_DRIVER_V2_HARNESS_IDS;
+export const ADMITTED_GENERATION_HARNESS_IDS = HARNESSDOCK_MCP_HARNESS_IDS;
 
 /**
  * The execution lifecycle each admitted Harness's turns run under.

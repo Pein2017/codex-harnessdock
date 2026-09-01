@@ -17,8 +17,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { z } from "zod";
 
 import { isBoundedRouteAtom, isBoundedRouteText } from "./harness-contract.mjs";
-import { ADMITTED_GENERATION_HARNESS_IDS } from "./harness-registry.mjs";
-import { HARNESSDOCK_MCP_API_GENERATION } from "./mcp-api.mjs";
+import { HARNESSDOCK_MCP_API_GENERATION, HARNESSDOCK_MCP_HARNESS_IDS } from "./mcp-api.mjs";
 import { removeRuntimeLoaderMarker, resolveGitCommonDirectory } from "./promotion-gate.mjs";
 import { PACKAGE_VERSION } from "./version.mjs";
 import { ensureResidencyManager } from "./residency-manager.mjs";
@@ -47,7 +46,7 @@ const PROMOTION_GATE_DIRECTORY = path.join(
   "codex-harnessdock-promotion-gate",
 );
 // One source for both the typed schema and runtime validation.
-const HARNESS_IDS = [...ADMITTED_GENERATION_HARNESS_IDS];
+const HARNESS_IDS = [...HARNESSDOCK_MCP_HARNESS_IDS];
 const TOPOLOGIES = ["leaf", "native_orchestrator"];
 const boundedRouteText = z.string().min(1).max(256).refine(
   isBoundedRouteText,
