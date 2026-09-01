@@ -315,11 +315,84 @@ export function resolveCodexMcpContext(meta, signal = null) {
   };
 }
 
-/** @returns {import("@modelcontextprotocol/sdk/types.js").CallToolResult} */
-export function runtimeReceiptResult(receipt) {
+function groupedModels(routes) {
+  const groups = new Map();
+  for (const model of Array.isArray(routes?.models) ? routes.models : []) {
+    const efforts = Array.isArray(routes?.effortsByModel?.[model])
+      ? routes.effortsByModel[model]
+      : [];
+    const key = JSON.stringify(efforts);
+    const group = groups.get(key) ?? { models: [], efforts };
+    group.models.push(model);
+    groups.set(key, group);
+  }
+  return [...groups.values()];
+}
+
+function compactHarnesses(receipt) {
+  if (!Array.isArray(receipt?.harnesses)) return receipt;
   return {
-    content: [{ type: "text", text: JSON.stringify(receipt) }],
-    structuredContent: receipt,
+    harnesses: receipt.harnesses.flatMap((harness) => {
+      const instances = Array.isArray(harness?.instances) ? harness.instances : [];
+      if (instances.length === 0) {
+        return [{
+          harness: harness?.harness ?? null,
+          readiness: "unavailable",
+          ...(harness?.unavailable ? { detail: harness.unavailable } : {}),
+        }];
+      }
+      return instances.map((instance) => {
+        const routes = instance?.routes;
+        const constraints = routes && typeof routes === "object"
+          ? Object.fromEntries(Object.entries(routes).filter(([key]) =>
+            !["models", "effortsByModel", "topologies", "capacity"].includes(key)
+          ))
+          : {};
+        return {
+          harness: harness?.harness ?? null,
+          instance: instance?.instance ?? null,
+          readiness: instance?.readiness ?? "unavailable",
+          ...(instance?.detail && instance.detail !== instance.readiness ? { detail: instance.detail } : {}),
+          live_validated: instance?.live_validated === true,
+          maturity: instance?.maturity ?? harness?.maturity ?? null,
+          ...(instance?.inspection_generation != null
+            ? { inspection_generation: instance.inspection_generation }
+            : {}),
+          ...(Number.isSafeInteger(instance?.capacity) ? { capacity: instance.capacity } : {}),
+          ...(routes ? {
+            model_groups: groupedModels(routes),
+            topologies: Array.isArray(routes.topologies) ? routes.topologies : [],
+            ...(Object.keys(constraints).length > 0 ? { constraints } : {}),
+          } : {}),
+        };
+      });
+    }),
+  };
+}
+
+function compactAgents(receipt) {
+  if (!Array.isArray(receipt?.agents)) return receipt;
+  const fields = [
+    "agent_name", "agent_status", "harness", "model", "reasoning_effort",
+    "authority", "delegation_mode", "phase",
+  ];
+  return {
+    agents: receipt.agents.map((agent) => Object.fromEntries(
+      fields.filter((field) => agent?.[field] != null).map((field) => [field, agent[field]])
+    )),
+  };
+}
+
+export function modelFacingReceipt(operation, receipt) {
+  if (operation === "list_harnesses") return compactHarnesses(receipt);
+  if (operation === "list_agents") return compactAgents(receipt);
+  return receipt;
+}
+
+/** @returns {import("@modelcontextprotocol/sdk/types.js").CallToolResult} */
+export function runtimeReceiptResult(operation, receipt) {
+  return {
+    content: [{ type: "text", text: JSON.stringify(modelFacingReceipt(operation, receipt)) }],
   };
 }
 
@@ -474,13 +547,13 @@ export function createCcMcpServer(options = {}) {
         const receipt = runtimeFactory
           ? await runtimeFactory(context)[name](runtimeInput)
           : await runtimeInvoker({ operation: name, input: runtimeInput, context, signal: extra.signal });
-        return runtimeReceiptResult(receipt);
+        return runtimeReceiptResult(name, receipt);
       } catch (error) {
         const sanitized = sanitizedError(error);
         const recovery = normalizePublicSpawnRecovery(/** @type {any} */ (sanitized).publicRecovery);
         if (recovery) {
           return {
-            ...runtimeReceiptResult(recovery),
+            ...runtimeReceiptResult(name, recovery),
             isError: true,
           };
         }

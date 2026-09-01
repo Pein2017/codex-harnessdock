@@ -111,9 +111,10 @@ describe("publish-agent-terminal-events strict public schema", () => {
       name: "spawn_agent", arguments: singular, _meta: meta,
     });
     assert.deepEqual(calls[0], { operation: "spawn_agent", input: singular });
-    assert.deepEqual(singularResult.structuredContent, {
+    assert.deepEqual(JSON.parse(singularResult.content[0].text), {
       agent_name: "/root/descriptor_bound", model: "claude-sonnet-5", status: "working",
     });
+    assert.equal(Object.hasOwn(singularResult, "structuredContent"), false);
     assert.equal(JSON.stringify(singularResult).includes("descriptor-a"), false);
 
     const rows = [
@@ -122,10 +123,11 @@ describe("publish-agent-terminal-events strict public schema", () => {
     ];
     const batch = await client.callTool({ name: "dispatch_agents", arguments: { rows }, _meta: meta });
     assert.deepEqual(calls[1], { operation: "dispatch_agents", input: { rows } });
-    assert.deepEqual(batch.structuredContent.rows.map((row) => row.card), [
+    assert.deepEqual(JSON.parse(batch.content[0].text).rows.map((row) => row.card), [
       { agent_name: "/root/first_descriptor", model: "claude-sonnet-5", status: "working" },
       { agent_name: "/root/second_descriptor", model: "claude-sonnet-5", status: "working" },
     ]);
+    assert.equal(Object.hasOwn(batch, "structuredContent"), false);
 
     for (const [name, argumentsValue] of [
       ["spawn_agent", { ...spawnInput("relative_descriptor"), terminal_event_descriptor_path: "relative.json" }],

@@ -197,7 +197,7 @@ describe("Task 9.1 — one complete OpenCode turn through MCP, runtime, and the 
     const harnesses = await callTool(client, workspace, "list_harnesses", {});
     const explorer = harnesses.harnesses.find((entry) => entry.harness === OPENCODE_HARNESS_ID);
     assert.ok(explorer, "the Explorer must be an admitted Harness");
-    assert.equal(explorer.instances.some((instance) => instance.readiness === "ready"), true);
+    assert.equal(explorer.readiness, "ready");
     // Proof that THIS test's fake Server answered, and no other. A composed test
     // that accidentally dispatches through the isolated worker would reach the
     // operator's configured Server instead and leave this at zero.

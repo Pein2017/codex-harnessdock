@@ -255,13 +255,13 @@ describe("non-rollback-safe spawn error projection", () => {
         },
       });
       assert.equal(result.isError, true);
-      assert.deepEqual(result.structuredContent, {
+      assert.deepEqual(JSON.parse(result.content[0].text), {
         agent_name: "/root/owned_failure",
         outcome: "lifecycle_owned",
         code: "spawn_lifecycle_owned",
         message: "Agent launch ownership was transferred; join the named Agent to reconcile its turn.",
       });
-      assert.deepEqual(JSON.parse(result.content[0].text), result.structuredContent);
+      assert.equal(Object.hasOwn(result, "structuredContent"), false);
     } finally {
       await client.close();
       await server.close();

@@ -169,10 +169,11 @@ describe("release smoke", () => {
       const [inspection] = await inspectDriverInstances(fixture.driver, createDriverScope({ driver: fixture.driver, purpose: "inspect", env: {} }));
       return inspection;
     };
-    const listing = (inspection) => projectNativeRouteDiscovery([{ harness: "fake-service", maturity: "experimental", instances: [{
-      instance: inspection.instanceKey, readiness: inspection.readiness, live_validated: inspection.liveValidated,
-      maturity: inspection.maturity, routes: inspection.routes,
-    }] }]);
+    const listing = (inspection) => projectNativeRouteDiscovery([{
+      harness: "fake-service", instance: inspection.instanceKey, readiness: inspection.readiness,
+      live_validated: inspection.liveValidated, maturity: inspection.maturity,
+      model_groups: Object.entries(inspection.routes.effortsByModel).map(([model, efforts]) => ({ models: [model], efforts })),
+    }]);
     const request = (model, effort) => ({ harnessId: "fake-service", model, effort, topology: "leaf", authority: "behavioral_read_only" });
     const firstInspection = await inspect();
     const first = listing(firstInspection);
@@ -387,28 +388,18 @@ describe("release smoke", () => {
     const projected = projectNativeRouteDiscovery([
       {
         harness: "pi",
+        instance: "pi-local",
+        readiness: "ready",
+        live_validated: true,
         maturity: "experimental",
-        instances: [{
-          instance: "pi-local",
-          readiness: "ready",
-          live_validated: true,
-          maturity: "experimental",
-          capacity: null,
-          routes: {
-            models: ["openai-codex/gpt-5.6-luna"],
-            reasoningEfforts: ["low", "medium", "high"],
-            effortsByModel: { "openai-codex/gpt-5.6-luna": ["low", "medium", "high"] },
-          },
+        model_groups: [{
+          models: ["openai-codex/gpt-5.6-luna"],
+          efforts: ["low", "medium", "high"],
         }],
       },
-      { harness: "opencode", unavailable: "server_unreachable", instances: [] },
-      {
-        harness: "claude-code",
-        instances: [
-          { readiness: "ready", routes: { models: ["claude-sonnet-5"], reasoningEfforts: ["low"], effortsByModel: {} } },
-          { readiness: "ready", routes: { models: ["claude-opus-5"], reasoningEfforts: ["low"], effortsByModel: {} } },
-        ],
-      },
+      { harness: "opencode", readiness: "unavailable", detail: "server_unreachable" },
+      { harness: "claude-code", instance: "one", readiness: "ready", model_groups: [{ models: ["claude-sonnet-5"], efforts: ["low"] }] },
+      { harness: "claude-code", instance: "two", readiness: "ready", model_groups: [{ models: ["claude-opus-5"], efforts: ["low"] }] },
     ]);
     assert.equal(projected.find((route) => route.harness === "pi").status, "available");
     assert.deepEqual(
@@ -419,7 +410,7 @@ describe("release smoke", () => {
     assert.equal(projected.find((route) => route.harness === "opencode").detail, "server_unreachable");
     assert.equal(projected.find((route) => route.harness === "claude-code").status, "ambiguous");
     // Route drift: a listed instance that cannot be freshly proven ready.
-    const drift = projectNativeRouteDiscovery([{ harness: "pi", instances: [{ readiness: "unknown", routes: null }] }]);
+    const drift = projectNativeRouteDiscovery([{ harness: "pi", instance: "pi-local", readiness: "unknown" }]);
     assert.equal(drift[0].status, "drift");
     assert.equal(drift[0].detail, "discovery_unknown");
   });
@@ -452,20 +443,20 @@ describe("release smoke", () => {
       async callTool(request) {
         calls.push(request);
         if (request.name === "spawn_agent") {
-          return { isError: false, structuredContent: { status: "working" } };
+          return { isError: false, content: [{ type: "text", text: JSON.stringify({ status: "working" }) }] };
         }
         assert.equal(request.name, "wait_agent");
         assert.deepEqual(request.arguments, {});
         return {
           isError: false,
-          structuredContent: {
+          content: [{ type: "text", text: JSON.stringify({
             update: {
               kind: "completion",
               summary: "Agent turn completed.",
               completion_message: "HARNESSDOCK_RELEASE_SMOKE_OK",
               delivery_token: "delivery-fake",
             },
-          },
+          }) }],
         };
       },
     };

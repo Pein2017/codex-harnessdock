@@ -245,7 +245,7 @@ function successfulPayload(result, label) {
   const text = result.content?.find((entry) => entry.type === "text")?.text;
   assert.ok(text, `${label} must return one text payload`);
   const payload = JSON.parse(text);
-  assert.deepEqual(payload, result.structuredContent, `${label} text and structured receipts differ`);
+  assert.equal(Object.hasOwn(result, "structuredContent"), false, `${label} duplicates its text receipt`);
   return payload;
 }
 

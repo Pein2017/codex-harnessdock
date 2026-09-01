@@ -397,6 +397,17 @@ function toolError(result, operation) {
   return new Error(`${operation} failed: ${String(text || "unknown MCP error").slice(0, 1_000)}`);
 }
 
+function toolPayload(result, operation) {
+  const text = Array.isArray(result?.content)
+    ? result.content.find((entry) => entry?.type === "text")?.text
+    : null;
+  try {
+    const payload = JSON.parse(String(text ?? ""));
+    if (payload && typeof payload === "object" && !Array.isArray(payload)) return payload;
+  } catch { /* handled below */ }
+  throw new Error(`${operation} returned no JSON object payload.`);
+}
+
 function callOptions(timeout) {
   return { timeout, maxTotalTimeout: timeout };
 }
@@ -459,7 +470,7 @@ export async function runPaidSmoke(client, meta, options = {}) {
       throw paidSmokeError(error);
     }
     if (waited?.isError) throw paidSmokeError(toolError(waited, "wait_agent"));
-    const update = waited?.structuredContent?.update;
+    const update = toolPayload(waited, "wait_agent").update;
     if (update?.kind !== "completion") continue;
     const message = String(update.completion_message ?? "");
     if (isClaudeSubscriptionLimit(`${update.summary ?? ""}\n${message}`)) {
@@ -653,56 +664,59 @@ export function assessNativeHarnessDifferentialParity(receipt) {
 }
 
 export function projectNativeRouteDiscovery(records, previousRecords = null) {
-  const priorGenerations = new Map();
-  for (const record of Array.isArray(previousRecords) ? previousRecords : []) {
-    for (const instance of Array.isArray(record?.instances) ? record.instances : []) {
-      const harness = boundedAtom(record?.harness, 48);
-      const instanceKey = boundedAtom(instance?.instance, 64);
-      if (harness && instanceKey) priorGenerations.set(`${harness}\0${instanceKey}`, instance?.inspection_generation ?? null);
-    }
+  const priorGenerations = new Map(
+    (Array.isArray(previousRecords) ? previousRecords : []).map((row) => [
+      `${boundedAtom(row?.harness, 48)}\0${boundedAtom(row?.instance, 64)}`,
+      row?.inspection_generation ?? null,
+    ])
+  );
+  const grouped = new Map();
+  for (const row of Array.isArray(records) ? records : []) {
+    const harness = boundedAtom(row?.harness, 48) || "unknown";
+    const group = grouped.get(harness) ?? [];
+    group.push(row);
+    grouped.set(harness, group);
   }
-  return (Array.isArray(records) ? records : []).map((record) => {
-    const harness = boundedAtom(record?.harness, 48) || "unknown";
-    const instances = Array.isArray(record?.instances) ? record.instances : [];
-    const projectedInstances = instances.slice(0, 8).map((instance) => {
-      const priorGeneration = priorGenerations.get(
-        `${harness}\0${boundedAtom(instance?.instance, 64)}`
-      ) ?? null;
-      const routes = instance?.routes ?? null;
-      const effortsByModel = routes && typeof routes.effortsByModel === "object" && routes.effortsByModel
-        ? Object.fromEntries(
-          Object.entries(routes.effortsByModel)
-            .slice(0, MAX_DISCOVERY_MODELS)
-            .map(([model, efforts]) => [boundedAtom(model, 96), boundedEffortList(efforts)]),
-        )
-        : {};
+  return [...grouped].map(([harness, rows]) => {
+    const unavailable = rows.length === 1
+      && rows[0]?.readiness === "unavailable"
+      && rows[0]?.instance == null;
+    const projectedInstances = unavailable ? [] : rows.slice(0, 8).map((row) => {
+      const modelGroups = Array.isArray(row?.model_groups) ? row.model_groups : [];
+      const effortsByModel = Object.fromEntries(modelGroups.flatMap((group) =>
+        (Array.isArray(group?.models) ? group.models : [])
+          .slice(0, MAX_DISCOVERY_MODELS)
+          .map((model) => [
+            boundedAtom(model, 96),
+            boundedEffortList(group?.efforts),
+          ])
+          .filter(([model]) => model)
+      ));
       return {
-        readiness: boundedAtom(instance?.readiness, 32) || "unknown",
-        liveValidated: instance?.live_validated === true,
-        maturity: boundedAtom(instance?.maturity, 32) || null,
-        capacity: Number.isSafeInteger(instance?.capacity) ? instance.capacity : null,
-        models: routes && Array.isArray(routes.models)
-          ? routes.models.slice(0, MAX_DISCOVERY_MODELS).map((model) => boundedAtom(model, 96)).filter(Boolean)
-          : [],
-        efforts: routes ? boundedEffortList(routes.reasoningEfforts) : [],
+        readiness: boundedAtom(row?.readiness, 32) || "unknown",
+        liveValidated: row?.live_validated === true,
+        maturity: boundedAtom(row?.maturity, 32) || null,
+        capacity: Number.isSafeInteger(row?.capacity) ? row.capacity : null,
+        models: Object.keys(effortsByModel),
+        efforts: [...new Set(Object.values(effortsByModel).flat())],
         effortsByModel,
-        inspectionGeneration: instance?.inspection_generation ?? null,
-        previousInspectionGeneration: priorGeneration,
+        inspectionGeneration: row?.inspection_generation ?? null,
+        previousInspectionGeneration: priorGenerations.get(
+          `${harness}\0${boundedAtom(row?.instance, 64)}`
+        ) ?? null,
       };
     });
     let status;
     let detail = null;
-    if (record?.unavailable != null) {
+    if (unavailable) {
       status = "unavailable";
-      detail = boundedAtom(record.unavailable, 48);
+      detail = boundedAtom(rows[0]?.detail, 48);
+    } else if (projectedInstances.length > 1) {
+      status = "ambiguous";
     } else if (projectedInstances.length === 0) {
       status = "unavailable";
       detail = "no_instances";
-    } else if (projectedInstances.length > 1) {
-      status = "ambiguous";
     } else if (projectedInstances[0].readiness !== "ready") {
-      // A listed instance that cannot be freshly proven ready is a discovery
-      // drift condition, not a repair request and not model liveness.
       status = "drift";
       detail = `discovery_${projectedInstances[0].readiness}`;
     } else {
@@ -712,7 +726,7 @@ export function projectNativeRouteDiscovery(records, previousRecords = null) {
       harness,
       status,
       detail,
-      maturity: boundedAtom(record?.maturity, 32) || null,
+      maturity: boundedAtom(rows[0]?.maturity, 32) || null,
       instances: projectedInstances,
     };
   });
@@ -763,7 +777,7 @@ export async function probeInstalledMcp(options = {}) {
     if (options.callListAgents !== false) {
       const result = await client.callTool({ name: "list_agents", arguments: {}, _meta: meta }, undefined, callOptions(60_000));
       if (result?.isError) throw toolError(result, "list_agents");
-      const agents = /** @type {any} */ (result?.structuredContent)?.agents;
+      const agents = /** @type {any} */ (toolPayload(result, "list_agents"))?.agents;
       if (!Array.isArray(agents)) throw new Error("list_agents returned no structured Agent array.");
       agentCount = agents.length;
       if (agentCount !== 0) throw new Error("Isolated release-smoke root unexpectedly contains Agents.");
@@ -779,7 +793,7 @@ export async function probeInstalledMcp(options = {}) {
         callOptions(60_000),
       );
       if (firstHarnesses?.isError) throw toolError(firstHarnesses, "list_harnesses");
-      const previousRecords = /** @type {any} */ (firstHarnesses?.structuredContent)?.harnesses;
+      const previousRecords = /** @type {any} */ (toolPayload(firstHarnesses, "list_harnesses"))?.harnesses;
       if (!Array.isArray(previousRecords)) throw new Error("list_harnesses returned no structured Harness array.");
       const harnesses = await client.callTool(
         { name: "list_harnesses", arguments: {}, _meta: meta },
@@ -787,9 +801,9 @@ export async function probeInstalledMcp(options = {}) {
         callOptions(60_000),
       );
       if (harnesses?.isError) throw toolError(harnesses, "list_harnesses");
-      const records = /** @type {any} */ (harnesses?.structuredContent)?.harnesses;
+      const records = /** @type {any} */ (toolPayload(harnesses, "list_harnesses"))?.harnesses;
       if (!Array.isArray(records)) throw new Error("list_harnesses returned no structured Harness array.");
-      harnessCount = records.length;
+      harnessCount = new Set(records.map((record) => record?.harness)).size;
       // Bounded, redacted, zero-model projection of the fresh native-route
       // discovery this same call performed. No extra Server or model traffic.
       nativeRoutes = projectNativeRouteDiscovery(records, previousRecords);

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.29.0 - 2026-09-01
+
+- Emit each runtime receipt once instead of duplicating it as text and
+  structured content, while preserving exact non-list operation receipts.
+- Compact model-facing Harness discovery into flat instance rows with grouped
+  model efforts, and reduce Agent listings to routing and status fields.
+- Keep release diagnostics compatible with the compact public list payloads.
+
 ## 0.28.0 - 2026-09-01
 
 - Bind every accepted native turn to exact physical residency and reclaim only

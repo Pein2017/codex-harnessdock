@@ -27,10 +27,11 @@ describe("HarnessDock Skill guidance neutrality", () => {
   it("keeps checked-in guidance unchanged while the release listing projection changes", () => {
     const guidance = skills.flatMap((name) => [readSkill(name), readMetadata(name)]);
     const bytes = guidance.map((text) => Buffer.from(text));
-    const record = (model, effort) => [{ harness: "fake", maturity: "experimental", instances: [{
-      instance: "redacted", readiness: "ready", live_validated: true, maturity: "experimental",
-      routes: { models: [model], effortsByModel: { [model]: [effort] }, configurationIdentity: "secret-catalog-origin" },
-    }] }];
+    const record = (model, effort) => [{
+      harness: "fake", instance: "redacted", readiness: "ready", live_validated: true,
+      maturity: "experimental", model_groups: [{ models: [model], efforts: [effort] }],
+      configurationIdentity: "secret-catalog-origin",
+    }];
     const first = projectNativeRouteDiscovery(record("fake/provider-a", "opaque-effort-a"));
     const second = projectNativeRouteDiscovery(record("fake/provider-b", "opaque-effort-b"));
     assert.notDeepEqual(first, second);

@@ -409,7 +409,8 @@ describe("public generation: list_harnesses through MCP and the operator CLI", (
     assert.equal(result.isError, undefined);
     assert.deepEqual(calls.map((call) => call.name), ["list_harnesses"]);
     assert.deepEqual(calls[0].input, {});
-    assert.deepEqual(result.structuredContent, { harnesses: [] });
+    assert.deepEqual(JSON.parse(result.content[0].text), { harnesses: [] });
+    assert.equal(Object.hasOwn(result, "structuredContent"), false);
   });
 
   it("rejects an argument the eighth tool does not declare", async () => {

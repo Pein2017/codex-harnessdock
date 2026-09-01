@@ -625,14 +625,12 @@ describe("doctor native-route discovery", () => {
     const changed = `sha256:${"b".repeat(64)}`;
     const observation = (harness, instance, inspection_generation) => ({
       harness,
-      instances: [{
-        instance,
-        inspection_generation,
-        readiness: "ready",
-        live_validated: true,
-        maturity: "experimental",
-        routes: { models: ["model"], effortsByModel: { model: ["high"] } },
-      }],
+      instance,
+      inspection_generation,
+      readiness: "ready",
+      live_validated: true,
+      maturity: "experimental",
+      model_groups: [{ models: ["model"], efforts: ["high"] }],
     });
     const check = diagnoseNativeRouteDiscovery({
       nativeRoutes: projectNativeRouteDiscovery(

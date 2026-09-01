@@ -20,6 +20,7 @@ import {
   invokeIsolatedRuntimeOperation,
   mcpExposedDescriptionCharacters,
   mcpProjectedModelVisibleCharacters,
+  modelFacingReceipt,
   redactMcpErrorMessage,
 } from "../../runtime/mcp-server.mjs";
 import { HARNESSDOCK_MCP_API_GENERATION } from "../../runtime/mcp-api.mjs";
@@ -40,6 +41,11 @@ function descriptionCharacters(value) {
 
 function runtimeMethods(handler) {
   return Object.fromEntries(HARNESSDOCK_MCP_TOOL_NAMES.map((name) => [name, (input) => handler(name, input)]));
+}
+
+function payloadOf(result) {
+  assert.equal(Object.hasOwn(result, "structuredContent"), false, "MCP result must not duplicate its text payload");
+  return JSON.parse(result.content[0].text);
 }
 
 async function inMemoryClient(runtimeFactory) {
@@ -147,6 +153,91 @@ describe("typed HarnessDock MCP server", () => {
     assert.ok(JSON.stringify(restoredVerboseCatalog).length > JSON.stringify(listed.tools).length, "catalog guard accepts restored verbose spawn guidance");
   });
 
+  it("projects high-volume listings without duplicate MCP payloads", () => {
+    const receipt = {
+      harnesses: [{
+        harness: "pi",
+        driver_version: "pi@2",
+        maturity: "experimental",
+        capability_schema_version: 4,
+        instances: [{
+          instance: "pi-local",
+          readiness: "ready",
+          detail: "ready",
+          live_validated: true,
+          maturity: "experimental",
+          capacity: null,
+          routes: {
+            models: ["openai-codex/gpt-5.6-luna", "openai-codex/gpt-5.6-sol"],
+            topologies: ["leaf"],
+            effortsByModel: {
+              "openai-codex/gpt-5.6-luna": ["low", "medium", "high"],
+              "openai-codex/gpt-5.6-sol": ["low", "medium", "high"],
+            },
+            interaction: "noninteractive_fixed_policy",
+            continuation: "exact_resume",
+          },
+          capability_provenance: {
+            interaction: "checkout_declared",
+            continuation: "checkout_declared",
+          },
+          inspection_generation: "unavailable",
+        }],
+      }],
+    };
+    const projected = modelFacingReceipt("list_harnesses", receipt);
+    assert.deepEqual(projected, {
+      harnesses: [{
+        harness: "pi",
+        instance: "pi-local",
+        readiness: "ready",
+        live_validated: true,
+        maturity: "experimental",
+        inspection_generation: "unavailable",
+        model_groups: [{
+          models: ["openai-codex/gpt-5.6-luna", "openai-codex/gpt-5.6-sol"],
+          efforts: ["low", "medium", "high"],
+        }],
+        topologies: ["leaf"],
+        constraints: {
+          interaction: "noninteractive_fixed_policy",
+          continuation: "exact_resume",
+        },
+      }],
+    });
+    assert.ok(JSON.stringify(projected).length < JSON.stringify(receipt).length * 0.7);
+
+    assert.deepEqual(modelFacingReceipt("list_agents", {
+      agents: [{
+        agent_name: "/root/worker",
+        agent_status: "working",
+        harness: "pi",
+        route_maturity: "experimental",
+        capability_provenance: { interaction: "checkout_declared" },
+        inspection_generation: "unavailable",
+        model: "openai-codex/gpt-5.6-luna",
+        reasoning_effort: "low",
+        authority: "behavioral_write",
+        delegation_mode: "leaf",
+        phase: "tool",
+        started_at: "2026-09-01T00:00:00.000Z",
+        last_activity_at: "2026-09-01T00:00:01.000Z",
+        elapsed_seconds: 1,
+      }],
+    }), {
+      agents: [{
+        agent_name: "/root/worker",
+        agent_status: "working",
+        harness: "pi",
+        model: "openai-codex/gpt-5.6-luna",
+        reasoning_effort: "low",
+        authority: "behavioral_write",
+        delegation_mode: "leaf",
+        phase: "tool",
+      }],
+    });
+  });
+
   it("strictly decodes ordered explicit dispatch rows and routes only the decoded request to the deferred runtime operation", async () => {
     const calls = [];
     const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -213,7 +304,7 @@ describe("typed HarnessDock MCP server", () => {
       _meta: meta,
     });
     assert.equal(accepted.isError, undefined);
-    assert.deepEqual(accepted.structuredContent, {
+    assert.deepEqual(payloadOf(accepted), {
       rows: [
         { agent_name: "/root/first_row", agent_exists: true, outcome: "launched" },
         { agent_name: "/root/second_row", agent_exists: true, outcome: "launched" },
@@ -428,7 +519,7 @@ describe("typed HarnessDock MCP server", () => {
     await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
     closers.push(() => client.close(), () => server.close());
     const result = await client.callTool({ name: "list_agents", arguments: {}, _meta: meta });
-    assert.deepEqual(result.structuredContent, { accepted: true });
+    assert.deepEqual(payloadOf(result), { accepted: true });
     assert.equal(completed, 1);
   });
 
@@ -473,8 +564,7 @@ describe("typed HarnessDock MCP server", () => {
     assert.equal(Object.hasOwn(wait, "outputSchema"), false);
 
     const result = await client.callTool({ name: "wait_agent", arguments: {}, _meta: meta });
-    assert.deepEqual(result.structuredContent, receipt);
-    assert.deepEqual(result.structuredContent.update.blocking, update.blocking);
+    assert.deepEqual(payloadOf(result), receipt);
     assert.deepEqual(JSON.parse(result.content[0].text), receipt);
     assert.deepEqual(JSON.parse(result.content[0].text).update.blocking, update.blocking);
   });
@@ -495,8 +585,7 @@ describe("typed HarnessDock MCP server", () => {
     closers.push(() => client.close(), () => server.close());
 
     const result = await client.callTool({ name: "wait_agent", arguments: {}, _meta: meta });
-    assert.deepEqual(result.structuredContent, receipt);
-    assert.equal(result.structuredContent.update.blocking, null);
+    assert.deepEqual(payloadOf(result), receipt);
     assert.equal(JSON.parse(result.content[0].text).update.blocking, null);
   });
 
@@ -516,7 +605,7 @@ describe("typed HarnessDock MCP server", () => {
       arguments: { target: "/root/compact_send", message: "private repeated text" },
       _meta: meta,
     });
-    assert.deepEqual(result.structuredContent, receipt);
+    assert.deepEqual(payloadOf(result), receipt);
     assert.deepEqual(JSON.parse(result.content[0].text), receipt);
     assert.equal(JSON.stringify(result).includes("private repeated text"), false);
   });
@@ -554,9 +643,9 @@ describe("typed HarnessDock MCP server", () => {
       ["interrupt_agent", { target: "/root/compact" }],
     ]) {
       const result = await client.callTool({ name, arguments: argumentsValue, _meta: meta });
-      assert.deepEqual(result.structuredContent, receipts[name]);
+      assert.deepEqual(payloadOf(result), receipts[name]);
       assert.deepEqual(JSON.parse(result.content[0].text), receipts[name]);
-      assert.deepEqual(Object.keys(result.structuredContent), Object.keys(receipts[name]));
+      assert.deepEqual(Object.keys(payloadOf(result)), Object.keys(receipts[name]));
     }
   });
 
@@ -645,7 +734,7 @@ describe("typed HarnessDock MCP server", () => {
       _meta: meta,
     });
     assert.equal(calls[0].input.target_worktree, target);
-    assert.deepEqual(result.structuredContent, receipt);
+    assert.deepEqual(payloadOf(result), receipt);
     assert.equal(JSON.stringify(result).includes(target), false);
 
     const followup = await client.callTool({
@@ -670,12 +759,11 @@ describe("typed HarnessDock MCP server", () => {
       arguments: { path_prefix: "/root/a" },
       _meta: meta,
     });
-    assert.deepEqual(result.structuredContent, {
+    assert.deepEqual(payloadOf(result), {
       operation: "list_agents",
       input: { path_prefix: "/root/a" },
     });
     assert.equal(result.content[0].type, "text");
-    assert.deepEqual(JSON.parse(result.content[0].text), result.structuredContent);
     assert.equal(contexts.length, 1);
     assert.equal(contexts[0].cwd, root);
     assert.equal(contexts[0].env.CODEX_THREAD_ID, meta.threadId);
