@@ -21,4 +21,5 @@
 
 ## 5. Integration boundary
 
-- [ ] 5.1 Commit this change on `codex/reduce-idle-mcp-footprint` without release or installation changes. Reconcile the separately owned `bound-unknown-agent-residency` change only after both sides have commits, then rerun the union of their focused gates before any later merge.
+- [x] 5.1 Commit this change on `codex/reduce-idle-mcp-footprint` without release or installation changes.
+- [ ] 5.2 Reconcile the separately owned `bound-unknown-agent-residency` change only after both sides have commits, then rerun the union of their focused gates before any later merge.
