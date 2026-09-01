@@ -269,6 +269,7 @@ function setup(options = {}) {
       turnOptions: null,
       workspaceRoot,
       env: {},
+      ensureResidencyManager: async () => undefined,
       cwd: workspaceRoot,
     },
     agent: () => store.readAgent(agent.agentId),

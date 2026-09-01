@@ -50,14 +50,17 @@ import {
   releaseLeasesForPreSubmissionRollback,
 } from "./instance-admission-lease.mjs";
 import { resolveDriverV2 } from "./harness-registry.mjs";
+import { isProcessAlive } from "./process-control.mjs";
 import {
   beginPreSubmissionRollback,
   completePreSubmissionRollback,
   launchClaimRollbackEligibility,
   listLaunchClaimsForOwnerRoot,
+  recordLaunchAcceptanceUnknown,
   readLaunchClaim,
 } from "./launch-claim.mjs";
 import { runVersionThreeWorkerLoop } from "./v3-worker-loop.mjs";
+import { readVersionThreeJobRecord, recordVersionThreePreRecordUncertain } from "./v3-job-store.mjs";
 
 /** Read the immutable route from the version-three Agent record, or fail. */
 function requireVersionThreeRoute(agent, agentId) {
@@ -165,6 +168,30 @@ export function reconcilePreparedVersionThreeTurns({ cwd, ownerRootId, reconcili
   const receipts = [];
   for (const claim of listLaunchClaimsForOwnerRoot({ ownerRootId })) {
     if (claim.lifecycleOwner !== "version_three_worker") continue;
+    const completePreRecordBinding = claim.version === 3 && claim.submissionState === "started" &&
+      ["not_submitted", "acceptance_unknown", "acceptance_proven"].includes(claim.acceptance) && claim.physicalResidency != null && claim.worker != null &&
+      claim.provisionalNativeTurnRef != null && claim.controlRoot != null && claim.executionRoot != null;
+    if (completePreRecordBinding && !readVersionThreeJobRecord(claim) &&
+        !isProcessAlive(claim.worker.pid)) {
+      try {
+        const uncertainClaim = claim.acceptance === "not_submitted"
+          ? recordLaunchAcceptanceUnknown({ ownerRootId, agentId: claim.agentId, jobId: claim.jobId,
+            attemptId: claim.attemptId, sanitizedDetail: null })
+          : claim;
+        recordVersionThreePreRecordUncertain({
+          generation: FUTURE_WRITE_GENERATION, ownerRootId, agentId: claim.agentId, jobId: claim.jobId,
+          attemptId: uncertainClaim.attemptId, workspaceRoot: uncertainClaim.controlRoot, controlRoot: uncertainClaim.controlRoot,
+          executionRoot: uncertainClaim.executionRoot, route: uncertainClaim.route,
+          provisionalNativeTurnRef: uncertainClaim.acceptance === "acceptance_proven"
+            ? uncertainClaim.nativeTurnRef : uncertainClaim.provisionalNativeTurnRef,
+          worker: uncertainClaim.worker, physicalResidency: uncertainClaim.physicalResidency,
+        });
+        receipts.push(Object.freeze({ jobId: claim.jobId, reconciled: true, reason: "v3_pre_record_worker_lost" }));
+      } catch {
+        receipts.push(Object.freeze({ jobId: claim.jobId, reconciled: false, reason: "v3_pre_record_recovery_deferred" }));
+      }
+      continue;
+    }
     const immediatelyCompletable = claim.submissionState === "rollback_in_progress";
     const ageEligible = (
       claim.acceptance === "acceptance_rejected" ||

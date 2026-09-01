@@ -100,6 +100,58 @@ function attachJob(context, agent, jobId, status = "completed") {
 }
 
 describe("Agent completion projection", () => {
+  it("projects hard reclaim through public wait without model result or continuation", async () => {
+    const { runtime, workspace, ownerRootId } = setup();
+    const agent = runtime.store.createAgent({ task_name: "hard_reclaimed_wait" });
+    runtime.store.updateAgent(agent.agentId, (current) => ({
+      ...current,
+      status: "errored",
+      continuation: {
+        mode: "blocked",
+        evidence: { reason: "worker_lost", jobId: "hard-reclaimed-wait-job", observedAt: "2026-08-31T00:00:00.000Z" },
+      },
+    }));
+    const message = "Agent worker resources were reclaimed while native settlement remains unknown.";
+    appendCompletionEvent(workspace, ownerRootId, {
+      jobId: "hard-reclaimed-wait-job",
+      agentId: agent.agentId,
+      terminalStatus: "hard_reclaimed",
+      completedAt: "2026-08-31T00:00:00.000Z",
+      summary: message,
+      settlement: "unknown",
+      resumability: { classification: "not_resumable", blockingReason: "worker_lost" },
+      blocking: { reason: "worker_lost", scope: "agent", retry: "new_agent" },
+      detailedResultAvailable: false,
+      resultPointer: null,
+      finalMessage: message,
+      claudeSessionIdAvailable: false,
+      metrics: null,
+    });
+
+    const waited = await runtime.waitAgent({ timeout_ms: 0 });
+    assert.deepEqual({
+      kind: waited.update.kind,
+      agentStatus: waited.update.agent_status,
+      settlement: waited.update.settlement,
+      completionMessage: waited.update.completion_message,
+      blocking: waited.update.blocking,
+      metrics: waited.update.metrics,
+    }, {
+      kind: "completion",
+      agentStatus: "failed",
+      settlement: "unknown",
+      completionMessage: message,
+      blocking: { reason: "worker_lost", scope: "agent", retry: "new_agent" },
+      metrics: null,
+    });
+    for (const forbidden of [
+      "continuation", "result", "result_pointer", "detailed_result", "assistant_output", "model_output",
+      "acceptance", "success", "failure",
+    ]) {
+      assert.equal(Object.hasOwn(waited.update, forbidden), false, forbidden);
+    }
+  });
+
   it("joins a fixed target barrier in caller order without consuming unrelated older completion", async () => {
     const context = setup();
     const first = context.runtime.store.createAgent({ task_name: "target_first" });

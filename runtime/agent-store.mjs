@@ -1434,7 +1434,6 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir, harness, w
         "path",
         "delegationMode",
         "createdAt",
-        "terminalEventBinding",
         // A version-2 Agent's Harness and model route are fixed at creation.
         // Version-1 records still allow the legacy model backfill to complete.
         ...(current.version === AGENT_RECORD_VERSION
@@ -1443,6 +1442,9 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir, harness, w
       ];
       for (const key of immutable) {
         if (next[key] !== current[key]) throw new Error(`Agent updater must not change immutable field ${key}.`);
+      }
+      if (JSON.stringify(next.terminalEventBinding ?? null) !== JSON.stringify(current.terminalEventBinding ?? null)) {
+        throw new Error("Agent updater must not change immutable field terminalEventBinding.");
       }
       if (
         current.version === AGENT_RECORD_VERSION &&
@@ -2117,6 +2119,60 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir, harness, w
     };
   }
 
+  /** Finalize only the Agent's physical lifecycle from one committed V3 reclaim receipt. */
+  function finalizeHardReclaim(record) {
+    const leaseDispositions = Object.values(record?.hardReclaim?.leaseDisposition ?? {});
+    if (!record || typeof record !== "object" || Array.isArray(record) ||
+        record.status !== "hard_reclaimed" || record.hardReclaim?.phase !== "committed" ||
+        record.uncertainty == null || record.terminalJob != null ||
+        leaseDispositions.length !== 3 || leaseDispositions.some((entry) => ["pending", "unknown"].includes(entry))) {
+      throw new Error("Agent hard reclaim projection requires one committed nonsemantic V3 receipt.");
+    }
+    const jobId = normalizeJobId(record.jobId);
+    const target = assertText(record.agentId, "Agent-linked hard reclaim agent ID");
+    const agentBefore = resolveTarget(target);
+    assertVersionThreeLifecycleOwned(agentBefore, generation, "hard reclaim projection");
+    assertVersionThreeJobIdentity({ ...record, id: jobId }, agentBefore);
+    const result = mutateRegistry((registry) => {
+      const current = internalAgent(registry, target);
+      const finalizedJobIds = Array.isArray(current.finalizedJobIds)
+        ? current.finalizedJobIds
+        : (current.lastTerminalJobId ? [current.lastTerminalJobId] : []);
+      if (current.lastTerminalJobId === jobId || finalizedJobIds.includes(jobId)) {
+        return { registry, write: false, reconciled: false, reason: "already_finalized", agent: current };
+      }
+      const isCurrent = current.activeJobId === jobId ||
+        (current.activeJobId == null && (current.latestJobId == null || current.latestJobId === jobId));
+      if (!isCurrent) {
+        return { registry, write: false, reconciled: false, reason: "stale_hard_reclaim", agent: current };
+      }
+      const agent = {
+        ...current,
+        activeJobId: current.activeJobId === jobId ? null : current.activeJobId,
+        ...(current.liveTurnOwnership?.jobId === jobId ? { liveTurnOwnership: null } : {}),
+        latestJobId: jobId,
+        lastTerminalJobId: jobId,
+        finalizedJobIds: [...finalizedJobIds, jobId].slice(-FINALIZED_JOB_ID_LIMIT),
+        latestCompletionSequence: Number(current.latestCompletionSequence ?? 0) + 1,
+        status: "errored",
+        continuation: continuation("blocked", {
+          reason: "worker_lost",
+          settlement: "unknown",
+          jobId,
+          attemptId: assertText(record.attemptId, "Agent hard reclaim attempt ID"),
+        }),
+        updatedAt: nowIso(),
+      };
+      return {
+        registry: { ...registry, agents: { ...registry.agents, [agent.agentId]: agent } },
+        reconciled: true,
+        reason: null,
+        agent,
+      };
+    });
+    return { reconciled: Boolean(result.reconciled), reason: result.reason, agent: publicAgent(result.agent) };
+  }
+
   function reconcileFromJobs(jobs) {
     if (!Array.isArray(jobs)) throw new Error("Agent reconciliation requires an array of jobs.");
     const receipts = [];
@@ -2468,6 +2524,7 @@ export function createAgentStore({ cwd, ownerRootId, claudeConfigDir, harness, w
     rollbackVersionThreeActivation,
     recoverCredentialBlockedActivation,
     finalizeFromJob,
+    finalizeHardReclaim,
     enqueueMessage,
     listMessages,
     assignQueuedMessages,

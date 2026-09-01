@@ -1209,6 +1209,95 @@ function nativeTurnRefMatchesRoute(nativeTurnRef, route) {
  */
 export const LEASE_RELEASE_OUTCOMES = Object.freeze(["all", "none", "partial", "unknown"]);
 
+function exactReleasePlans(releases, routeLabel) {
+  const rawPlans = releases.map((target) => {
+    const { kind, keyText, keyFields } = releaseDescriptorForTarget(target);
+    const identity = assertBindingIdentity(target);
+    const canonicalRoute = validateVersionThreeRoute(target.route, routeLabel);
+    assertKeyFieldsMatchRoute(kind, keyFields, canonicalRoute);
+    const routeText = JSON.stringify(canonicalRoute);
+    const keyDir = resolveLeaseKeyDirectory(kind, keyText);
+    const holderFile = path.join(keyDir, `${holderIdentityDigest({ kind, keyText, ...identity, routeText })}.json`);
+    return { kind, keyText, identity, canonicalRoute, routeText, keyDir, holderFile, status: null };
+  });
+  return [...new Map(rawPlans.map((plan) => [plan.holderFile, plan])).values()];
+}
+
+/** Shared exact holder-plan/lock/unlink engine; callers own only semantic gating. */
+function releaseExactPlans(plans) {
+  const locks = [];
+  try {
+    for (const dir of [...new Set(plans.map((plan) => plan.keyDir))].sort()) {
+      locks.push({ dir, lock: acquireDirectoryLock(dir) });
+    }
+    // Validate the complete holder plan before the first unlink. A corrupt or
+    // drifted sibling cannot turn a total release decision into an accidental
+    // partial mutation.
+    for (const plan of plans) {
+      if (!fs.existsSync(plan.holderFile)) {
+        plan.status = "already_released";
+        continue;
+      }
+      assertSameLeaseIdentity(readHolderFile(plan.holderFile), {
+        kind: plan.kind, keyText: plan.keyText, ...plan.identity, routeText: plan.routeText,
+      });
+      plan.status = "to_release";
+    }
+
+    let releasedCount = 0;
+    let alreadyReleasedCount = 0;
+    let retainedCount = 0;
+    let unknownCount = 0;
+    const failures = [];
+    const dispositions = [];
+    for (const plan of plans) {
+      if (plan.status === "already_released") {
+        alreadyReleasedCount += 1;
+        dispositions.push(Object.freeze({ kind: plan.kind, disposition: "already_released", code: null }));
+        continue;
+      }
+      try {
+        fs.unlinkSync(plan.holderFile);
+        releasedCount += 1;
+        dispositions.push(Object.freeze({ kind: plan.kind, disposition: "released", code: null }));
+      } catch (error) {
+        let disposition;
+        try { disposition = fs.existsSync(plan.holderFile) ? "retained" : "released"; } catch { disposition = "unknown"; }
+        if (disposition === "released") releasedCount += 1;
+        else if (disposition === "retained") retainedCount += 1;
+        else unknownCount += 1;
+        const code = typeof error?.code === "string" ? error.code : "unknown_error";
+        failures.push(Object.freeze({ kind: plan.kind, code, disposition }));
+        dispositions.push(Object.freeze({ kind: plan.kind, disposition, code }));
+      }
+    }
+    const outcome = unknownCount > 0
+      ? "unknown"
+      : retainedCount === 0
+        ? "all"
+        : releasedCount + alreadyReleasedCount > 0
+          ? "partial"
+          : "none";
+    return { outcome, releasedCount, alreadyReleasedCount, retainedCount, unknownCount,
+      failures: Object.freeze(failures), dispositions: Object.freeze(dispositions) };
+  } finally {
+    for (const { lock } of locks) releaseDirectoryLock(lock);
+  }
+}
+
+/**
+ * Internal hard-reclaim release.  Unlike settlement release this has no model
+ * result: its caller has already durably fenced an unknown turn and proven the
+ * exact mutation-capable process dead.  Keep this deliberately separate from
+ * `releaseLeasesOnSettlement()` so an uncertain turn can never accidentally
+ * acquire semantic settlement authority.
+ */
+export function releaseExactLeasesForHardReclaim({ releases }) {
+  if (!Array.isArray(releases) || releases.length === 0) throw new Error("Hard reclaim requires exact lease targets.");
+  const result = releaseExactPlans(exactReleasePlans(releases, "Hard reclaim lease route"));
+  return Object.freeze({ released: result.outcome === "all", ...result });
+}
+
 /**
  * The whole-batch retention receipt.
  *
@@ -1265,29 +1354,7 @@ export function releaseLeasesOnSettlement({ normalizedTerminalResult, releases }
     return retained(classification.reason, classification, releases.length);
   }
 
-  const rawPlans = releases.map((target) => {
-    const { kind, keyText, keyFields } = releaseDescriptorForTarget(target);
-    const identity = assertBindingIdentity(target);
-    const canonicalRoute = validateVersionThreeRoute(target.route, "Lease release route");
-    assertKeyFieldsMatchRoute(kind, keyFields, canonicalRoute);
-    const routeText = JSON.stringify(canonicalRoute);
-    const keyDir = resolveLeaseKeyDirectory(kind, keyText);
-    const holderDigest = holderIdentityDigest({ kind, keyText, ...identity, routeText });
-    const holderFile = path.join(keyDir, `${holderDigest}.json`);
-    return { kind, keyText, identity, canonicalRoute, routeText, keyDir, holderFile, status: /** @type {string|null} */ (null) };
-  });
-
-  // De-duplicate by the exact holder-file identity: two release targets that
-  // resolve to the same file are the same release, not two. Pure, and it
-  // touches no file, so it may precede the coherence check below and let that
-  // check's receipt state the exact number of distinct leases retained.
-  const plans = [];
-  const seenHolderFiles = new Set();
-  for (const plan of rawPlans) {
-    if (seenHolderFiles.has(plan.holderFile)) continue;
-    seenHolderFiles.add(plan.holderFile);
-    plans.push(plan);
-  }
+  const plans = exactReleasePlans(releases, "Lease release route");
 
   // Every target's own bound route must agree with the settlement evidence's
   // native turn reference (Harness/instance/Driver version). A mismatch
@@ -1299,95 +1366,18 @@ export function releaseLeasesOnSettlement({ normalizedTerminalResult, releases }
     }
   }
 
-  const uniqueDirs = [...new Set(plans.map((plan) => plan.keyDir))].sort();
-  // Locks are acquired one at a time *inside* the try/finally, not built via
-  // `.map()` ahead of it: if a later directory's lock acquisition throws
-  // (contention timeout, I/O error), every lock already acquired for an
-  // earlier directory must still be released rather than leaked.
-  const locks = [];
-  try {
-    for (const dir of uniqueDirs) {
-      locks.push({ dir, lock: acquireDirectoryLock(dir) });
-    }
-    for (const plan of plans) {
-      if (!fs.existsSync(plan.holderFile)) {
-        // The holder file *is* the identity: its absence always means
-        // "already released" for this exact owner/Agent/job/route/kind/key
-        // combination, regardless of whether a sibling holder still exists
-        // for a capacity>1 key. It can never mean "held by someone else" --
-        // a different identity computes a different file, never this one.
-        plan.status = "already_released";
-        continue;
-      }
-      const record = readHolderFile(plan.holderFile);
-      assertSameLeaseIdentity(record, { kind: plan.kind, keyText: plan.keyText, ...plan.identity, routeText: plan.routeText });
-      plan.status = "to_release";
-    }
-
-    let releasedCount = 0;
-    let alreadyReleasedCount = 0;
-    let retainedCount = 0;
-    let unknownCount = 0;
-    /** @type {Array<{kind: string, code: string, disposition: string}>} */
-    const failures = [];
-    for (const plan of plans) {
-      if (plan.status !== "to_release") {
-        alreadyReleasedCount += 1;
-        continue;
-      }
-      try {
-        fs.unlinkSync(plan.holderFile);
-        releasedCount += 1;
-      } catch (error) {
-        // A mid-batch unlink failure must never surface as "nothing was
-        // released": earlier targets in this batch are already gone, and a
-        // caller that retried or reported `released: false` would be acting on
-        // a false statement. Re-read this exact holder file to decide the one
-        // honest disposition for it, and keep going so the batch's total
-        // evidence is exact rather than truncated at the first failure.
-        let disposition;
-        try {
-          disposition = fs.existsSync(plan.holderFile) ? "retained" : "released";
-        } catch {
-          disposition = "unknown";
-        }
-        if (disposition === "released") {
-          releasedCount += 1;
-        } else if (disposition === "retained") {
-          retainedCount += 1;
-        } else {
-          unknownCount += 1;
-        }
-        // Only the closed error code is reported: a filesystem message can
-        // name a local path, and a lease receipt is not a place for one.
-        failures.push(Object.freeze({
-          kind: plan.kind,
-          code: typeof error?.code === "string" ? error.code : "unknown_error",
-          disposition,
-        }));
-      }
-    }
-    const outcome = unknownCount > 0
-      ? "unknown"
-      : retainedCount === 0
-        ? "all"
-        : releasedCount + alreadyReleasedCount > 0
-          ? "partial"
-          : "none";
-    return Object.freeze({
-      released: outcome === "all",
-      outcome,
-      reason: outcome === "all" ? "publishable" : `release_${outcome}`,
-      classification,
-      releasedCount,
-      alreadyReleasedCount,
-      retainedCount,
-      unknownCount,
-      failures: Object.freeze(failures),
-    });
-  } finally {
-    for (const { lock } of locks) releaseDirectoryLock(lock);
-  }
+  const result = releaseExactPlans(plans);
+  return Object.freeze({
+    released: result.outcome === "all",
+    outcome: result.outcome,
+    reason: result.outcome === "all" ? "publishable" : `release_${result.outcome}`,
+    classification,
+    releasedCount: result.releasedCount,
+    alreadyReleasedCount: result.alreadyReleasedCount,
+    retainedCount: result.retainedCount,
+    unknownCount: result.unknownCount,
+    failures: result.failures,
+  });
 }
 
 // ---------------------------------------------------------------------------

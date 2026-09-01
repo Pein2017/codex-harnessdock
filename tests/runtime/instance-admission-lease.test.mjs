@@ -27,6 +27,7 @@ import {
   acquireLease,
   acquiredLeaseEvidence,
   inspectLeaseInventory,
+  releaseExactLeasesForHardReclaim,
   releaseLeasesOnSettlement,
   LEASE_ACQUISITION_EVIDENCE_FIELDS,
   MAX_HOLDERS_PER_ENTRY,
@@ -1303,6 +1304,54 @@ describe("instance admission lease: settlement-gated batch release (4.3)", () =>
       () => acquireInstanceLease({ ...instanceBinding, jobId: "job-y", agentId: "agent-y" }),
       /capacity/i
     );
+  });
+});
+
+describe("instance admission lease: hard-reclaim exact disposition", () => {
+  it("reuses the validated holder-plan seam and reports every released, already-released, or ambiguous target", () => {
+    setup();
+    const instanceBinding = {
+      ...binding({ jobId: "job-hard" }), harnessId: "fake-service", instanceKey: "tenant-alpha",
+      capacityClass: "shared", capacityLimit: 1,
+    };
+    const sessionBinding = {
+      ...binding({ jobId: "job-hard" }), harnessId: "fake-service", instanceKey: "tenant-alpha",
+      nativeSessionId: "native-hard",
+    };
+    acquireInstanceLease(instanceBinding);
+    acquireNativeSessionLease(sessionBinding);
+    const releases = [
+      { kind: "instance", ...instanceBinding },
+      { kind: "native_session", ...sessionBinding },
+    ];
+    const first = releaseExactLeasesForHardReclaim({ releases });
+    assert.equal(first.outcome, "all");
+    assert.deepEqual(first.dispositions.map(({ kind, disposition }) => ({ kind, disposition })), [
+      { kind: "instance", disposition: "released" },
+      { kind: "native_session", disposition: "released" },
+    ]);
+    const replay = releaseExactLeasesForHardReclaim({ releases });
+    assert.deepEqual(replay.dispositions.map(({ kind, disposition }) => ({ kind, disposition })), [
+      { kind: "instance", disposition: "already_released" },
+      { kind: "native_session", disposition: "already_released" },
+    ]);
+
+    acquireNativeSessionLease(sessionBinding);
+    const realUnlink = fs.unlinkSync;
+    fs.unlinkSync = function patched(file, ...args) {
+      if (typeof file === "string" && file.includes("/leases/") && file.endsWith(".json")) {
+        throw Object.assign(new Error("simulated ambiguity"), { code: "EIO" });
+      }
+      return realUnlink.call(this, file, ...args);
+    };
+    let ambiguous;
+    try {
+      ambiguous = releaseExactLeasesForHardReclaim({ releases: [{ kind: "native_session", ...sessionBinding }] });
+    } finally {
+      fs.unlinkSync = realUnlink;
+    }
+    assert.equal(ambiguous.outcome, "none");
+    assert.deepEqual(ambiguous.dispositions, [{ kind: "native_session", disposition: "retained", code: "EIO" }]);
   });
 });
 

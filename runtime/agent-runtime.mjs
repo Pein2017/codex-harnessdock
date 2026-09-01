@@ -10,7 +10,11 @@ import path from "node:path";
 
 import { createAgentStore } from "./agent-store.mjs";
 import { FUTURE_WRITE_GENERATION, assertSameDurableRouteSemantics } from "./durable-state-v3.mjs";
-import { listVersionThreeJobRecords, readVersionThreeJobRecord } from "./v3-job-store.mjs";
+import {
+  listVersionThreeJobRecords,
+  readVersionThreeJobRecord,
+  reconcileVersionThreeTerminalJobs,
+} from "./v3-job-store.mjs";
 import { CLAUDE_CODE_HARNESS_ID, delegationModeForTopology } from "./claude-code-driver.mjs";
 import { deriveBlockedContinuationRejection } from "./agent-blocking.mjs";
 import {
@@ -62,7 +66,7 @@ import { validateProcessIdentity } from "./process-control.mjs";
 import { reconcileVersionThreeWorkerLoss } from "./v3-turn-reconciliation.mjs";
 import { preflightTerminalEventDescriptor } from "./terminal-event-publisher.mjs";
 
-const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "interrupted", "cancelled", "unknown"]);
+const TERMINAL_JOB_STATUSES = new Set(["completed", "failed", "interrupted", "cancelled", "unknown", "hard_reclaimed"]);
 const TERMINAL_AGENT_STATUSES = new Set(["completed", "interrupted", "errored"]);
 const ACTIVATION_RECOVERY_GRACE_MS = 2_000;
 const DEFAULT_AGENT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
@@ -596,6 +600,7 @@ function publicCompletionUpdate(summary, agents) {
     completion_message: summary.completionMessage,
     completion_message_truncated: summary.completionMessageTruncated,
     delivery_token: summary.deliveryToken,
+    ...(summary.settlement == null ? {} : { settlement: summary.settlement }),
     // Pass through the frozen value exactly as stored; never recompute it
     // from the Agent's current (possibly later) lifecycle.
     blocking: summary.blocking ?? null,
@@ -1041,6 +1046,19 @@ class AgentRuntime {
         reason: "v3_pre_submission_scan_deferred",
       }];
     }
+    let versionThreeLifecycleReceipts;
+    try {
+      versionThreeLifecycleReceipts = reconcileVersionThreeTerminalJobs({
+        ownerRootId: this.ownerRootId,
+        generation: FUTURE_WRITE_GENERATION,
+      }).receipts;
+    } catch {
+      versionThreeLifecycleReceipts = [{
+        jobId: null,
+        reconciled: false,
+        reason: "v3_lifecycle_projection_deferred",
+      }];
+    }
     const jobs = this.rootJobs();
     const jobsById = new Map(jobs.map((job) => [job.id, job]));
     const diagnosticReceipts = [];
@@ -1081,7 +1099,12 @@ class AgentRuntime {
     }
     const ordinaryJobs = jobs.filter((job) => !isTerminalPreClaudeActivation(job));
     const ordinaryReceipts = this.store.reconcileFromJobs(ordinaryJobs);
-    const receipts = [...versionThreePreparationReceipts, ...diagnosticReceipts, ...ordinaryReceipts];
+    const receipts = [
+      ...versionThreePreparationReceipts,
+      ...versionThreeLifecycleReceipts,
+      ...diagnosticReceipts,
+      ...ordinaryReceipts,
+    ];
     for (const receipt of ordinaryReceipts) {
       if (!receipt.jobId) continue;
       const projectionMarkerMissing = !jobsById.get(receipt.jobId)?.agentProjectionReconciledAt;
@@ -2529,6 +2552,7 @@ class AgentRuntime {
         };
         const frozen = event ?? consumed;
         if (frozen?.blocking != null) entry.blocking = frozen.blocking;
+        if (frozen?.settlement != null) entry.settlement = frozen.settlement;
         if (event && barrierSettled) {
           entry.summary = event.summary;
           entry.completion_message = event.completionMessage;

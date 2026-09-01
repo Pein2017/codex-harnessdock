@@ -266,7 +266,13 @@ async function launchDriver(test, {
     driver.prepareTurn({ route, taskInput, turnOptions: preparedTurnOptions, turnId }),
     { driver, route, taskInput },
   );
-  const launchContext = await driver.revalidatePreparedTurn(preparedTurn, scope);
+  // The production launch core supplies this durable binder.  This direct
+  // Driver parity fixture has no claim store, so retain the same awaited seam
+  // with a test-local receipt sink rather than bypassing the Driver contract.
+  const launchContext = {
+    ...(await driver.revalidatePreparedTurn(preparedTurn, scope)),
+    async bindPhysicalResidency() {},
+  };
   const result = {
     route,
     stream,

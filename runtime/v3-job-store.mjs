@@ -41,7 +41,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { createAgentStore } from "./agent-store.mjs";
-import { reconcileTerminalJobCompletion } from "./completion-inbox.mjs";
+import { reconcileHardReclaimCompletion, reconcileTerminalJobCompletion } from "./completion-inbox.mjs";
 import { publishBoundTerminalEvent } from "./terminal-event-publisher.mjs";
 import { recoverStaleDirectoryLock, sameFileIdentity } from "./durable-directory-lock.mjs";
 import {
@@ -73,14 +73,21 @@ import { resolvePluginStateRoot } from "./paths.mjs";
 import { plainRecordSnapshot } from "./plain-record.mjs";
 import { getProcessIdentity } from "./process-control.mjs";
 import { classifyTurnSettlement } from "./turn-settlement.mjs";
+import { validatePhysicalResidency } from "./physical-residency.mjs";
 
-export const V3_JOB_SCHEMA_VERSION = 1;
+export const V3_JOB_SCHEMA_VERSION = 2;
+const LEGACY_V3_JOB_SCHEMA_VERSION = 1;
+// The durable directory is a layout, not a record schema. Keeping its original
+// name lets ordinary readers and durable watches continue to see retained v1
+// records while new v2 records remain distinguishable by their closed bytes.
+const V3_JOB_STORAGE_LAYOUT_VERSION = 1;
 
 /** Terminal statuses a version-three job record may declare. */
 export const V3_TERMINAL_STATUSES = Object.freeze(["completed", "failed", "interrupted"]);
+const V3_LIFECYCLE_TERMINAL_STATUSES = Object.freeze(["hard_reclaimed", ...V3_TERMINAL_STATUSES]);
 
 /** Every lifecycle state a version-three job record may declare. */
-export const V3_JOB_STATUSES = Object.freeze(["running", "unknown", ...V3_TERMINAL_STATUSES]);
+export const V3_JOB_STATUSES = Object.freeze(["running", "unknown", "hard_reclaimed", ...V3_TERMINAL_STATUSES]);
 
 const V3_JOB_FIELDS = Object.freeze([
   "version", "harnessStateVersion",
@@ -88,12 +95,75 @@ const V3_JOB_FIELDS = Object.freeze([
   "controlRoot", "executionRoot",
   "route", "nativeTurnRef", "status", "uncertainty", "terminalJob",
   "progress", "progressDeliveredRevision", "worker",
+  "physicalResidency",
+  "hardReclaim",
   "agentProjectionReconciledAt", "completionPublishedAt",
   "createdAt", "updatedAt",
 ]);
 
 const MAX_IDENTITY_TEXT_BYTES = 256;
 const MAX_DETAIL_BYTES = 2048;
+const HARD_RECLAIM_PHASES = Object.freeze(["claimed", "physical_dead", "lease_pending", "committed"]);
+const HARD_RECLAIM_PHYSICAL_DISPOSITIONS = Object.freeze(["dead", "retained_shared", "retained_reused"]);
+const HARD_RECLAIM_LEASE_DISPOSITIONS = Object.freeze([
+  "pending", "released", "already_released", "retained_shared", "retained_reused", "not_applicable", "unknown",
+]);
+const HARD_RECLAIM_FAILURE_CODES = Object.freeze([
+  "endpoint_unproven", "lease_disposition_unknown", "lease_unlink_retained", "peer_present", "peer_unknown",
+  "physical_identity_ambiguous", "receipt_drift", "signal_failed", "signal_refused", "target_still_alive",
+  "termination_fence_failed",
+]);
+
+function validateHardReclaimLeaseDisposition(value, label) {
+  const snapshot = plainRecordSnapshot(value, label);
+  if (Object.keys(snapshot).sort().join(",") !== "admission,serviceTurn,writer") {
+    throw new Error(`${label} has an invalid field set.`);
+  }
+  for (const field of ["admission", "writer", "serviceTurn"]) {
+    if (!HARD_RECLAIM_LEASE_DISPOSITIONS.includes(snapshot[field])) {
+      throw new Error(`${label} ${field} has an unsupported disposition.`);
+    }
+  }
+  return Object.freeze({ admission: snapshot.admission, writer: snapshot.writer, serviceTurn: snapshot.serviceTurn });
+}
+
+function validateHardReclaim(value, label) {
+  if (value == null) return null;
+  const snapshot = plainRecordSnapshot(value, label);
+  const phase = snapshot.phase;
+  if (Object.keys(snapshot).sort().join(",") !== "claimedAt,committedAt,failureCode,leaseDisposition,leasePendingAt,phase,physicalDeadAt,physicalDisposition,terminationAttemptedAt,version") {
+    throw new Error(`${label} has an invalid field set.`);
+  }
+  if (snapshot.version !== 1 || !HARD_RECLAIM_PHASES.includes(phase)) throw new Error(`${label} has unsupported reclaim generation or phase.`);
+  const claimedAt = assertTimestampText(snapshot.claimedAt, `${label} claimedAt`);
+  const physicalDeadAt = assertOptionalTimestamp(snapshot.physicalDeadAt, `${label} physicalDeadAt`);
+  const leasePendingAt = assertOptionalTimestamp(snapshot.leasePendingAt, `${label} leasePendingAt`);
+  const committedAt = assertOptionalTimestamp(snapshot.committedAt, `${label} committedAt`);
+  const terminationAttemptedAt = assertOptionalTimestamp(snapshot.terminationAttemptedAt, `${label} terminationAttemptedAt`);
+  const physicalDisposition = snapshot.physicalDisposition == null ? null : snapshot.physicalDisposition;
+  if (physicalDisposition != null && !HARD_RECLAIM_PHYSICAL_DISPOSITIONS.includes(physicalDisposition)) {
+    throw new Error(`${label} has an unsupported physical disposition.`);
+  }
+  const leaseDisposition = validateHardReclaimLeaseDisposition(snapshot.leaseDisposition, `${label} lease disposition`);
+  const failureCode = snapshot.failureCode == null ? null : snapshot.failureCode;
+  if (failureCode != null && !HARD_RECLAIM_FAILURE_CODES.includes(failureCode)) {
+    throw new Error(`${label} has an unsupported failure code.`);
+  }
+  const expected = phase === "claimed" ? [null, null, null] : phase === "physical_dead" ? ["set", null, null] : phase === "lease_pending" ? ["set", "set", null] : ["set", "set", "set"];
+  for (const [valueAt, requirement] of [[physicalDeadAt, expected[0]], [leasePendingAt, expected[1]], [committedAt, expected[2]]]) {
+    if ((requirement === "set") !== (valueAt != null)) throw new Error(`${label} phase timestamps do not match its phase.`);
+  }
+  if ((phase === "claimed") !== (physicalDisposition == null)) {
+    throw new Error(`${label} physical disposition does not match its phase.`);
+  }
+  const laterSharedFailure = phase === "committed" && physicalDisposition === "retained_shared" && failureCode != null;
+  if (phase === "committed" && ((!laterSharedFailure && failureCode != null) ||
+      Object.values(leaseDisposition).some((entry) => ["pending", "unknown"].includes(entry)))) {
+    throw taggedError("lease_disposition_unknown", `${label} cannot commit an ambiguous lease disposition.`);
+  }
+  return Object.freeze({ version: 1, phase, claimedAt, physicalDeadAt, leasePendingAt, committedAt,
+    terminationAttemptedAt, physicalDisposition, leaseDisposition, failureCode });
+}
 
 // Durable uncertainty detail is an operator-facing machine code, not an error
 // message.  In particular, paths, service responses, and arbitrary exception
@@ -283,7 +353,7 @@ function digest(value) {
 }
 
 function resolveVersionThreeJobRoot() {
-  return path.join(resolvePluginStateRoot(), "v3-jobs", `v${V3_JOB_SCHEMA_VERSION}`);
+  return path.join(resolvePluginStateRoot(), "v3-jobs", `v${V3_JOB_STORAGE_LAYOUT_VERSION}`);
 }
 
 /**
@@ -513,12 +583,15 @@ function validateVersionThreeJobRecord(parsed, { storedRoute = false } = {}) {
     throw new Error(`${label} must state controlRoot and executionRoot together.`);
   }
   for (const field of V3_JOB_FIELDS) {
-    if (!["controlRoot", "executionRoot", "progress", "progressDeliveredRevision", "worker"].includes(field) && !(field in snapshot)) {
+    if (!["controlRoot", "executionRoot", "progress", "progressDeliveredRevision", "worker", "physicalResidency", "hardReclaim"].includes(field) && !(field in snapshot)) {
       throw new Error(`${label} is missing required field: ${field}.`);
     }
   }
-  if (snapshot.version !== V3_JOB_SCHEMA_VERSION) {
+  if (![LEGACY_V3_JOB_SCHEMA_VERSION, V3_JOB_SCHEMA_VERSION].includes(snapshot.version)) {
     throw taggedError("unsupported_version", `${label} declares unsupported schema version.`);
+  }
+  if (snapshot.version === LEGACY_V3_JOB_SCHEMA_VERSION && Object.hasOwn(snapshot, "physicalResidency")) {
+    throw taggedError("legacy_schema_drift", `${label} legacy schema must not declare physical residency.`);
   }
   if (snapshot.harnessStateVersion !== JOB_STATE_VERSION_V3) {
     throw taggedError(
@@ -538,12 +611,13 @@ function validateVersionThreeJobRecord(parsed, { storedRoute = false } = {}) {
     throw new Error(`${label} declares an unsupported status: ${JSON.stringify(snapshot.status ?? null)}.`);
   }
   const isTerminal = V3_TERMINAL_STATUSES.includes(snapshot.status);
+  const isLifecycleTerminal = V3_LIFECYCLE_TERMINAL_STATUSES.includes(snapshot.status);
   const uncertainty = validateUncertainty(snapshot.uncertainty, `${label} uncertainty`);
   if (snapshot.status === "unknown" && uncertainty == null) {
     throw new Error(`${label} with status unknown must state its exact uncertainty.`);
   }
-  if (snapshot.status !== "unknown" && uncertainty != null) {
-    throw new Error(`${label} may only carry uncertainty while its status is unknown.`);
+  if (!["unknown", "hard_reclaimed"].includes(snapshot.status) && uncertainty != null) {
+    throw new Error(`${label} may only carry uncertainty while settlement is unknown.`);
   }
   const terminalJob = validateTerminalJob(snapshot.terminalJob, `${label} terminal projection`, {
     ...identity, attemptId, route, nativeTurnRef, status: snapshot.status, storedRoute,
@@ -558,8 +632,8 @@ function validateVersionThreeJobRecord(parsed, { storedRoute = false } = {}) {
   const agentProjectionReconciledAt = assertOptionalTimestamp(
     snapshot.agentProjectionReconciledAt, `${label} agentProjectionReconciledAt`
   );
-  if (!isTerminal && (completionPublishedAt != null || agentProjectionReconciledAt != null)) {
-    throw new Error(`${label} cannot claim a terminal projection or completion before it is terminal.`);
+  if (!isLifecycleTerminal && (completionPublishedAt != null || agentProjectionReconciledAt != null)) {
+    throw new Error(`${label} cannot claim a lifecycle projection or completion before it is terminal.`);
   }
   const progressDeliveredRevision = snapshot.progressDeliveredRevision == null ? 0 : snapshot.progressDeliveredRevision;
   if (!Number.isSafeInteger(progressDeliveredRevision) || progressDeliveredRevision < 0) {
@@ -586,6 +660,16 @@ function validateVersionThreeJobRecord(parsed, { storedRoute = false } = {}) {
     if (!Number.isSafeInteger(value.pid) || value.pid < 1) throw new Error(`${label} worker pid is invalid.`);
     worker = Object.freeze({ pid: value.pid, identity: assertIdentityText(value.identity, `${label} worker identity`) });
   }
+  const physicalResidency = snapshot.physicalResidency == null ? null
+    : validatePhysicalResidency(snapshot.physicalResidency, `${label} physical residency`);
+  const hardReclaim = snapshot.hardReclaim == null ? null : validateHardReclaim(snapshot.hardReclaim, `${label} hard reclaim`);
+  if (snapshot.status === "hard_reclaimed") {
+    if (uncertainty == null || terminalJob != null || hardReclaim?.phase !== "committed") {
+      throw new Error(`${label} hard_reclaimed requires committed physical reclaim and preserved uncertainty only.`);
+    }
+  } else if (hardReclaim != null && snapshot.status !== "unknown") {
+    throw new Error(`${label} reclaim phases may exist only while settlement remains unknown.`);
+  }
   const workspaceRoot = assertIdentityText(snapshot.workspaceRoot, `${label} workspaceRoot`, 4096);
   const controlRoot = hasControlRoot
     ? assertIdentityText(snapshot.controlRoot, `${label} controlRoot`, 4096)
@@ -597,7 +681,7 @@ function validateVersionThreeJobRecord(parsed, { storedRoute = false } = {}) {
     throw new Error(`${label} legacy workspaceRoot must remain its control root.`);
   }
   return Object.freeze({
-    version: V3_JOB_SCHEMA_VERSION,
+    version: snapshot.version,
     harnessStateVersion: JOB_STATE_VERSION_V3,
     ...identity,
     attemptId,
@@ -612,6 +696,8 @@ function validateVersionThreeJobRecord(parsed, { storedRoute = false } = {}) {
     progress,
     progressDeliveredRevision,
     worker,
+    physicalResidency,
+    hardReclaim,
     agentProjectionReconciledAt,
     completionPublishedAt,
     createdAt: assertTimestampText(snapshot.createdAt, `${label} createdAt`),
@@ -674,6 +760,29 @@ export function listVersionThreeJobRecords({ ownerRootId }) {
   return { records, unreadable };
 }
 
+/** Internal manager snapshot across durable owner directories; unreadable data stays fail-closed. */
+export function listAllVersionThreeJobRecords() {
+  const root = resolveVersionThreeJobRoot();
+  let owners = [];
+  try { owners = fs.readdirSync(root, { withFileTypes: true }).filter((entry) => entry.isDirectory()); }
+  catch { return { records: [], unreadable: [], watchPaths: [root] }; }
+  const records = [];
+  const unreadable = [];
+  const watchPaths = [root];
+  for (const owner of owners) {
+    watchPaths.push(path.join(root, owner.name));
+    let entries = [];
+    try { entries = fs.readdirSync(path.join(root, owner.name), { withFileTypes: true }); } catch { unreadable.push({ code: "corrupt_record" }); continue; }
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      try { const record = readRecordFile(path.join(root, owner.name, entry.name)); if (record) records.push(record); }
+      catch (error) { unreadable.push({ code: typeof error?.code === "string" ? error.code : "corrupt_record" }); }
+    }
+  }
+  records.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  return { records, unreadable, watchPaths };
+}
+
 /**
  * The monotonic lifecycle gate. A version-three record may advance from
  * `running` to `unknown` or to a terminal status, from `unknown` to a
@@ -690,7 +799,7 @@ export function listVersionThreeJobRecords({ ownerRootId }) {
  */
 function assertLifecycleAdvance(previous, next) {
   if (previous == null) {
-    if (next.status !== "running") {
+    if (next.status !== "running" && !(next.status === "unknown" && next.uncertainty?.reason === "worker_lost_before_running_projection")) {
       throw taggedError(
         "invalid_creation",
         `A version-three job record is created as running; ${next.status} cannot be its first durable state.`
@@ -719,10 +828,16 @@ function assertLifecycleAdvance(previous, next) {
     }
     return;
   }
+  if (previous.hardReclaim != null && V3_TERMINAL_STATUSES.includes(next.status)) {
+    throw taggedError("hard_reclaim_claimed", `Version-three job ${previous.jobId} has fenced ordinary terminal settlement.`);
+  }
   if (previous.status === "running" && (next.status === "unknown" || V3_TERMINAL_STATUSES.includes(next.status))) {
     return;
   }
   if (previous.status === "unknown" && V3_TERMINAL_STATUSES.includes(next.status)) {
+    return;
+  }
+  if (previous.status === "unknown" && next.status === "hard_reclaimed" && previous.hardReclaim?.phase === "lease_pending" && next.hardReclaim?.phase === "committed") {
     return;
   }
   throw taggedError(
@@ -751,6 +866,9 @@ function persist(identity, generation, build) {
   try {
     const filePath = path.join(directory, jobFileName(identity.jobId));
     const previous = fs.existsSync(filePath) ? readRecordFile(filePath) : null;
+    if (previous != null && previous.version !== V3_JOB_SCHEMA_VERSION) {
+      throw taggedError("legacy_record_read_only", `Version-three job ${identity.jobId} is a legacy read-only record.`);
+    }
     const candidate = validateVersionThreeJobRecord(build(previous), { storedRoute: previous != null });
     assertLifecycleAdvance(previous, candidate);
     writeAtomicJobFile(filePath, candidate);
@@ -767,7 +885,7 @@ function persist(identity, generation, build) {
  */
 export function recordVersionThreeTurnRunning({
   generation, ownerRootId, agentId, jobId, attemptId, workspaceRoot,
-  controlRoot = workspaceRoot, executionRoot = workspaceRoot, route, nativeTurnRef, worker = null,
+  controlRoot = workspaceRoot, executionRoot = workspaceRoot, route, nativeTurnRef, worker = null, physicalResidency = null,
 }) {
   const identity = assertBindingIdentity({ ownerRootId, agentId, jobId });
   return persist(identity, generation, (previous) => {
@@ -789,10 +907,33 @@ export function recordVersionThreeTurnRunning({
       progress: null,
       progressDeliveredRevision: 0,
       worker,
+      physicalResidency,
+      hardReclaim: null,
       agentProjectionReconciledAt: null,
       completionPublishedAt: null,
       createdAt: timestamp,
       updatedAt: timestamp,
+    };
+  });
+}
+
+/** Materialize the one non-replayable crash-window record after a complete launch binding. */
+export function recordVersionThreePreRecordUncertain({
+  generation, ownerRootId, agentId, jobId, attemptId, workspaceRoot,
+  controlRoot = workspaceRoot, executionRoot = workspaceRoot, route, provisionalNativeTurnRef, worker, physicalResidency,
+}) {
+  const identity = assertBindingIdentity({ ownerRootId, agentId, jobId });
+  return persist(identity, generation, (previous) => {
+    if (previous) return previous;
+    const timestamp = nowIso();
+    return {
+      version: V3_JOB_SCHEMA_VERSION, harnessStateVersion: JOB_STATE_VERSION_V3,
+      ...identity, attemptId, workspaceRoot, controlRoot, executionRoot, route,
+      nativeTurnRef: provisionalNativeTurnRef, status: "unknown",
+      uncertainty: { reason: "worker_lost_before_running_projection", detail: null, recordedAt: timestamp },
+      terminalJob: null, progress: null, progressDeliveredRevision: 0, worker, physicalResidency,
+      hardReclaim: null, agentProjectionReconciledAt: null, completionPublishedAt: null,
+      createdAt: timestamp, updatedAt: timestamp,
     };
   });
 }
@@ -855,6 +996,138 @@ export function recordVersionThreeTurnUncertain({
   });
 }
 
+function initialHardReclaimLeaseDisposition(residency) {
+  return {
+    admission: "pending",
+    writer: "pending",
+    serviceTurn: residency?.kind === "local_process" ? "not_applicable" : "pending",
+  };
+}
+
+function advanceHardReclaim({
+  generation, ownerRootId, agentId, jobId, attemptId, phase,
+  physicalDisposition = null, leaseDisposition = null, failureCode = null,
+}) {
+  const identity = assertBindingIdentity({ ownerRootId, agentId, jobId });
+  return persist(identity, generation, (previous) => {
+    if (previous == null) throw taggedError("not_found", `Version-three job ${identity.jobId} has no durable record.`);
+    assertAttemptMatches(previous, attemptId, identity);
+    if (previous.status !== "unknown") throw taggedError("not_unknown", `Version-three job ${identity.jobId} is not unknown.`);
+    const existing = previous.hardReclaim;
+    const currentIndex = existing == null ? -1 : HARD_RECLAIM_PHASES.indexOf(existing.phase);
+    const targetIndex = HARD_RECLAIM_PHASES.indexOf(phase);
+    if (targetIndex < currentIndex) throw taggedError("invalid_reclaim_transition", "Hard reclaim phases cannot regress.");
+    if (targetIndex === currentIndex) {
+      if (phase !== "lease_pending") return previous;
+      const timestamp = nowIso();
+      return { ...previous, hardReclaim: { ...existing,
+        leaseDisposition: validateHardReclaimLeaseDisposition(leaseDisposition, "Hard reclaim lease disposition"),
+        failureCode,
+      }, updatedAt: timestamp };
+    }
+    if (targetIndex !== currentIndex + 1) throw taggedError("invalid_reclaim_transition", "Hard reclaim phases must advance one fenced step.");
+    const timestamp = nowIso();
+    const hardReclaim = existing == null
+      ? { version: 1, phase, claimedAt: timestamp, physicalDeadAt: null, leasePendingAt: null, committedAt: null,
+          terminationAttemptedAt: null, physicalDisposition: null,
+          leaseDisposition: initialHardReclaimLeaseDisposition(previous.physicalResidency), failureCode: null }
+      : {
+          ...existing, phase,
+          ...(phase === "physical_dead" ? { physicalDeadAt: timestamp, physicalDisposition } : {}),
+          ...(phase === "lease_pending" ? { leasePendingAt: timestamp,
+            leaseDisposition: validateHardReclaimLeaseDisposition(leaseDisposition, "Hard reclaim lease disposition"), failureCode } : {}),
+          ...(phase === "committed" ? { committedAt: timestamp } : {}),
+        };
+    return { ...previous, hardReclaim, updatedAt: timestamp };
+  });
+}
+
+/** Persist the no-second-signal fence before the exact termination syscall. */
+export function markVersionThreeHardReclaimTerminationAttempted({ generation, ownerRootId, agentId, jobId, attemptId }) {
+  const identity = assertBindingIdentity({ ownerRootId, agentId, jobId });
+  return persist(identity, generation, (previous) => {
+    if (previous == null) throw taggedError("not_found", `Version-three job ${identity.jobId} has no durable record.`);
+    assertAttemptMatches(previous, attemptId, identity);
+    const activeClaim = previous.status === "unknown" && previous.hardReclaim?.phase === "claimed";
+    const retainedShared = previous.status === "hard_reclaimed" && previous.hardReclaim?.phase === "committed" &&
+      previous.hardReclaim.physicalDisposition === "retained_shared";
+    if (!activeClaim && !retainedShared) throw taggedError("invalid_reclaim_transition", "Hard reclaim termination marker requires an active or retained-shared reclaim receipt.");
+    if (previous.hardReclaim.terminationAttemptedAt != null) return previous;
+    const timestamp = nowIso();
+    return { ...previous, hardReclaim: { ...previous.hardReclaim, terminationAttemptedAt: timestamp, failureCode: null }, updatedAt: timestamp };
+  });
+}
+
+export function claimVersionThreeHardReclaim(input) { return advanceHardReclaim({ ...input, phase: "claimed" }); }
+export function recordVersionThreeHardReclaimPhysicalDeath(input) {
+  if (!HARD_RECLAIM_PHYSICAL_DISPOSITIONS.includes(input?.physicalDisposition)) {
+    throw new Error("Hard reclaim physical death requires a closed disposition.");
+  }
+  return advanceHardReclaim({ ...input, phase: "physical_dead" });
+}
+export function recordVersionThreeHardReclaimLeasePending(input) {
+  if (input?.failureCode != null && !HARD_RECLAIM_FAILURE_CODES.includes(input.failureCode)) {
+    throw new Error("Hard reclaim lease disposition has an unsupported failure code.");
+  }
+  return advanceHardReclaim({ ...input, phase: "lease_pending" });
+}
+
+export function recordVersionThreeHardReclaimFailure({ generation, ownerRootId, agentId, jobId, attemptId, failureCode }) {
+  if (!HARD_RECLAIM_FAILURE_CODES.includes(failureCode)) throw new Error("Hard reclaim failure has an unsupported code.");
+  const identity = assertBindingIdentity({ ownerRootId, agentId, jobId });
+  return persist(identity, generation, (previous) => {
+    if (previous == null) throw taggedError("not_found", `Version-three job ${identity.jobId} has no durable record.`);
+    assertAttemptMatches(previous, attemptId, identity);
+    const activeReceipt = previous.status === "unknown" && previous.hardReclaim != null && previous.hardReclaim.phase !== "committed";
+    const retainedShared = previous.status === "hard_reclaimed" && previous.hardReclaim?.phase === "committed" &&
+      previous.hardReclaim.physicalDisposition === "retained_shared";
+    if (!activeReceipt && !retainedShared) {
+      throw taggedError("invalid_reclaim_transition", "Hard reclaim failure requires an active reclaim receipt.");
+    }
+    const timestamp = nowIso();
+    return { ...previous, hardReclaim: { ...previous.hardReclaim, failureCode }, updatedAt: timestamp };
+  });
+}
+
+export function commitVersionThreeHardReclaim(input) {
+  const identity = assertBindingIdentity(input);
+  return persist(identity, input.generation, (previous) => {
+    if (previous == null) throw taggedError("not_found", `Version-three job ${identity.jobId} has no durable record.`);
+    assertAttemptMatches(previous, input.attemptId, identity);
+    if (previous.status === "hard_reclaimed") return previous;
+    if (previous.status !== "unknown" || previous.hardReclaim?.phase !== "lease_pending") {
+      throw taggedError("invalid_reclaim_transition", "Hard reclaim commit requires the fenced lease-pending phase.");
+    }
+    if (previous.hardReclaim.failureCode != null || Object.values(previous.hardReclaim.leaseDisposition).some((entry) => ["pending", "unknown"].includes(entry))) {
+      throw taggedError("lease_disposition_unknown", "Hard reclaim commit requires a total lease disposition.");
+    }
+    const timestamp = nowIso();
+    return { ...previous, status: "hard_reclaimed", hardReclaim: { ...previous.hardReclaim, phase: "committed", committedAt: timestamp }, updatedAt: timestamp };
+  });
+}
+
+/** Complete only the retained shared managed disposition after later sole closure. */
+export function updateCommittedVersionThreeHardReclaim({
+  generation, ownerRootId, agentId, jobId, attemptId, physicalDisposition, leaseDisposition,
+}) {
+  const identity = assertBindingIdentity({ ownerRootId, agentId, jobId });
+  return persist(identity, generation, (previous) => {
+    if (previous == null) throw taggedError("not_found", `Version-three job ${identity.jobId} has no durable record.`);
+    assertAttemptMatches(previous, attemptId, identity);
+    if (previous.status !== "hard_reclaimed" || previous.hardReclaim?.phase !== "committed" ||
+        previous.hardReclaim.physicalDisposition !== "retained_shared") {
+      throw taggedError("invalid_reclaim_transition", "Only one committed retained-shared reclaim may be completed later.");
+    }
+    if (physicalDisposition !== "dead") throw new Error("A completed shared reclaim must prove exact physical death.");
+    const disposition = validateHardReclaimLeaseDisposition(leaseDisposition, "Hard reclaim lease disposition");
+    if (Object.values(disposition).some((entry) => ["pending", "unknown", "retained_shared", "retained_reused"].includes(entry))) {
+      throw taggedError("lease_disposition_unknown", "Completed shared reclaim requires total released dispositions.");
+    }
+    const timestamp = nowIso();
+    return { ...previous, hardReclaim: { ...previous.hardReclaim, physicalDisposition, leaseDisposition: disposition, failureCode: null }, updatedAt: timestamp };
+  });
+}
+
 /**
  * Make one turn's terminal projection durable, before any Agent projection or
  * completion exists. This is what makes a later reconciliation possible: if
@@ -871,6 +1144,9 @@ export function recordVersionThreeTurnTerminal({ generation, ownerRootId, agentI
       );
     }
     const candidateAttemptId = assertAttemptMatches(previous, attemptId, identity);
+    if (previous.hardReclaim != null) {
+      throw taggedError("hard_reclaim_claimed", `Version-three job ${identity.jobId} has fenced ordinary terminal settlement.`);
+    }
     return {
       ...previous,
       attemptId: candidateAttemptId,
@@ -995,6 +1271,54 @@ export function reconcileVersionThreeTerminalJob({ generation, record }) {
   return { reconciled: agentProjected && completionPublished, reason, agentProjected, completionPublished };
 }
 
+/** Finish only the nonsemantic Agent lifecycle projections of one committed reclaim receipt. */
+export function reconcileVersionThreeHardReclaimJob({ generation, record }) {
+  if (record?.status !== "hard_reclaimed" || record?.hardReclaim?.phase !== "committed") {
+    return { reconciled: false, reason: "not_hard_reclaimed", agentProjected: false, completionPublished: false };
+  }
+  if (record.agentProjectionReconciledAt && record.completionPublishedAt) {
+    return { reconciled: false, reason: "already_reconciled", agentProjected: true, completionPublished: true };
+  }
+  const store = createAgentStore({
+    cwd: record.controlRoot ?? record.workspaceRoot,
+    ownerRootId: record.ownerRootId,
+    writeGeneration: generation,
+  });
+  let agentProjected = Boolean(record.agentProjectionReconciledAt);
+  let completionPublished = Boolean(record.completionPublishedAt);
+  let reason = "reconciled";
+  if (!agentProjected) {
+    const projection = store.finalizeHardReclaim(record);
+    agentProjected = projection.reconciled || projection.reason === "already_finalized";
+    if (!agentProjected) reason = projection.reason ?? "agent_projection_refused";
+  }
+  let completion = null;
+  if (agentProjected && !completionPublished) {
+    completion = reconcileHardReclaimCompletion(record.workspaceRoot, record.ownerRootId, record);
+    completionPublished = completion.reconciled || completion.event != null;
+    if (!completionPublished) reason = completion.reason ?? "completion_refused";
+    if (completionPublished) {
+      publishBoundTerminalEvent({
+        store,
+        agentId: record.agentId,
+        hardReclaim: record,
+        completion: completion.event,
+      });
+    }
+  }
+  if (agentProjected || completionPublished) {
+    markVersionThreeTurnProjected({
+      generation,
+      ownerRootId: record.ownerRootId,
+      agentId: record.agentId,
+      jobId: record.jobId,
+      agentProjected,
+      completionPublished,
+    });
+  }
+  return { reconciled: agentProjected && completionPublished, reason, agentProjected, completionPublished };
+}
+
 /**
  * Reconcile every incompletely projected terminal record one owner root holds.
  * A record whose reconciliation fails is reported and skipped, never thrown,
@@ -1008,10 +1332,14 @@ export function reconcileVersionThreeTerminalJobs({ ownerRootId, generation }) {
   const { records, unreadable } = listVersionThreeJobRecords({ ownerRootId });
   const receipts = [];
   for (const record of records) {
-    if (!V3_TERMINAL_STATUSES.includes(record.status)) continue;
+    if (record.version !== V3_JOB_SCHEMA_VERSION) continue;
+    if (!V3_LIFECYCLE_TERMINAL_STATUSES.includes(record.status)) continue;
     if (record.agentProjectionReconciledAt && record.completionPublishedAt) continue;
     try {
-      receipts.push({ jobId: record.jobId, ...reconcileVersionThreeTerminalJob({ generation, record }) });
+      const reconciliation = record.status === "hard_reclaimed"
+        ? reconcileVersionThreeHardReclaimJob({ generation, record })
+        : reconcileVersionThreeTerminalJob({ generation, record });
+      receipts.push({ jobId: record.jobId, ...reconciliation });
     } catch (error) {
       receipts.push({
         jobId: record.jobId,

@@ -1330,6 +1330,9 @@ export function createClaudeCodeDriverV2(options = {}) {
         if (!executable) {
           throw new Error("Claude Code Driver requires a revalidated launch context.");
         }
+        if (typeof launchContext?.bindPhysicalResidency !== "function") {
+          throw new Error("Claude Code Driver requires a durable physical-residency binder.");
+        }
         envelope = preparedTurn?.promptEnvelope;
         if (!envelope || envelope.taskInput !== scope.taskInput) {
           throw new Error("The prepared Claude prompt envelope does not carry this turn's task input.");
@@ -1403,7 +1406,7 @@ export function createClaudeCodeDriverV2(options = {}) {
           harnessId: CLAUDE_CODE_HARNESS_ID,
           instanceKey: route.instanceKey,
         },
-        onSpawn: (receipt) => {
+        onSpawn: async (receipt) => {
           const pid = receipt?.pid;
           const pidIdentity = String(receipt?.pidIdentity ?? "").trim();
           if (!Number.isSafeInteger(pid) || pid <= 0 || !pidIdentity) return false;
@@ -1411,6 +1414,14 @@ export function createClaudeCodeDriverV2(options = {}) {
           // the first accepted identity, while signalling always targets the
           // child that is actually live.
           liveProcess = { pid, pidIdentity };
+          try {
+            await launchContext.bindPhysicalResidency({
+              physicalResidency: { kind: "local_process", pid, identity: pidIdentity },
+              provisionalNativeTurnRef: nativeReferenceEnvelope(route.instanceKey, { pid, processIdentity: pidIdentity }),
+            });
+          } catch {
+            return false;
+          }
           if (!accepted) {
             accepted = liveProcess;
             acceptance.resolve(liveProcess);

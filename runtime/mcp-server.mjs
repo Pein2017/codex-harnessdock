@@ -21,7 +21,7 @@ import { ADMITTED_GENERATION_HARNESS_IDS } from "./harness-registry.mjs";
 import { HARNESSDOCK_MCP_API_GENERATION } from "./mcp-api.mjs";
 import { removeRuntimeLoaderMarker, resolveGitCommonDirectory } from "./promotion-gate.mjs";
 import { PACKAGE_VERSION } from "./version.mjs";
-import { createOpencodeServiceManager } from "./opencode-service-manager.mjs";
+import { ensureResidencyManager } from "./residency-manager.mjs";
 
 export const CODEX_SANDBOX_META_KEY = "codex/sandbox-state-meta";
 export const HARNESSDOCK_MCP_TOOL_NAMES = Object.freeze([
@@ -495,11 +495,11 @@ export function createCcMcpServer(options = {}) {
 }
 
 export async function runCcMcpServer() {
-  const serviceManager = createOpencodeServiceManager({ envFile: FIXED_ENV_FILE, cwd: SOURCE_ROOT });
-  await serviceManager.reapIfIdle().catch(() => {});
-  serviceManager.scheduleReap();
+  // MCP is a transport, not a cleanup owner.  A durable manager survives its
+  // exit and uses the existing exact reaper; no MCP inactivity policy exists.
+  await ensureResidencyManager({ envFile: FIXED_ENV_FILE, cwd: SOURCE_ROOT });
   const server = createCcMcpServer({ onOperationComplete: async () => {
-    try { await serviceManager.reapIfIdle(); } finally { serviceManager.scheduleReap(); }
+    await ensureResidencyManager({ envFile: FIXED_ENV_FILE, cwd: SOURCE_ROOT });
   } });
   const transport = new StdioServerTransport();
   transport.onerror = (error) => {

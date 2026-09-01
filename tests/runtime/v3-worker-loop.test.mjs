@@ -182,6 +182,7 @@ function setup(options = {}) {
       turnOptions: null,
       workspaceRoot,
       env: { FAKE_SERVICE_HOME: path.join(root, "fake-service") },
+      ensureResidencyManager: () => undefined,
       cwd: workspaceRoot,
     },
     messages: () => store.listMessages(agent.agentId),
@@ -220,6 +221,8 @@ function setup(options = {}) {
 describe("version-three worker loop: durable turn lifecycle", () => {
   it("acknowledges the prompt only after proven acceptance, then settles through production persistence", async () => {
     const context = setup();
+    let managerEnsures = 0;
+    context.input.ensureResidencyManager = () => { managerEnsures += 1; };
     context.complete("completed");
 
     const result = await runVersionThreeWorkerLoop(context.input);
@@ -228,6 +231,7 @@ describe("version-three worker loop: durable turn lifecycle", () => {
     assert.equal(result.published, true);
     assert.equal(result.agentReconciled, true);
     assert.equal(result.leasesReleased, true);
+    assert.equal(managerEnsures, 3, "physical binding, running durability, and terminal durability each nudge the manager");
     assert.equal(result.disposed, true);
     assert.equal(result.liveOwnershipCleared, true);
 

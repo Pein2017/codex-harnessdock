@@ -17,7 +17,7 @@ const text = "authoritative U+2028 message";
 
 function fakePi(options = {}) {
   const child = new EventEmitter();
-  child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.exitCode = null; child.kills = [];
+  child.stdout = new PassThrough(); child.stderr = new PassThrough(); child.pid = options.pid ?? 123; child.exitCode = null; child.kills = [];
   child.kill = (signal) => { child.kills.push(signal); child.exitCode = 0; queueMicrotask(() => { child.emit("exit", 0, signal); child.stdout.end(); child.stderr.end(); }); return true; };
   const state = { argv: [], commands: [], settled: false, prompted: false, catalogRefreshes: 0, directNativeParity: false, selectedModel: PI_MODEL, entries: options.entries ?? [
     { type: "message", id: "a-1", timestamp: Date.parse("2026-01-01T00:00:00.000Z"), message: { role: "assistant", stopReason: "stop", content: [{ type: "text", text }] }, },
@@ -64,12 +64,17 @@ function fakePi(options = {}) {
 
 function fixture(options = {}) {
   const fakes = [];
-  const driver = createPiDriver({ env: { PI_CODING_AGENT_DIR: "/tmp/pi-config" }, _test: { inspectionGeneration: options.inspectionGeneration, sessionRoot: options.sessionRoot ?? "/tmp/pi-driver-fixture", spawn: (_command, argv) => {
+  const driver = createPiDriver({ env: { PI_CODING_AGENT_DIR: "/tmp/pi-config" }, _test: { inspectionGeneration: options.inspectionGeneration, sessionRoot: options.sessionRoot ?? "/tmp/pi-driver-fixture", getProcessIdentity: options.getProcessIdentity ?? (() => "123"), spawn: (_command, argv) => {
     const fake = fakePi({ ...options, models: options.modelsForSpawn?.(fakes.length) ?? options.models }); fake.state.argv = argv;
     if (argv.includes("--no-session") && !argv.includes("--offline")) fake.state.catalogRefreshes += 1;
     fakes.push(fake); return fake.child;
   } } });
-  return { driver, fakes };
+  const revalidatePreparedTurn = driver.revalidatePreparedTurn.bind(driver);
+  const boundDriver = Object.freeze({ ...driver, revalidatePreparedTurn: async (...args) => Object.freeze({
+    ...await revalidatePreparedTurn(...args),
+    bindPhysicalResidency: async () => {},
+  }) });
+  return { driver: boundDriver, fakes };
 }
 
 async function started(options = {}) {
@@ -79,11 +84,54 @@ async function started(options = {}) {
   const route = acceptDriverRoute(driver, { harnessId: PI_HARNESS_ID, model: PI_MODEL, topology: "leaf", authority: options.write ? "behavioral_write" : "behavioral_read_only", effort: options.effort ?? "high" }, [inspection]).route;
   const scope = createDriverScope({ driver, purpose: "turn", rootId: "r", agentId: "a", turnId: "turn-1", attemptId: "attempt-1", route, taskInput: "inspect", turnOptions: { effort: route.effort }, workspaceRoot: "/tmp", env: { PI_CODING_AGENT_DIR: "/tmp/pi-config" } });
   const preparedTurn = validatePreparedTurn(driver.prepareTurn({ route, taskInput: scope.taskInput, turnOptions: scope.turnOptions }), { driver, route, taskInput: scope.taskInput });
-  const live = validateLiveHarnessTurn(await driver.startTurn({ scope, preparedTurn, launchContext: await driver.revalidatePreparedTurn(preparedTurn, scope) }), { driver, route });
+  const launchContext = {
+    ...await driver.revalidatePreparedTurn(preparedTurn, scope),
+    ...(options.bindPhysicalResidency ? { bindPhysicalResidency: options.bindPhysicalResidency } : {}),
+  };
+  const live = validateLiveHarnessTurn(await driver.startTurn({ scope, preparedTurn, launchContext }), { driver, route });
   return { driver, fake: fakes.at(-1), fakes, route, scope, live };
 }
 
 describe("Pi Driver v2", () => {
+  it("refuses a direct start without the durable residency binder before spawning", async () => {
+    const { driver, fakes } = fixture();
+    const [inspection] = await driver.inspectInstances(createDriverScope({ driver, purpose: "inspect", env: { PI_CODING_AGENT_DIR: "/tmp/pi-config" } }));
+    const route = acceptDriverRoute(driver, { harnessId: PI_HARNESS_ID, model: PI_MODEL, topology: "leaf", authority: "behavioral_read_only", effort: "high" }, [inspection]).route;
+    const scope = createDriverScope({ driver, purpose: "turn", rootId: "r", agentId: "a", turnId: "turn-1", attemptId: "attempt-1", route, taskInput: "inspect", turnOptions: { effort: route.effort }, workspaceRoot: "/tmp", env: { PI_CODING_AGENT_DIR: "/tmp/pi-config" } });
+    const preparedTurn = driver.prepareTurn({ route, taskInput: scope.taskInput, turnOptions: scope.turnOptions });
+    const { bindPhysicalResidency: _ignored, ...launchContext } = await driver.revalidatePreparedTurn(preparedTurn, scope);
+    const spawnedBeforeTurn = fakes.length;
+    await assert.rejects(driver.startTurn({ scope, preparedTurn, launchContext }), (error) => isDriverPreTransportRejection(error));
+    assert.equal(fakes.length, spawnedBeforeTurn);
+  });
+
+  it("binds the child identity proven before Pi preflight without re-reading a reusable PID", async () => {
+    const identities = ["child-start", "foreign-reused"];
+    let physicalResidency = null;
+    const { live } = await started({
+      getProcessIdentity: () => identities.shift(),
+      bindPhysicalResidency: async (binding) => { physicalResidency = binding.physicalResidency; },
+    });
+    await live.result;
+    assert.deepEqual(physicalResidency, { kind: "local_process", pid: 123, identity: "child-start" });
+    assert.deepEqual(identities, ["foreign-reused"]);
+  });
+
+  it("rejects a failed physical bind before prompt and disposes only the RPC child", async () => {
+    const { driver, fakes } = fixture({ getProcessIdentity: () => "123" });
+    const [inspection] = await driver.inspectInstances(createDriverScope({ driver, purpose: "inspect", env: { PI_CODING_AGENT_DIR: "/tmp/pi-config" } }));
+    const route = acceptDriverRoute(driver, { harnessId: PI_HARNESS_ID, model: PI_MODEL, topology: "leaf", authority: "behavioral_read_only", effort: "high" }, [inspection]).route;
+    const scope = createDriverScope({ driver, purpose: "turn", rootId: "r", agentId: "a", turnId: "turn-1", attemptId: "attempt-1", route, taskInput: "inspect", turnOptions: { effort: route.effort }, workspaceRoot: "/tmp", env: { PI_CODING_AGENT_DIR: "/tmp/pi-config" } });
+    const preparedTurn = driver.prepareTurn({ route, taskInput: scope.taskInput, turnOptions: scope.turnOptions });
+    await assert.rejects(
+      driver.startTurn({ scope, preparedTurn, launchContext: { ...await driver.revalidatePreparedTurn(preparedTurn, scope), bindPhysicalResidency: async () => { throw new Error("storage unavailable"); } } }),
+      (error) => isDriverPreTransportRejection(error),
+    );
+    const rpc = fakes.at(-1);
+    assert.equal(rpc.state.commands.some((command) => command.type === "prompt"), false);
+    assert.deepEqual(rpc.child.kills, ["SIGTERM"]);
+  });
+
   it("fails closed when bounded local Pi configuration is not available", async () => {
     const unavailable = createPiDriver({ _test: { sessionRoot: "/tmp/pi-driver-fixture", spawn: () => { throw new Error("missing"); } } });
     const missing = (await unavailable.inspectInstances(createDriverScope({ driver: unavailable, purpose: "inspect", env: {} })))[0];
@@ -224,7 +272,7 @@ describe("Pi Driver v2", () => {
       const route = driver.validateRoute({ model: PI_MODEL, topology: "leaf", authority: "behavioral_read_only", effort: "high" }, inspection);
       const preparedTurn = driver.prepareTurn({ route, taskInput: "x", turnOptions: { effort: "high" } });
       const scope = { route, turnId: "turn", taskInput: "x", turnOptions: { effort: "high" }, workspaceRoot: "/tmp" };
-      await assert.rejects(driver.startTurn({ scope, preparedTurn, launchContext: { workspaceRoot: "/tmp" } }), (error) => isDriverPreTransportRejection(error) === branded);
+      await assert.rejects(driver.startTurn({ scope, preparedTurn, launchContext: { workspaceRoot: "/tmp", bindPhysicalResidency: async () => {} } }), (error) => isDriverPreTransportRejection(error) === branded);
     }
   });
 
@@ -267,7 +315,7 @@ describe("Pi Driver v2", () => {
     const inspection = (await driver.inspectInstances(createDriverScope({ driver, purpose: "inspect", env: { PI_CODING_AGENT_DIR: "/tmp/pi-config" } })))[0];
     const route = driver.validateRoute({ model: PI_MODEL, topology: "leaf", authority: "behavioral_read_only", effort: "high" }, inspection);
     const preparedTurn = driver.prepareTurn({ route, taskInput: "resume", turnOptions: { effort: "high" } });
-    const live = await driver.startTurn({ scope: { route, turnId: "resume-turn", taskInput: "resume", turnOptions: { effort: "high" }, workspaceRoot: "/tmp" }, preparedTurn, launchContext: { workspaceRoot: "/tmp" }, nativeSessionRef: { version: 1, harnessId: "pi", driverVersion: "pi@2", instanceKey: "pi-local", locatorVersion: 1, locator: { sessionId: SESSION_ID } } });
+    const live = await driver.startTurn({ scope: { route, turnId: "resume-turn", taskInput: "resume", turnOptions: { effort: "high" }, workspaceRoot: "/tmp" }, preparedTurn, launchContext: { workspaceRoot: "/tmp", bindPhysicalResidency: async () => {} }, nativeSessionRef: { version: 1, harnessId: "pi", driverVersion: "pi@2", instanceKey: "pi-local", locatorVersion: 1, locator: { sessionId: SESSION_ID } } });
     assert.deepEqual(fakes.at(-1).state.argv.slice(-2), ["--session", SESSION_ID]);
     assert.equal(fakes.at(-1).state.argv.includes("--offline"), false);
     await live.result;

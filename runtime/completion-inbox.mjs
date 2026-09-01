@@ -37,7 +37,11 @@ const LOCK_FILE_NAME = "inbox.lock";
 const LOCK_TIMEOUT_MS = 15_000;
 const LOCK_STALE_MS = 60_000;
 const LOCK_RETRY_MS = 10;
-const TERMINAL_STATUSES = new Set(["completed", "interrupted", "failed", "cancelled"]);
+const ORDINARY_TERMINAL_STATUSES = new Set(["completed", "interrupted", "failed", "cancelled"]);
+const TERMINAL_STATUSES = new Set([...ORDINARY_TERMINAL_STATUSES, "hard_reclaimed"]);
+export const HARD_RECLAIM_LIFECYCLE_MESSAGE =
+  "Agent worker resources were reclaimed while native settlement remains unknown.";
+const HARD_RECLAIM_BLOCKING = Object.freeze({ reason: "worker_lost", scope: "agent", retry: "new_agent" });
 
 function assertText(value, label) {
   if (typeof value !== "string" || !value.trim() || value.includes("\0")) {
@@ -207,6 +211,21 @@ function validateResumability(value) {
   return { classification, claudeSessionId, blockingReason };
 }
 
+function assertHardReclaimLifecycle(value, label) {
+  if (value.terminalStatus !== "hard_reclaimed") {
+    if (value.settlement != null) throw new Error(`${label} ordinary terminal state cannot declare settlement uncertainty.`);
+    return;
+  }
+  if (value.settlement !== "unknown" || value.summary !== HARD_RECLAIM_LIFECYCLE_MESSAGE ||
+      value.finalMessage !== HARD_RECLAIM_LIFECYCLE_MESSAGE || value.detailedResultAvailable !== false ||
+      value.resultPointer != null || value.claudeSessionIdAvailable !== false || value.metrics != null ||
+      value.resumability?.classification !== "not_resumable" ||
+      value.resumability?.blockingReason !== "worker_lost" || value.resumability?.claudeSessionId != null ||
+      JSON.stringify(value.blocking) !== JSON.stringify(HARD_RECLAIM_BLOCKING)) {
+    throw new Error(`${label} hard reclaim must remain one closed nonsemantic worker-loss lifecycle fact.`);
+  }
+}
+
 function validateStoredEvent(event, ownerRootId, previousSequence) {
   if (!event || typeof event !== "object" || Array.isArray(event)) {
     throw new Error("Completion inbox contains an invalid event.");
@@ -257,6 +276,7 @@ function validateStoredEvent(event, ownerRootId, previousSequence) {
   if (typeof event.claudeSessionIdAvailable !== "boolean") {
     throw new Error("Completion Claude-session availability receipt is invalid.");
   }
+  assertHardReclaimLifecycle(event, "Stored completion event");
   if (event.firstDeliveredAt != null) {
     assertText(event.firstDeliveredAt, "completion first-delivery timestamp");
   }
@@ -568,7 +588,7 @@ function normalizeCompletionInput(ownerRootId, completion) {
   const resultPointer = completion.resultPointer == null ? null : String(completion.resultPointer);
   const finalMessage = String(completion.finalMessage ?? completion.summary ?? "");
   const agentId = optionalAgentId(completion.agentId);
-  return {
+  const normalized = {
     version: COMPLETION_INBOX_VERSION,
     eventId: deterministicCompletionEventId(ownerRootId, jobId),
     ownerRootId: assertText(ownerRootId, "owner root ID"),
@@ -576,6 +596,7 @@ function normalizeCompletionInput(ownerRootId, completion) {
     agentId,
     agentStatus: agentId ? agentStatusForTerminalJob(terminalStatus) : null,
     terminalStatus,
+    ...(completion.settlement == null ? {} : { settlement: assertText(completion.settlement, "completion settlement") }),
     completedAt: completion.completedAt == null ? nowIso() : assertText(completion.completedAt, "completion timestamp"),
     summary: assertText(completion.summary, "completion summary"),
     resumability: validateResumability(completion.resumability),
@@ -591,6 +612,8 @@ function normalizeCompletionInput(ownerRootId, completion) {
     ),
     metrics: normalizeTerminalMetrics(completion.metrics) ?? null,
   };
+  assertHardReclaimLifecycle(normalized, "Completion event");
+  return normalized;
 }
 
 function publicEvent(event) {
@@ -602,6 +625,7 @@ function publicEvent(event) {
     agentId: event.agentId ?? null,
     agentStatus: event.agentStatus ?? null,
     terminalStatus: event.terminalStatus,
+    ...(event.settlement == null ? {} : { settlement: event.settlement }),
     completedAt: event.completedAt,
     summary: event.summary,
     resumability: { ...event.resumability },
@@ -631,6 +655,7 @@ function publicAgentCompletionSummary(event) {
     agentId: event.agentId,
     agentStatus: event.agentStatus,
     terminalStatus: terminal,
+    ...(event.settlement == null ? {} : { settlement: event.settlement }),
     summary: `Agent turn ${terminal}.`,
     completionMessage: event.finalMessage,
     completionMessageTruncated: Boolean(event.truncated),
@@ -658,6 +683,7 @@ function sameCompletionFact(existing, normalized) {
     "truncated",
     "claudeSessionIdAvailable",
   ].every((field) => existing[field] === normalized[field]) &&
+    (existing.settlement ?? null) === (normalized.settlement ?? null) &&
     JSON.stringify(existing.resumability) === JSON.stringify(normalized.resumability) &&
     // `blocking` is compared structurally, exactly like `resumability`, rather
     // than by the `===` scan used for scalars: a pre-change stored event has
@@ -905,6 +931,7 @@ export function readTargetedAgentCompletionSummaries(cwd, ownerRootId, jobIds, o
       agentId: event.agentId,
       agentStatus: event.agentStatus,
       terminalStatus: event.terminalStatus,
+      ...(event.settlement == null ? {} : { settlement: event.settlement }),
       blocking: event.blocking ?? null,
     }));
   const project = (events) => events.map((event) => ({
@@ -933,6 +960,7 @@ export function readTargetedAgentCompletionSummaries(cwd, ownerRootId, jobIds, o
         agentId: event.agentId,
         agentStatus: event.agentStatus,
         terminalStatus: event.terminalStatus,
+        ...(event.settlement == null ? {} : { settlement: event.settlement }),
         blocking: event.blocking ?? null,
       }));
     return { events: project(targetedAgentEvents(updated, ids)), consumed: consumedAfter };
@@ -1078,7 +1106,7 @@ function completionFromTerminalJob(job, options) {
   if (!job || typeof job !== "object" || Array.isArray(job)) {
     throw new Error("Terminal job must be an object.");
   }
-  if (!TERMINAL_STATUSES.has(job.status)) {
+  if (!ORDINARY_TERMINAL_STATUSES.has(job.status)) {
     return null;
   }
   // `job.errorMessage` is deliberately excluded from this chain: it is
@@ -1173,6 +1201,36 @@ export function reconcileTerminalJobCompletion(cwd, ownerRootId, job, options = 
   const completion = completionFromTerminalJob(job, options);
   if (!completion) return { reconciled: false, reason: "not-terminal", event: null };
   const result = appendCompletionEvent(cwd, ownerRootId, completion, { reconcileExisting: true });
+  return {
+    reconciled: result.appended || result.corrected === true,
+    reason: result.appended ? "appended" : result.reason ?? "already-present",
+    event: result.event,
+  };
+}
+
+/** Project one committed physical lifecycle loss without inventing semantic settlement. */
+export function reconcileHardReclaimCompletion(cwd, ownerRootId, record) {
+  const leaseDispositions = Object.values(record?.hardReclaim?.leaseDisposition ?? {});
+  if (record?.status !== "hard_reclaimed" || record?.hardReclaim?.phase !== "committed" ||
+      record?.uncertainty == null || record?.terminalJob != null ||
+      leaseDispositions.length !== 3 || leaseDispositions.some((entry) => ["pending", "unknown"].includes(entry))) {
+    return { reconciled: false, reason: "hard_reclaim_not_committed", event: null };
+  }
+  const result = appendCompletionEvent(cwd, ownerRootId, {
+    jobId: record.jobId,
+    agentId: record.agentId,
+    terminalStatus: "hard_reclaimed",
+    completedAt: record.hardReclaim.committedAt,
+    summary: HARD_RECLAIM_LIFECYCLE_MESSAGE,
+    settlement: "unknown",
+    resumability: { classification: "not_resumable", blockingReason: "worker_lost" },
+    blocking: HARD_RECLAIM_BLOCKING,
+    detailedResultAvailable: false,
+    resultPointer: null,
+    finalMessage: HARD_RECLAIM_LIFECYCLE_MESSAGE,
+    claudeSessionIdAvailable: false,
+    metrics: null,
+  }, { reconcileExisting: true });
   return {
     reconciled: result.appended || result.corrected === true,
     reason: result.appended ? "appended" : result.reason ?? "already-present",

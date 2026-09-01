@@ -112,7 +112,12 @@ async function launch(current, subject, { authority = "behavioral_read_only", ta
   const route = subject.driver.validateRoute({ harnessId: "pi", model: MODEL, topology: "leaf", authority, effort: "high" }, inspection);
   const scope = { route, rootId: "root", agentId: "agent", turnId, attemptId: `${turnId}-attempt`, taskInput: task, turnOptions: { effort: "high" }, workspaceRoot: current.root, env: current.env };
   const preparedTurn = subject.driver.prepareTurn({ route, taskInput: task, turnOptions: { effort: "high" } });
-  const launchContext = await subject.driver.revalidatePreparedTurn(preparedTurn, scope);
+  // Launch core normally owns the durable write.  Preserve the required,
+  // awaited binder seam in this isolated native parity fixture.
+  const launchContext = {
+    ...(await subject.driver.revalidatePreparedTurn(preparedTurn, scope)),
+    async bindPhysicalResidency() {},
+  };
   const live = await subject.driver.startTurn({ scope, preparedTurn, launchContext, ...(nativeSessionRef ? { nativeSessionRef } : {}) });
   const progress = [];
   live.subscribeProgress((value) => progress.push(value));

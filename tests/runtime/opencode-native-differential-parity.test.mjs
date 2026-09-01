@@ -40,6 +40,25 @@ function driverDigest(value) {
   return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`;
 }
 
+/** Test-only stand-in for the launch core's durable service lease evidence. */
+function parityServiceManager() {
+  return {
+    ensure: async () => ({ status: "reused" }),
+    acquireTurnLease: async () => ({ token: "a".repeat(32) }),
+    releaseTurnLease: async () => true,
+    residencyForTurnLease: async (lease) => ({ kind: "reused_service", turnLeaseToken: lease.token }),
+  };
+}
+
+function parityLaunchContext(context) {
+  return {
+    ...context,
+    // The production launch core persists this before the prompt.  The
+    // source-independent fixture only needs to exercise that awaited seam.
+    async bindPhysicalResidency() {},
+  };
+}
+
 // This intentionally derives from the Driver's captured admission data, not
 // from the direct HTTP oracle's projection helper.
 function driverAdmissionConfiguration(admission) {
@@ -220,7 +239,7 @@ async function runHarnessDockTurn({ server, url, directory, authority = NATIVE_I
   let nativeAdmission = null;
   const driver = createOpencodeDriver({
     env: { OPENCODE_SERVER_URL: url },
-    serviceManager: { ensure: async () => ({ status: "reused" }) },
+    serviceManager: parityServiceManager(),
     _test: {
       captureNativePromptEvidence: (evidence) => { nativePartTypes = evidence.partTypes; },
       captureNativeAdmissionEvidence: (evidence) => { nativeAdmission = evidence; },
@@ -244,7 +263,7 @@ async function runHarnessDockTurn({ server, url, directory, authority = NATIVE_I
     effort: NATIVE_INPUT.effort,
   }, inspection);
   const prepared = driver.prepareTurn({ route, taskInput: NATIVE_INPUT.taskInput, turnOptions: { effort: route.effort } });
-  const launchContext = await driver.revalidatePreparedTurn(prepared, scope);
+  const launchContext = parityLaunchContext(await driver.revalidatePreparedTurn(prepared, scope));
   const live = await driver.startTurn({ scope, preparedTurn: prepared, launchContext });
   const terminal = await live.result;
   await live.dispose();
@@ -352,14 +371,18 @@ async function runCrossProcessObservation({ server, url, directory }) {
   {
     const driver = createOpencodeDriver({
       env: { OPENCODE_SERVER_URL: url },
-      serviceManager: { ensure: async () => ({ status: "reused" }) },
+      serviceManager: parityServiceManager(),
     });
     const [inspection] = await driver.inspectInstances(scope);
     const route = driver.validateRoute({
       harnessId: "opencode", model: NATIVE_INPUT.model, topology: "leaf", authority: NATIVE_INPUT.authority, effort: NATIVE_INPUT.effort,
     }, inspection);
     const prepared = driver.prepareTurn({ route, taskInput: NATIVE_INPUT.taskInput, turnOptions: { effort: route.effort } });
-    const live = await driver.startTurn({ scope, preparedTurn: prepared, launchContext: await driver.revalidatePreparedTurn(prepared, scope) });
+    const live = await driver.startTurn({
+      scope,
+      preparedTurn: prepared,
+      launchContext: parityLaunchContext(await driver.revalidatePreparedTurn(prepared, scope)),
+    });
     persistedNativeTurnRef = JSON.parse(JSON.stringify(live.nativeTurnRef));
     await live.result;
     await live.dispose();

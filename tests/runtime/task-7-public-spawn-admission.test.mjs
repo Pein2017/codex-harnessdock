@@ -30,7 +30,7 @@ import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, it } from "node:test";
+import { after, afterEach, describe, it } from "node:test";
 
 import { createAgentRuntime } from "../../runtime/agent-runtime.mjs";
 import {
@@ -64,6 +64,7 @@ import {
   OPENCODE_HARNESS_ID,
 } from "../../runtime/opencode-explorer-profile.mjs";
 import { createFakeOpencodeServer } from "./fixtures/fake-opencode-server.mjs";
+import { removeTestRuntimeHome } from "./fixtures/test-runtime-cleanup.mjs";
 
 const cleanups = [];
 afterEach(async () => {
@@ -72,7 +73,7 @@ afterEach(async () => {
 
 const RUNTIME_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "cc-spawn-admission-home-"));
 const CODEX_HOME = path.join(RUNTIME_HOME, "codex-home");
-process.on("exit", () => fs.rmSync(RUNTIME_HOME, { recursive: true, force: true }));
+after(async () => removeTestRuntimeHome(RUNTIME_HOME));
 
 function compliantRuleset() {
   return [

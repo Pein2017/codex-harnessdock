@@ -196,6 +196,7 @@ async function run() {
     turnOptions: null,
     workspaceRoot: payload.workspaceRoot,
     env: {},
+    ensureResidencyManager: async () => undefined,
     cwd: payload.workspaceRoot,
   };
 

@@ -271,13 +271,12 @@ export function createOpencodeServiceManager(options = {}) {
     peerActivity: options.peerActivity ?? ((value) => inspectLoopbackPeerActivity(value)),
     reapTimeoutMs: options.reapTimeoutMs ?? REAP_TIMEOUT_MS,
     reapDelayMs: options.reapDelayMs ?? RETRY_DELAY_MS,
-    setTimer: options.setTimer ?? setTimeout,
+    unlinkSync: options.unlinkSync ?? fs.unlinkSync,
   };
   const directory = serviceDirectory(runtimeRoot);
   const receiptFile = path.join(directory, "receipt.json");
   const leaseDirectory = leasesDirectory(directory);
   const ttlSeconds = resolveOpencodeIdleTtlSeconds(env);
-  let scheduled = null;
 
   function upgradedReceipt(receipt, now) {
     return receipt.version === RECEIPT_VERSION ? receipt : {
@@ -291,13 +290,17 @@ export function createOpencodeServiceManager(options = {}) {
     try { return await action(); } finally { releaseLock(lock); }
   }
 
-  function managedReceiptMatches(receipt) {
+  function managedReceiptIdentityMatches(receipt) {
     return receipt &&
       receipt.version === RECEIPT_VERSION &&
       receipt.policyGenerationDigest === POLICY_GENERATION_DIGEST &&
       receipt.childEnvironmentIdentity === CHILD_ENVIRONMENT_IDENTITY &&
-      deps.isAlive(receipt.pid) && deps.validateIdentity(receipt.pid, receipt.identity) &&
       receipt.commandFingerprint === commandFingerprint(env);
+  }
+
+  function managedReceiptMatches(receipt) {
+    return managedReceiptIdentityMatches(receipt) &&
+      deps.isAlive(receipt.pid) && deps.validateIdentity(receipt.pid, receipt.identity);
   }
 
   async function acquireTurnLease(identity) {
@@ -336,6 +339,28 @@ export function createOpencodeServiceManager(options = {}) {
     });
   }
 
+  async function residencyForTurnLease(lease) {
+    if (!lease?.file || path.dirname(lease.file) !== leaseDirectory || !/^[a-f0-9]{32}$/.test(lease.token ?? "")) {
+      throw taggedError("lease_identity_invalid", "OpenCode physical residency requires an exact turn lease.");
+    }
+    return withLock(async () => {
+      const active = readLease(lease.file);
+      if (!active || active.token !== lease.token || ["rootId", "agentId", "turnId", "attemptId"].some((key) => active[key] !== lease[key])) {
+        throw taggedError("lease_identity_invalid", "OpenCode physical residency lease drifted before submission.");
+      }
+      const receipt = readReceipt(receiptFile);
+      if (!managedReceiptMatches(receipt)) return Object.freeze({ kind: "reused_service", turnLeaseToken: lease.token });
+      return Object.freeze({
+        kind: "managed_service",
+        pid: receipt.pid,
+        identity: receipt.identity,
+        commandFingerprint: receipt.commandFingerprint,
+        receiptGeneration: sha256([receipt.pid, receipt.identity, receipt.commandFingerprint, receipt.startedAt]),
+        turnLeaseToken: lease.token,
+      });
+    });
+  }
+
   async function reapIfIdle() {
     return withLock(async () => {
       const receipt = readReceipt(receiptFile);
@@ -364,16 +389,126 @@ export function createOpencodeServiceManager(options = {}) {
     });
   }
 
-  function scheduleReap() {
-    if (scheduled) return false;
-    scheduled = deps.setTimer(async () => {
-      scheduled = null;
-      try { await reapIfIdle(); } catch {}
-      scheduleReap();
-    }, ttlSeconds * 1_000);
-    scheduled.unref?.();
-    return true;
+  /** The manager's exact next ordinary idle deadline; reused services never obligate it. */
+  async function nextIdleDeadline() {
+    return withLock(async () => {
+      const receipt = readReceipt(receiptFile);
+      if (!managedReceiptMatches(receipt)) return Object.freeze({ obligation: false, deadline: null });
+      const leases = activeLeases(leaseDirectory);
+      if (leases == null || leases.length > 0) return Object.freeze({ obligation: true, deadline: null });
+      return Object.freeze({ obligation: true, deadline: timestamp(receipt.lastActivityAt) + ttlSeconds * 1_000 });
+    });
   }
+
+  /**
+   * Internal reclaim-only closure of one exact managed turn.  The path is
+   * derived under the service lock; callers never get a lease filename or a
+   * process selector.  Reused and shared services deliberately retain their
+   * turn lease and are never signalled here.
+   */
+  async function hardReclaimManagedTurn({
+    residency, rootId, agentId, turnId, attemptId, terminationAlreadyAttempted = false, beforeTerminate = null,
+    inspectOnly = false,
+  }) {
+    if (residency?.kind === "reused_service") return Object.freeze({
+      disposition: "retained_reused", processDisposition: "retained_reused",
+      serviceTurnDisposition: "retained_reused", failureCode: null,
+    });
+    if (residency?.kind !== "managed_service" || !boundedIdentity(rootId) || !boundedIdentity(agentId) || !boundedIdentity(turnId) || !boundedIdentity(attemptId)) {
+      return Object.freeze({ disposition: "ambiguous", processDisposition: "unknown", serviceTurnDisposition: "retained", failureCode: "receipt_drift" });
+    }
+    return withLock(async () => {
+      const tombstoneFile = path.join(directory, "tombstone.json");
+      let tombstone = null;
+      try { tombstone = JSON.parse(fs.readFileSync(tombstoneFile, "utf8")); } catch {}
+      if (tombstone?.version === 2 && tombstone.outcome === "hard_reclaimed" &&
+          tombstone.receiptGeneration === residency.receiptGeneration && tombstone.turnLeaseToken === residency.turnLeaseToken) {
+        return Object.freeze({ disposition: "released", processDisposition: "dead", serviceTurnDisposition: "already_released", failureCode: null });
+      }
+      const receipt = readReceipt(receiptFile);
+      const expectedGeneration = sha256([residency.pid, residency.identity, residency.commandFingerprint, receipt?.startedAt]);
+      if (!managedReceiptIdentityMatches(receipt) || receipt.pid !== residency.pid || receipt.identity !== residency.identity ||
+          receipt.commandFingerprint !== residency.commandFingerprint || residency.receiptGeneration !== expectedGeneration) {
+        return Object.freeze({ disposition: "ambiguous", processDisposition: "unknown", serviceTurnDisposition: "retained", failureCode: "receipt_drift" });
+      }
+      const leases = activeLeases(leaseDirectory);
+      if (leases == null) return Object.freeze({ disposition: "ambiguous", processDisposition: "unknown", serviceTurnDisposition: "retained", failureCode: "lease_disposition_unknown" });
+      const target = leases.find((lease) => lease.token === residency.turnLeaseToken && lease.rootId === rootId && lease.agentId === agentId && lease.turnId === turnId && lease.attemptId === attemptId);
+      const targetFile = path.join(leaseDirectory, `${residency.turnLeaseToken}.json`);
+      if (!target && fs.existsSync(targetFile)) {
+        return Object.freeze({ disposition: "ambiguous", processDisposition: "unknown", serviceTurnDisposition: "retained", failureCode: "lease_disposition_unknown" });
+      }
+      if (leases.length !== (target ? 1 : 0)) return Object.freeze({
+        disposition: "retained_shared", processDisposition: "retained_shared",
+        serviceTurnDisposition: target ? "retained_shared" : "already_released", failureCode: null,
+      });
+      const alive = deps.isAlive(receipt.pid);
+      if (alive && !deps.validateIdentity(receipt.pid, receipt.identity)) {
+        return Object.freeze({ disposition: "ambiguous", processDisposition: "unknown", serviceTurnDisposition: "retained", failureCode: "receipt_drift" });
+      }
+      if (alive) {
+        let peerActivity;
+        try { peerActivity = deps.peerActivity(env); } catch { peerActivity = "unknown"; }
+        if (peerActivity !== "none") return Object.freeze({
+          disposition: "ambiguous", processDisposition: "unknown", serviceTurnDisposition: "retained",
+          failureCode: peerActivity === "present" ? "peer_present" : "peer_unknown",
+        });
+        if (await probe() !== "healthy") return Object.freeze({
+          disposition: "ambiguous", processDisposition: "unknown", serviceTurnDisposition: "retained", failureCode: "endpoint_unproven",
+        });
+      }
+      if (inspectOnly) return Object.freeze({
+        disposition: "eligible", processDisposition: alive ? "exact_live" : "dead",
+        serviceTurnDisposition: target ? "released" : "already_released", failureCode: null,
+      });
+      if (alive && !terminationAlreadyAttempted) {
+        try { await beforeTerminate?.(); } catch {
+          return Object.freeze({ disposition: "ambiguous", processDisposition: "unknown", serviceTurnDisposition: "retained", failureCode: "termination_fence_failed" });
+        }
+        let termination;
+        try { termination = deps.terminate(receipt.pid, receipt.identity); } catch {
+          return Object.freeze({ disposition: "ambiguous", processDisposition: "unknown", serviceTurnDisposition: "retained", failureCode: "signal_failed" });
+        }
+        if (!termination?.attempted || !termination.delivered) return Object.freeze({
+          disposition: "ambiguous", processDisposition: "unknown", serviceTurnDisposition: "retained", failureCode: "signal_refused",
+        });
+      }
+      const deadline = deps.now() + deps.reapTimeoutMs;
+      while (deps.now() < deadline && deps.isAlive(receipt.pid)) await delay(deps.reapDelayMs);
+      if (deps.isAlive(receipt.pid)) return Object.freeze({
+        disposition: "ambiguous", processDisposition: "unknown", serviceTurnDisposition: "retained", failureCode: "target_still_alive",
+      });
+      const current = readReceipt(receiptFile);
+      if (!current || JSON.stringify(current) !== JSON.stringify(receipt)) return Object.freeze({
+        disposition: "ambiguous", processDisposition: "dead", serviceTurnDisposition: target ? "retained" : "already_released", failureCode: "receipt_drift",
+      });
+      let serviceTurnDisposition = target ? "released" : "already_released";
+      if (target) {
+        try { deps.unlinkSync(targetFile); } catch {
+          try {
+            if (fs.existsSync(targetFile)) return Object.freeze({
+              disposition: "ambiguous", processDisposition: "dead", serviceTurnDisposition: "retained", failureCode: "lease_unlink_retained",
+            });
+            serviceTurnDisposition = "released";
+          } catch {
+            return Object.freeze({ disposition: "ambiguous", processDisposition: "dead", serviceTurnDisposition: "unknown", failureCode: "lease_disposition_unknown" });
+          }
+        }
+      }
+      try { deps.unlinkSync(receiptFile); } catch {
+        if (fs.existsSync(receiptFile)) return Object.freeze({
+          disposition: "ambiguous", processDisposition: "dead", serviceTurnDisposition, failureCode: "receipt_drift",
+        });
+      }
+      writeReceipt(tombstoneFile, {
+        version: 2, outcome: "hard_reclaimed", receiptGeneration: residency.receiptGeneration,
+        turnLeaseToken: residency.turnLeaseToken, processDisposition: "dead", serviceTurnDisposition,
+        startedAt: receipt.startedAt, lastActivityAt: receipt.lastActivityAt, reapedAt: new Date(deps.now()).toISOString(),
+      });
+      return Object.freeze({ disposition: "released", processDisposition: "dead", serviceTurnDisposition, failureCode: null });
+    });
+  }
+
 
   async function probe(probeOptions) {
     const result = await deps.probe(env, probeOptions);
@@ -462,7 +597,14 @@ export function createOpencodeServiceManager(options = {}) {
     }
   }
 
-  return Object.freeze({ ensure, inspect, acquireTurnLease, releaseTurnLease, reapIfIdle, scheduleReap });
+  async function inspectHardReclaimManagedTurn(input) {
+    return hardReclaimManagedTurn({ ...input, inspectOnly: true });
+  }
+
+  function activityPaths() { return Object.freeze([directory, leaseDirectory]); }
+
+  return Object.freeze({ ensure, inspect, acquireTurnLease, releaseTurnLease, residencyForTurnLease, reapIfIdle,
+    nextIdleDeadline, activityPaths, inspectHardReclaimManagedTurn, hardReclaimManagedTurn });
 }
 
 export async function ensureConfiguredOpencodeService(options = {}) {

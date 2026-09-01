@@ -4,11 +4,17 @@ import os from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
 
+import {
+  HARD_RECLAIM_LIFECYCLE_MESSAGE,
+  deterministicCompletionEventId,
+} from "../../runtime/completion-inbox.mjs";
+
 // RED contract for the producer-side terminal seam.  The implementation is
 // intentionally not present yet: these tests freeze the smallest useful
 // boundary without reaching into the wake-me-up checkout or its private state.
 import {
   buildWorkerTerminalEvent,
+  publishBoundTerminalEvent,
   publishWorkerTerminalEvent,
   reconcileWorkerTerminalEvent,
   terminalPublisherReadiness,
@@ -32,6 +38,41 @@ function terminalJob(status, overrides = {}) {
       ...overrides.normalizedTerminalResult,
     },
     ...overrides,
+  };
+}
+
+function committedHardReclaim(jobId) {
+  return {
+    ownerRootId: "root-hard-reclaim-publication",
+    jobId,
+    agentId: "hard-reclaimed-agent",
+    status: "hard_reclaimed",
+    uncertainty: { reason: "worker_lost" },
+    terminalJob: null,
+    hardReclaim: {
+      phase: "committed",
+      leaseDisposition: {
+        admission: "released",
+        writer: "retained_reused",
+        serviceTurn: "retained_reused",
+      },
+    },
+  };
+}
+
+function hardReclaimCompletion(record) {
+  return {
+    eventId: deterministicCompletionEventId(record.ownerRootId, record.jobId),
+    jobId: record.jobId,
+    agentId: record.agentId,
+    terminalStatus: "hard_reclaimed",
+    settlement: "unknown",
+    summary: HARD_RECLAIM_LIFECYCLE_MESSAGE,
+    finalMessage: HARD_RECLAIM_LIFECYCLE_MESSAGE,
+    blocking: { reason: "worker_lost", scope: "agent", retry: "new_agent" },
+    detailedResultAvailable: false,
+    resultPointer: null,
+    metrics: null,
   };
 }
 
@@ -70,7 +111,7 @@ describe("producer terminal event mapping", () => {
     }
   });
   it("maps every closed Agent outcome to one worker-terminal outcome", () => {
-    const events = ["completed", "failed", "interrupted", "unknown"].map((status) =>
+    const events = ["completed", "failed", "interrupted", "unknown", "hard_reclaimed"].map((status) =>
       buildWorkerTerminalEvent({
         agentName: AGENT,
         terminalJob: terminalJob(status),
@@ -89,6 +130,12 @@ describe("producer terminal event mapping", () => {
           producer_task_id: AGENT,
           outcome: "settlement_uncertain",
           reason: "driver_unverifiable",
+        },
+        {
+          kind: "worker_terminal",
+          producer_task_id: AGENT,
+          outcome: "settlement_uncertain",
+          reason: "worker_lost",
         },
       ],
     );
@@ -114,6 +161,145 @@ describe("producer terminal event mapping", () => {
 });
 
 describe("producer terminal event ordering and repair", () => {
+  it("requires durable hard reclaim, Agent loss, and lifecycle completion before descriptor publication", () => {
+    let calls = 0;
+    const publication = [];
+    const store = {
+      terminalEventBinding: () => ({
+        binding: { jobId: "hard-reclaimed-publish", descriptorPath: "/private/descriptor" },
+        publication: null,
+      }),
+      resolveTarget: () => ({ path: AGENT, status: "running", latestJobId: "hard-reclaimed-publish" }),
+      recordTerminalEventPublication: (_agentId, value) => publication.push(value),
+    };
+    const hardReclaim = committedHardReclaim("hard-reclaimed-publish");
+    const completion = hardReclaimCompletion(hardReclaim);
+    const frozenPhysical = JSON.stringify({
+      uncertainty: hardReclaim.uncertainty,
+      hardReclaim: hardReclaim.hardReclaim,
+    });
+
+    const beforeAgent = publishBoundTerminalEvent({
+      store, agentId: hardReclaim.agentId, hardReclaim, completion,
+      env: new Proxy({}, { get() { calls += 1; return undefined; } }),
+    });
+    assert.deepEqual(beforeAgent, { published: false, reason: "lifecycle_not_durable" });
+    assert.equal(calls, 0);
+    assert.deepEqual(publication, []);
+    assert.equal(JSON.stringify({ uncertainty: hardReclaim.uncertainty, hardReclaim: hardReclaim.hardReclaim }), frozenPhysical);
+  });
+
+  it("does not call a publisher without a descriptor and records unavailable publication once", () => {
+    const hardReclaim = committedHardReclaim("hard-reclaimed-bound");
+    const completion = hardReclaimCompletion(hardReclaim);
+    const frozenPhysical = JSON.stringify({
+      uncertainty: hardReclaim.uncertainty,
+      hardReclaim: hardReclaim.hardReclaim,
+    });
+    const agent = {
+      path: AGENT, status: "errored", activeJobId: null, latestJobId: hardReclaim.jobId,
+      continuation: { mode: "blocked", evidence: { reason: "worker_lost" } },
+    };
+    const absentCalls = [];
+    const absent = publishBoundTerminalEvent({
+      store: {
+        terminalEventBinding: () => null,
+        resolveTarget: () => agent,
+        recordTerminalEventPublication: (...args) => absentCalls.push(args),
+      },
+      agentId: hardReclaim.agentId,
+      hardReclaim,
+      completion,
+      env: new Proxy({}, { get() { throw new Error("publisher must not be inspected"); } }),
+    });
+    assert.deepEqual(absent, { published: false, reason: "not_bound_or_recorded" });
+    assert.deepEqual(absentCalls, []);
+    assert.equal(JSON.stringify({ uncertainty: hardReclaim.uncertainty, hardReclaim: hardReclaim.hardReclaim }), frozenPhysical);
+
+    const publication = [];
+    const binding = {
+      binding: { jobId: hardReclaim.jobId, descriptorPath: "/private/descriptor" },
+      publication: null,
+    };
+    const unavailableStore = {
+      terminalEventBinding: () => binding,
+      resolveTarget: () => agent,
+      recordTerminalEventPublication: (_agentId, value) => {
+        publication.push(value);
+        binding.publication = value;
+      },
+    };
+    const unavailable = publishBoundTerminalEvent({
+      store: unavailableStore, agentId: hardReclaim.agentId, hardReclaim, completion, env: {},
+    });
+    assert.deepEqual(unavailable, { published: false, reason: "publisher_failed" });
+    assert.deepEqual(publication, [{ state: "failed", jobId: hardReclaim.jobId }]);
+    assert.deepEqual(
+      publishBoundTerminalEvent({ store: unavailableStore, agentId: hardReclaim.agentId, hardReclaim, completion, env: {} }),
+      { published: false, reason: "not_bound_or_recorded" },
+    );
+    assert.equal(publication.length, 1);
+    assert.equal(JSON.stringify({ uncertainty: hardReclaim.uncertainty, hardReclaim: hardReclaim.hardReclaim }), frozenPhysical);
+  });
+
+  it("records a rejected hard-reclaim publication with no fallback or state mutation", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "hd-hard-reclaim-rejected-"));
+    try {
+      const executable = path.join(root, "publisher.mjs");
+      const runtimeRoot = path.join(root, "runtime");
+      const captured = path.join(root, "captured.jsonl");
+      fs.mkdirSync(runtimeRoot);
+      fs.writeFileSync(executable, [
+        "#!/usr/bin/env node",
+        "import fs from 'node:fs';",
+        "const payload = process.argv[process.argv.indexOf('--event-payload') + 1];",
+        "fs.appendFileSync(process.env.HD_CAPTURED_EVENTS, fs.readFileSync(payload, 'utf8') + '\\n');",
+        "process.stdout.write(JSON.stringify({ state: 'rejected' }));",
+      ].join("\n"), { mode: 0o700 });
+      const hardReclaim = committedHardReclaim("hard-reclaimed-rejected");
+      const before = JSON.stringify(hardReclaim);
+      const completion = hardReclaimCompletion(hardReclaim);
+      const agent = {
+        path: AGENT, status: "errored", activeJobId: null, latestJobId: hardReclaim.jobId,
+        continuation: { mode: "blocked", evidence: { reason: "worker_lost" } },
+      };
+      const binding = {
+        binding: { jobId: hardReclaim.jobId, descriptorPath: path.join(root, "descriptor") },
+        publication: null,
+      };
+      const publications = [];
+      const store = {
+        terminalEventBinding: () => binding,
+        resolveTarget: () => agent,
+        recordTerminalEventPublication: (_agentId, value) => {
+          publications.push(value);
+          binding.publication = value;
+        },
+      };
+      const env = {
+        ...process.env,
+        CODEX_HARNESSDOCK_WAKE_PUBLISHER_BIN: executable,
+        CODEX_HARNESSDOCK_WAKE_RUNTIME_ROOT: runtimeRoot,
+        HD_CAPTURED_EVENTS: captured,
+      };
+      assert.deepEqual(publishBoundTerminalEvent({
+        store, agentId: hardReclaim.agentId, hardReclaim, completion, env,
+      }), { published: false, receipt: { published: false } });
+      assert.deepEqual(publications, [{ state: "failed", jobId: hardReclaim.jobId }]);
+      assert.deepEqual(JSON.parse(fs.readFileSync(captured, "utf8").trim()), {
+        kind: "worker_terminal", producer_task_id: AGENT,
+        outcome: "settlement_uncertain", reason: "worker_lost",
+      });
+      assert.deepEqual(publishBoundTerminalEvent({
+        store, agentId: hardReclaim.agentId, hardReclaim, completion, env,
+      }), { published: false, reason: "not_bound_or_recorded" });
+      assert.equal(fs.readFileSync(captured, "utf8").trim().split("\n").length, 1, "no fallback publication");
+      assert.equal(JSON.stringify(hardReclaim), before);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("binds every durable completion owner to the shared publisher", () => {
     for (const file of ["v3-worker-loop.mjs", "v3-job-store.mjs", "job-store.mjs"]) {
       const source = fs.readFileSync(path.join(process.cwd(), "runtime", file), "utf8");

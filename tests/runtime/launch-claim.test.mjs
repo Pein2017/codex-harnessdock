@@ -43,6 +43,8 @@ import {
   SUBMISSION_STATES,
   bindLaunchClaimLease,
   bindLaunchClaimLeases,
+  bindLaunchClaimPhysicalResidencyAsync,
+  claimNativeSubmissionStartAsync,
   createLaunchIntent,
   createLaunchClaim,
   beginPreSubmissionRollback,
@@ -219,6 +221,8 @@ const RECORD_FIELDS = [
   "lifecycleOwner",
   "route", "inspectionEvidence", "leaseState", "leaseIntent", "leaseBindings", "assignedMessageIds", "turnOptions", "inputDigest",
   "acceptance", "nativeTurnRef", "nativeSessionRef", "acceptanceEvidenceAt", "sanitizedDetail",
+  "physicalResidency",
+  "worker", "provisionalNativeTurnRef",
   "submissionState", "submissionStartedAt",
   "createdAt", "updatedAt",
 ];
@@ -236,6 +240,9 @@ function materializeLegacyVersionOne(record) {
   delete legacy.turnOptions;
   delete legacy.lifecycleOwner;
   delete legacy.inspectionEvidence;
+  delete legacy.physicalResidency;
+  delete legacy.worker;
+  delete legacy.provisionalNativeTurnRef;
   fs.rmSync(currentDirectory, { recursive: true, force: true });
   fs.mkdirSync(legacyDirectory, { recursive: true, mode: 0o700 });
   const fileName = `${createHash("sha256").update(record.attemptId).digest("hex")}.json`;
@@ -306,7 +313,7 @@ describe("launch claim: closed identity and durable binding", () => {
   });
 
   it("exposes exactly the closed acceptance and submission-state vocabularies", () => {
-    assert.equal(LAUNCH_CLAIM_SCHEMA_VERSION, 2);
+    assert.equal(LAUNCH_CLAIM_SCHEMA_VERSION, 3);
     assert.deepEqual(LAUNCH_ACCEPTANCE_VALUES, [
       "not_submitted", "acceptance_proven", "acceptance_rejected", "acceptance_unknown",
     ]);
@@ -341,7 +348,7 @@ describe("launch claim: closed identity and durable binding", () => {
       if (field !== "version") assert.deepEqual(migrated[field], legacy[field]);
     }
     assert.deepEqual(JSON.parse(fs.readFileSync(filePath, "utf8")), legacy);
-    assert.ok(fs.existsSync(path.join(resolveLaunchClaimDirectory(binding()), path.basename(filePath))));
+    assert.equal(fs.existsSync(path.join(resolveLaunchClaimDirectory(binding()), path.basename(filePath))), false);
   });
 
   it("projects a rollback-eligible v1 record and keeps its exact timestamps", () => {
@@ -377,13 +384,13 @@ describe("launch claim: closed identity and durable binding", () => {
       () => listLaunchClaimsForOwnerRoot({ ownerRootId: "root-1" }),
       /Legacy and current launch claims disagree/,
     );
-    assert.throws(() => readLaunchClaim(binding()), /Legacy and current launch claims disagree/);
+    assert.throws(() => readLaunchClaim(binding()), /Current and historical launch claims overlap/);
   });
 
   it("round-trips a native v2 record without rewriting it", () => {
     setup();
     const created = createLaunchClaim(claimInput());
-    assert.equal(created.version, 2);
+    assert.equal(created.version, 3);
     assert.deepEqual(readLaunchClaim(binding()), created);
   });
 
@@ -1093,6 +1100,52 @@ describe("launch claim: corrupt and partial durable records", () => {
 });
 
 describe("launch claim: pre-submission fence (markNativeSubmissionStarted)", () => {
+  it("binds one exact physical receipt only after the submission fence and rejects route or receipt drift", async () => {
+    setup();
+    const claim = createLaunchClaim(claimInput());
+    const physicalResidency = { kind: "local_process", pid: 7, identity: "123" };
+    const worker = { pid: process.pid, identity: getProcessIdentity(process.pid) };
+    const provisionalNativeTurnRef = {
+      version: 1, harnessId: claim.route.harnessId, driverVersion: claim.route.driverVersion,
+      instanceKey: claim.route.instanceKey, locatorVersion: 1, locator: { sessionId: "s-1", turnId: "t-1" },
+    };
+    await assert.rejects(
+      bindLaunchClaimPhysicalResidencyAsync({ ...binding(), attemptId: claim.attemptId, route: claim.route, physicalResidency, worker, provisionalNativeTurnRef }),
+      (error) => error.code === "binding_too_late",
+    );
+    await claimNativeSubmissionStartAsync({ ...binding(), attemptId: claim.attemptId });
+    const bound = await bindLaunchClaimPhysicalResidencyAsync({ ...binding(), attemptId: claim.attemptId, route: claim.route, physicalResidency, worker, provisionalNativeTurnRef });
+    assert.deepEqual(bound.physicalResidency, physicalResidency);
+    await assert.rejects(
+      bindLaunchClaimPhysicalResidencyAsync({ ...binding(), attemptId: claim.attemptId, route: { ...claim.route, instanceKey: "other" }, physicalResidency, worker, provisionalNativeTurnRef }),
+      (error) => error.code === "route_mismatch",
+    );
+    await assert.rejects(
+      bindLaunchClaimPhysicalResidencyAsync({ ...binding(), attemptId: claim.attemptId, route: claim.route, physicalResidency: { kind: "local_process", pid: 8, identity: "456" }, worker, provisionalNativeTurnRef }),
+      (error) => error.code === "residency_mismatch",
+    );
+  });
+
+  it("refuses acceptance whose final native turn differs from the durably bound provisional lineage", async () => {
+    setup();
+    const claim = createLaunchClaim(claimInput());
+    await claimNativeSubmissionStartAsync({ ...binding(), attemptId: claim.attemptId });
+    const first = fakeLiveHarnessTurn({ route: claim.route });
+    await bindLaunchClaimPhysicalResidencyAsync({
+      ...binding(), attemptId: claim.attemptId, route: claim.route,
+      physicalResidency: { kind: "local_process", pid: 7, identity: "123" },
+      worker: { pid: process.pid, identity: getProcessIdentity(process.pid) },
+      provisionalNativeTurnRef: first.nativeTurnRef,
+    });
+    const second = fakeLiveHarnessTurn({ route: claim.route, live: {
+      nativeTurnRef: { ...first.nativeTurnRef, locator: { sessionId: "s-2", turnId: "t-2" } },
+    } });
+    assert.throws(
+      () => recordLaunchAcceptanceProven({ ...binding(), attemptId: claim.attemptId, liveHarnessTurn: second }),
+      (error) => error.code === "provisional_native_turn_mismatch",
+    );
+  });
+
   it("moves not_started to started with a real timestamp", () => {
     setup();
     createLaunchClaim(claimInput());

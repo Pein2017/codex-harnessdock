@@ -10,6 +10,7 @@ import { NATIVE_REFERENCE_ENVELOPE_VERSION } from "./native-reference.mjs";
 import { resolvePluginRuntimeRoot } from "./paths.mjs";
 import { plainDataTree } from "./plain-record.mjs";
 import { createPiRpcProcess, piRpcArgv } from "./pi-rpc-process.mjs";
+import { getProcessIdentity } from "./process-control.mjs";
 import { terminalMetricsFromEvidence } from "./terminal-metrics.mjs";
 
 export const PI_HARNESS_ID = "pi";
@@ -195,6 +196,7 @@ function piDiscoveryFailure(error) {
 export function createPiDriver(options = {}) {
   const fixedEnv = options.env ?? process.env;
   const test = options._test ?? null;
+  const processIdentity = test?.getProcessIdentity ?? getProcessIdentity;
   const sessionRoot = test?.sessionRoot ?? path.join(resolvePluginRuntimeRoot(), "pi-sessions");
   const inspectionGeneration = () => typeof test?.inspectionGeneration === "function"
     ? test.inspectionGeneration()
@@ -398,18 +400,30 @@ export function createPiDriver(options = {}) {
         route = assertRoute(scope?.route, "Pi turn scope"); assertRoute(input?.preparedTurn?.route, "Prepared Pi turn"); effort = turnOptions(scope?.turnOptions, route).effort;
         if (JSON.stringify(input.preparedTurn.turnOptions) !== JSON.stringify({ effort })) throw new Error("Pi prepared effort differs from scope.");
         requiredText(scope?.turnId, "Pi turn identity"); resumed = input?.nativeSessionRef != null; sessionId = resumed ? assertNativeReferenceEnvelope(input.nativeSessionRef, { driver, route, kind: "session" }).locator.sessionId : randomUUID();
+        if (typeof input?.launchContext?.bindPhysicalResidency !== "function") throw new Error("Pi Driver requires a durable physical-residency binder.");
       } catch (error) { throw preTransport(error); }
       let rpc;
       try { rpc = makeProcess({ route, effort, sessionId, resume: resumed, cwd: input?.launchContext?.workspaceRoot ?? scope.workspaceRoot }); } catch (error) { throw preTransport(error); }
-      const nativeSessionRef = sessionRefFor(route, sessionId); let baseline;
+      const nativeSessionRef = sessionRefFor(route, sessionId); let baseline; let physicalResidency;
       try {
+        const pid = rpc.child?.pid;
+        const identity = Number.isSafeInteger(pid) && pid > 0 ? processIdentity(pid) : null;
+        if (!identity) throw new Error("Pi RPC child identity is unavailable.");
+        physicalResidency = Object.freeze({ kind: "local_process", pid, identity });
         const state = (await rpc.getState()).data;
         const target = modelParts(route.model);
         if (state?.sessionId !== sessionId || state?.model?.provider !== target.provider || state?.model?.id !== target.model || state?.thinkingLevel !== effort || state?.isStreaming !== false || state?.isCompacting !== false) throw new Error("Pi RPC state does not match the accepted route and idle session.");
         const entries = await rpc.getEntries(null); baseline = { leafId: entries.data?.leafId ?? null, stats: nativeStats((await rpc.getSessionStats()).data, "Pi baseline stats") };
         await rpc.setAutoRetry(false); await rpc.setAutoCompaction(true); await rpc.setSteeringMode("one-at-a-time"); await rpc.setFollowUpMode("one-at-a-time");
       } catch (error) { await rpc.dispose(); throw preTransport(error); }
-      const nativeTurnRef = turnRefFor(route, sessionId, scope.turnId, baseline); let promptWritten = false;
+      const nativeTurnRef = turnRefFor(route, sessionId, scope.turnId, baseline);
+      try {
+        await input.launchContext.bindPhysicalResidency({
+          physicalResidency,
+          provisionalNativeTurnRef: nativeTurnRef,
+        });
+      } catch (error) { await rpc.dispose(); throw preTransport(error); }
+      let promptWritten = false;
       try { promptWritten = true; await rpc.prompt(fixedPrompt(input.preparedTurn.promptEnvelope)); }
       catch (error) { await rpc.dispose(); if (!promptWritten || error?.code === "request_rejected") throw preTransport(error); throw error; }
       let settled = false;

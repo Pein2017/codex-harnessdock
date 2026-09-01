@@ -109,7 +109,9 @@ function setup(options = {}) {
 describe("version-three worker launch acceptance core", () => {
   it("persists claim and submission fence before startTurn, then exact acceptance before returning", async () => {
     const context = setup();
-    const launched = await launchVersionThreeTurn(context.input);
+    let managerEnsures = 0;
+    const launched = await launchVersionThreeTurn({ ...context.input,
+      ensureResidencyManager: async () => { managerEnsures += 1; } });
 
     assert.equal(context.startCalls, 1);
     assert.equal(context.observedAtStart.acceptance, "not_submitted");
@@ -118,6 +120,7 @@ describe("version-three worker launch acceptance core", () => {
     assert.deepEqual(launched.launchClaim.nativeTurnRef, launched.liveTurn.nativeTurnRef);
     assert.deepEqual(launched.launchClaim.nativeSessionRef, launched.liveTurn.nativeSessionRef);
     assert.equal(readLaunchClaim(context.input).acceptance, "acceptance_proven");
+    assert.equal(managerEnsures, 1, "durable physical binding nudges the independent manager once");
   });
 
   it("records ambiguous submission as unknown, retains the lease, and never submits an idempotent replay", async () => {

@@ -147,11 +147,21 @@ async function startFake(scenario = {}) {
 }
 
 function driverFor(url, options = {}) {
-  return createOpencodeDriver({
+  const driver = createOpencodeDriver({
     env: { OPENCODE_SERVER_URL: url },
-    serviceManager: { ensure: async () => ({ status: "reused" }) },
+    serviceManager: {
+      ensure: async () => ({ status: "reused" }),
+      acquireTurnLease: async () => ({ token: "a".repeat(32) }),
+      releaseTurnLease: async () => true,
+      residencyForTurnLease: async (lease) => ({ kind: "reused_service", turnLeaseToken: lease.token }),
+    },
     ...options,
   });
+  const revalidatePreparedTurn = driver.revalidatePreparedTurn.bind(driver);
+  return Object.freeze({ ...driver, revalidatePreparedTurn: async (...args) => Object.freeze({
+    ...await revalidatePreparedTurn(...args),
+    bindPhysicalResidency: async () => {},
+  }) });
 }
 
 function routeRequest(model = OPENCODE_EXPLORER_MODEL) {
@@ -208,7 +218,7 @@ async function launch(driver, url, options = {}) {
   const rawLive = await driver.startTurn({
     scope: accepted.scope,
     preparedTurn: accepted.preparedTurn,
-    launchContext,
+    launchContext: { ...launchContext, bindPhysicalResidency: options.bindPhysicalResidency ?? (async () => {}) },
     ...(options.nativeSessionRef ? { nativeSessionRef: options.nativeSessionRef } : {}),
   });
   const live = validateLiveHarnessTurn(rawLive, { driver, route: accepted.route });
@@ -855,6 +865,36 @@ describe("opencode driver: session and turn lineage", () => {
 // ---------------------------------------------------------------------------
 
 describe("opencode driver: refusals before native submission", () => {
+  it("refuses a direct start without the durable residency binder before any POST", async () => {
+    const { server, url } = await startFake();
+    const driver = driverFor(url);
+    const accepted = await acceptedTurn(driver, url);
+    const { bindPhysicalResidency: _ignored, ...launchContext } = await driver.revalidatePreparedTurn(accepted.preparedTurn, accepted.scope);
+    await assert.rejects(
+      driver.startTurn({ scope: accepted.scope, preparedTurn: accepted.preparedTurn, launchContext }),
+      (error) => isDriverPreTransportRejection(error),
+    );
+    assert.deepEqual(postRequests(server), []);
+  });
+
+  it("releases only an unsubmitted lease when durable service binding fails", async () => {
+    const { server, url } = await startFake();
+    const lease = { file: "/opaque/lease", token: "a".repeat(32), rootId: "root_1", agentId: "agent_1", turnId: "job_1", attemptId: "att_1" };
+    const calls = [];
+    const driver = driverFor(url, { serviceManager: {
+      ensure: async () => ({ status: "reused" }),
+      acquireTurnLease: async () => lease,
+      residencyForTurnLease: async () => ({ kind: "reused_service", turnLeaseToken: lease.token }),
+      releaseTurnLease: async (value) => { calls.push(value); return true; },
+    } });
+    await assert.rejects(
+      launch(driver, url, { bindPhysicalResidency: async () => { throw new Error("storage unavailable"); } }),
+      (error) => isDriverPreTransportRejection(error),
+    );
+    assert.deepEqual(calls, [lease]);
+    assert.equal(postRequests(server).length, 1, "session setup is pre-prompt; the binder still blocks every prompt POST");
+  });
+
   it("rejects a follow-up before any mailbox or native mutation", async () => {
     const { server, url } = await startFake();
     const driver = driverFor(url);
@@ -1001,6 +1041,7 @@ describe("opencode driver: terminal settlement", () => {
         ensure: async () => ({ status: "reused" }),
         acquireTurnLease: async (identity) => { calls.push(["acquire", identity]); return lease; },
         releaseTurnLease: async (value) => { calls.push(["release", value]); return true; },
+        residencyForTurnLease: async (value) => ({ kind: "reused_service", turnLeaseToken: value.token }),
       },
     });
     const { live } = await launch(driver, url);
@@ -1017,6 +1058,7 @@ describe("opencode driver: terminal settlement", () => {
         ensure: async () => ({ status: "reused" }),
         acquireTurnLease: async (identity) => { calls.push(["acquire", identity]); return lease; },
         releaseTurnLease: async () => { calls.push(["release"]); return true; },
+        residencyForTurnLease: async (value) => ({ kind: "reused_service", turnLeaseToken: value.token }),
       },
     });
     const { live } = await launch(driver, url);

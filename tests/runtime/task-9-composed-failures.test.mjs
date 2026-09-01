@@ -18,7 +18,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, it } from "node:test";
+import { after, afterEach, describe, it } from "node:test";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -41,6 +41,7 @@ import {
   OPENCODE_HARNESS_ID,
 } from "../../runtime/opencode-explorer-profile.mjs";
 import { createFakeOpencodeServer } from "./fixtures/fake-opencode-server.mjs";
+import { removeTestRuntimeHome } from "./fixtures/test-runtime-cleanup.mjs";
 
 const cleanups = [];
 afterEach(async () => {
@@ -49,7 +50,7 @@ afterEach(async () => {
 
 const RUNTIME_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "cc-failures-home-"));
 const CODEX_HOME = path.join(RUNTIME_HOME, "codex-home");
-process.on("exit", () => fs.rmSync(RUNTIME_HOME, { recursive: true, force: true }));
+after(async () => removeTestRuntimeHome(RUNTIME_HOME));
 
 const SECRET_USERNAME = "explorer-operator";
 const SECRET_PASSWORD = "hunter2-never-projected";

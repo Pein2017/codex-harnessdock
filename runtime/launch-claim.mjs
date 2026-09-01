@@ -124,9 +124,11 @@ import {
   isProcessAlive,
   validateProcessIdentity,
 } from "./process-control.mjs";
+import { validatePhysicalResidency } from "./physical-residency.mjs";
 
-export const LAUNCH_CLAIM_SCHEMA_VERSION = 2;
+export const LAUNCH_CLAIM_SCHEMA_VERSION = 3;
 const LEGACY_LAUNCH_CLAIM_SCHEMA_VERSION = 1;
+const PREVIOUS_LAUNCH_CLAIM_SCHEMA_VERSION = 2;
 
 /** The closed acceptance axis. Never collapsed with native turn state, settlement, submission, or completion. */
 export const LAUNCH_ACCEPTANCE_VALUES = Object.freeze([
@@ -607,8 +609,12 @@ export function resolveLaunchClaimDirectory({ ownerRootId, agentId, jobId }) {
   return path.join(resolveLaunchClaimRoot(), jobDigest(identity));
 }
 
+function resolveLaunchClaimDirectoryForVersion(identity, version) {
+  return path.join(resolveLaunchClaimRoot(version), jobDigest(identity));
+}
+
 function resolveLegacyLaunchClaimDirectory(identity) {
-  return path.join(resolveLaunchClaimRoot(LEGACY_LAUNCH_CLAIM_SCHEMA_VERSION), jobDigest(identity));
+  return resolveLaunchClaimDirectoryForVersion(identity, LEGACY_LAUNCH_CLAIM_SCHEMA_VERSION);
 }
 
 function claimFileName(attemptId) {
@@ -802,12 +808,13 @@ const LAUNCH_CLAIM_FIELDS = Object.freeze([
   "route", "leaseState", "leaseIntent", "leaseBindings", "assignedMessageIds", "turnOptions", "inputDigest",
   "inspectionEvidence",
   "acceptance", "nativeTurnRef", "nativeSessionRef", "acceptanceEvidenceAt", "sanitizedDetail",
+  "physicalResidency", "worker", "provisionalNativeTurnRef",
   "submissionState", "submissionStartedAt",
   "createdAt", "updatedAt",
 ]);
 const LEGACY_LAUNCH_CLAIM_FIELDS = Object.freeze(
   LAUNCH_CLAIM_FIELDS.filter((field) => ![
-    "controlRoot", "executionRoot", "lifecycleOwner", "leaseState", "leaseIntent", "turnOptions", "inspectionEvidence",
+  "controlRoot", "executionRoot", "lifecycleOwner", "leaseState", "leaseIntent", "turnOptions", "inspectionEvidence", "physicalResidency", "worker", "provisionalNativeTurnRef",
   ].includes(field))
 );
 
@@ -1010,10 +1017,13 @@ function validateLaunchClaimRecord(parsed) {
     (hasTurnOptions || field !== "turnOptions") &&
     (hasControlRoot || !["controlRoot", "executionRoot"].includes(field)) &&
     (hasLifecycleOwner || field !== "lifecycleOwner") &&
-    (hasInspectionEvidence || field !== "inspectionEvidence")
+    (hasInspectionEvidence || field !== "inspectionEvidence") &&
+    (Object.hasOwn(snapshot, "physicalResidency") || field !== "physicalResidency") &&
+    (Object.hasOwn(snapshot, "worker") || field !== "worker") &&
+    (Object.hasOwn(snapshot, "provisionalNativeTurnRef") || field !== "provisionalNativeTurnRef")
   );
   assertClosedFieldSet(snapshot, expectedFields, label);
-  if (snapshot.version !== LAUNCH_CLAIM_SCHEMA_VERSION) {
+  if (![PREVIOUS_LAUNCH_CLAIM_SCHEMA_VERSION, LAUNCH_CLAIM_SCHEMA_VERSION].includes(snapshot.version)) {
     throw taggedError(
       "unsupported_version",
       `${label} declares unsupported schema version ${JSON.stringify(snapshot.version ?? null)}.`
@@ -1114,11 +1124,37 @@ function validateLaunchClaimRecord(parsed) {
   const submissionStartedAt = assertOptionalTimestampText(snapshot.submissionStartedAt, `${label} submissionStartedAt`);
   assertSubmissionCrossFieldInvariants(submissionState, submissionStartedAt, label);
   const sanitizedDetail = assertOptionalDetailText(snapshot.sanitizedDetail, `${label} sanitizedDetail`);
+  const physicalResidency = Object.hasOwn(snapshot, "physicalResidency")
+    ? (snapshot.physicalResidency == null ? null : validatePhysicalResidency(snapshot.physicalResidency, `${label} physical residency`))
+    : null;
+  let worker = null;
+  if (Object.hasOwn(snapshot, "worker") && snapshot.worker != null) {
+    const value = plainRecordSnapshot(snapshot.worker, `${label} worker`);
+    assertClosedFieldSet(value, ["pid", "identity"], `${label} worker`);
+    if (!Number.isSafeInteger(value.pid) || value.pid < 1) throw new Error(`${label} worker pid is invalid.`);
+    worker = Object.freeze({ pid: value.pid, identity: assertIdentityText(value.identity, `${label} worker identity`) });
+  }
+  const provisionalNativeTurnRef = Object.hasOwn(snapshot, "provisionalNativeTurnRef") && snapshot.provisionalNativeTurnRef != null
+    ? canonicalizeNativeReference(snapshot.provisionalNativeTurnRef, `${label} provisional native turn reference`)
+    : null;
+  if (provisionalNativeTurnRef != null) assertNativeReferenceMatchesRoute(provisionalNativeTurnRef, route, `${label} provisional native turn`);
+  const binding = [physicalResidency, worker, provisionalNativeTurnRef];
+  if (snapshot.version === LAUNCH_CLAIM_SCHEMA_VERSION && binding.some((value) => value == null) && binding.some((value) => value != null)) {
+    throw new Error(`${label} physical residency binding must be complete or absent.`);
+  }
+  if (snapshot.version === LAUNCH_CLAIM_SCHEMA_VERSION && acceptance === "acceptance_proven") {
+    if (binding.some((value) => value != null) && binding.some((value) => value == null)) {
+      throw new Error(`${label} acceptance_proven has incomplete physical residency lineage.`);
+    }
+    if (provisionalNativeTurnRef != null && JSON.stringify(nativeTurnRef) !== JSON.stringify(provisionalNativeTurnRef)) {
+      throw taggedError("provisional_native_turn_mismatch", `${label} accepted native turn does not match its provisional lineage.`);
+    }
+  }
   const createdAt = assertTimestampText(snapshot.createdAt, `${label} createdAt`);
   const updatedAt = assertTimestampText(snapshot.updatedAt, `${label} updatedAt`);
   assertTimestampMonotonicity(createdAt, updatedAt, acceptanceEvidenceAt, submissionStartedAt, label);
   return Object.freeze({
-    version: LAUNCH_CLAIM_SCHEMA_VERSION,
+    version: snapshot.version,
     ownerRootId: identity.ownerRootId,
     agentId: identity.agentId,
     jobId: identity.jobId,
@@ -1138,6 +1174,9 @@ function validateLaunchClaimRecord(parsed) {
     nativeSessionRef,
     acceptanceEvidenceAt,
     sanitizedDetail,
+    ...(Object.hasOwn(snapshot, "physicalResidency") ? { physicalResidency } : {}),
+    ...(Object.hasOwn(snapshot, "worker") ? { worker } : {}),
+    ...(Object.hasOwn(snapshot, "provisionalNativeTurnRef") ? { provisionalNativeTurnRef } : {}),
     submissionState,
     submissionStartedAt,
     createdAt,
@@ -1170,7 +1209,7 @@ function validateLegacyLaunchClaimRecord(parsed) {
   }
   return validateLaunchClaimRecord({
     ...snapshot,
-    version: LAUNCH_CLAIM_SCHEMA_VERSION,
+    version: PREVIOUS_LAUNCH_CLAIM_SCHEMA_VERSION,
     leaseState: "acquired",
     leaseIntent: snapshot.leaseBindings,
   });
@@ -1205,7 +1244,7 @@ function readClaimFile(filePath, expectedDir, { legacy = false } = {}) {
   }
   const derivedDir = legacy
     ? resolveLegacyLaunchClaimDirectory(record)
-    : resolveLaunchClaimDirectory(record);
+    : resolveLaunchClaimDirectoryForVersion(record, record.version);
   const expectedFile = path.join(derivedDir, claimFileName(record.attemptId));
   if (expectedDir !== derivedDir || filePath !== expectedFile) {
     throw taggedError(
@@ -1253,48 +1292,25 @@ function readSingleClaimRecord(claimDir, options = {}) {
 function readCurrentOrMigrateWhileLocked(identity) {
   const currentDir = resolveLaunchClaimDirectory(identity);
   const current = readSingleClaimRecord(currentDir);
+  const previous = readSingleClaimRecord(resolveLaunchClaimDirectoryForVersion(identity, PREVIOUS_LAUNCH_CLAIM_SCHEMA_VERSION));
   const legacy = readSingleClaimRecord(resolveLegacyLaunchClaimDirectory(identity), { legacy: true });
-  if (current && legacy && JSON.stringify(current) !== JSON.stringify(legacy)) {
+  if ([current, previous, legacy].filter(Boolean).length > 1) {
     throw taggedError(
       "ambiguous_launch_claim_versions",
-      "Legacy and current launch claims disagree for the same owner root, Agent, and job."
+      "Current and historical launch claims overlap for the same owner root, Agent, and job."
     );
   }
-  if (current) return current;
-  if (!legacy) return null;
-  ensureDirectory(currentDir);
-  writeAtomicClaimFile(
-    path.join(currentDir, claimFileName(legacy.attemptId)),
-    legacy,
-    { createOnly: true },
-  );
-  return readSingleClaimRecord(currentDir);
+  return current ?? previous ?? legacy;
 }
 
 // ---------------------------------------------------------------------------
 // Public surface.
 // ---------------------------------------------------------------------------
 
-/** Read the one launch claim for a job, migrating an immutable v1 record to v2 when needed. */
+/** Read one claim without rewriting historical evidence. */
 export function readLaunchClaim({ ownerRootId, agentId, jobId }) {
   const identity = assertBindingIdentity({ ownerRootId, agentId, jobId });
-  const claimDir = resolveLaunchClaimDirectory(identity);
-  const current = readSingleClaimRecord(claimDir);
-  const legacy = readSingleClaimRecord(resolveLegacyLaunchClaimDirectory(identity), { legacy: true });
-  if (current && legacy && JSON.stringify(current) !== JSON.stringify(legacy)) {
-    throw taggedError(
-      "ambiguous_launch_claim_versions",
-      "Legacy and current launch claims disagree for the same owner root, Agent, and job."
-    );
-  }
-  if (current) return current;
-  if (!legacy) return null;
-  const lock = acquireDirectoryLock(claimDir);
-  try {
-    return readCurrentOrMigrateWhileLocked(identity);
-  } finally {
-    releaseDirectoryLock(lock);
-  }
+  return readCurrentOrMigrateWhileLocked(identity);
 }
 
 const MAX_RECONCILIATION_CLAIM_DIRECTORIES = 4096;
@@ -1362,18 +1378,47 @@ export function listLaunchClaimsForOwnerRoot({ ownerRootId }) {
   for (const record of scanClaimRoot(LAUNCH_CLAIM_SCHEMA_VERSION, root)) {
     claims.set(claimJobIdentityKey(record), record);
   }
-  for (const legacy of scanClaimRoot(LEGACY_LAUNCH_CLAIM_SCHEMA_VERSION, root)) {
-    const key = claimJobIdentityKey(legacy);
+  for (const version of [PREVIOUS_LAUNCH_CLAIM_SCHEMA_VERSION, LEGACY_LAUNCH_CLAIM_SCHEMA_VERSION]) {
+    for (const legacy of scanClaimRoot(version, root)) {
+      const key = claimJobIdentityKey(legacy);
     const current = claims.get(key);
-    if (current && JSON.stringify(current) !== JSON.stringify(legacy)) {
+      if (current) {
       throw taggedError(
         "ambiguous_launch_claim_versions",
         "Legacy and current launch claims disagree for the same owner root, Agent, and job."
       );
     }
-    if (!current) claims.set(key, legacy);
+      claims.set(key, legacy);
+    }
   }
   return Object.freeze([...claims.values()]);
+}
+
+/** Internal global snapshot for the detached residency owner; corrupt roots remain visible as HOLD. */
+export function listAllLaunchClaims() {
+  const claims = new Map();
+  const unreadable = [];
+  const watchPaths = [];
+  for (const version of [LAUNCH_CLAIM_SCHEMA_VERSION, PREVIOUS_LAUNCH_CLAIM_SCHEMA_VERSION, LEGACY_LAUNCH_CLAIM_SCHEMA_VERSION]) {
+    watchPaths.push(resolveLaunchClaimRoot(version));
+    let records;
+    try { records = scanClaimRoot(version); } catch (error) {
+      unreadable.push({ code: typeof error?.code === "string" ? error.code : "corrupt_record" });
+      continue;
+    }
+    for (const record of records) {
+      const key = claimJobIdentityKey(record);
+      if (claims.has(key)) {
+        unreadable.push({ code: "ambiguous_launch_claim_versions" });
+        claims.delete(key);
+      } else {
+        claims.set(key, record);
+        watchPaths.push(resolveLaunchClaimDirectoryForVersion(record, version));
+      }
+    }
+  }
+  return Object.freeze({ records: Object.freeze([...claims.values()]), unreadable: Object.freeze(unreadable),
+    watchPaths: Object.freeze([...new Set(watchPaths)]) });
 }
 
 /** Read-only global inventory used only to quarantine pre-writer-bundle write authority. */
@@ -1618,6 +1663,9 @@ function createLaunchClaimWhileLocked(prepared) {
     nativeSessionRef: null,
     acceptanceEvidenceAt: null,
     sanitizedDetail: null,
+    physicalResidency: null,
+    worker: null,
+    provisionalNativeTurnRef: null,
     submissionState: "not_started",
     submissionStartedAt: null,
     createdAt,
@@ -1833,6 +1881,9 @@ function loadClaimForMutation(identity, attemptId, label) {
       `attemptId may record this claim's acceptance.`
     );
   }
+  if (record.version !== LAUNCH_CLAIM_SCHEMA_VERSION) {
+    throw taggedError("legacy_record_read_only", `${label} refuses to mutate a legacy launch claim.`);
+  }
   validateVersionThreeRoute(record.route, `${label} activation route`);
   return { claimDir, filePath: path.join(claimDir, claimFileName(canonicalAttemptId)), record };
 }
@@ -1920,6 +1971,58 @@ export async function claimNativeSubmissionStartAsync(input) {
   const lock = await acquireDirectoryLockAsync(prepared.claimDir);
   try {
     return Object.freeze(markNativeSubmissionStartedWhileLocked(prepared));
+  } finally {
+    releaseDirectoryLock(lock);
+  }
+}
+
+const PHYSICAL_RESIDENCY_BINDING_INPUT_FIELDS = Object.freeze([
+  "ownerRootId", "agentId", "jobId", "attemptId", "route", "physicalResidency", "worker", "provisionalNativeTurnRef",
+]);
+
+/**
+ * Bind one Driver-owned physical execution receipt before the Driver may send
+ * input. This is claim-bound rather than process-local so a worker crash never
+ * reopens an unrecorded child/service window.
+ */
+export async function bindLaunchClaimPhysicalResidencyAsync(input) {
+  const snapshot = plainRecordSnapshot(input, "Launch claim physical-residency input");
+  assertNoUnknownFields(snapshot, PHYSICAL_RESIDENCY_BINDING_INPUT_FIELDS, "Launch claim physical-residency input");
+  const identity = assertBindingIdentity(snapshot);
+  const attemptId = assertIdentityText(snapshot.attemptId, "Launch claim physical-residency attemptId");
+  const route = validateVersionThreeRoute(snapshot.route, "Launch claim physical-residency route");
+  const physicalResidency = validatePhysicalResidency(snapshot.physicalResidency, "Launch claim physical residency");
+  const workerSnapshot = plainRecordSnapshot(snapshot.worker, "Launch claim physical-residency worker");
+  assertClosedFieldSet(workerSnapshot, ["pid", "identity"], "Launch claim physical-residency worker");
+  if (!Number.isSafeInteger(workerSnapshot.pid) || workerSnapshot.pid < 1) throw new Error("Launch claim physical-residency worker pid is invalid.");
+  const worker = { pid: workerSnapshot.pid, identity: assertIdentityText(workerSnapshot.identity, "Launch claim physical-residency worker identity") };
+  const provisionalNativeTurnRef = canonicalizeNativeReference(
+    snapshot.provisionalNativeTurnRef, "Launch claim provisional native turn reference"
+  );
+  const claimDir = resolveLaunchClaimDirectory(identity);
+  const lock = await acquireDirectoryLockAsync(claimDir);
+  try {
+    const { filePath, record } = loadClaimForMutation(identity, attemptId, "Launch claim physical-residency");
+    if (JSON.stringify(record.route) !== JSON.stringify(route)) {
+      throw taggedError("route_mismatch", "Launch claim physical-residency route does not match the durable launch claim.");
+    }
+    assertNativeReferenceMatchesRoute(provisionalNativeTurnRef, record.route, "Launch claim provisional native turn");
+    if (record.submissionState !== "started" || record.acceptance !== "not_submitted") {
+      throw taggedError("binding_too_late", "Launch claim physical residency must bind while submission is started and acceptance remains not_submitted.");
+    }
+    if (record.version !== LAUNCH_CLAIM_SCHEMA_VERSION || !Object.hasOwn(record, "physicalResidency") ||
+        !Object.hasOwn(record, "worker") || !Object.hasOwn(record, "provisionalNativeTurnRef")) {
+      throw taggedError("legacy_claim", "A legacy launch claim cannot gain physical residency after creation.");
+    }
+    if (record.physicalResidency != null || record.worker != null || record.provisionalNativeTurnRef != null) {
+      if (JSON.stringify(record.physicalResidency) === JSON.stringify(physicalResidency) &&
+          JSON.stringify(record.worker) === JSON.stringify(worker) &&
+          JSON.stringify(record.provisionalNativeTurnRef) === JSON.stringify(provisionalNativeTurnRef)) return record;
+      throw taggedError("residency_mismatch", "Launch claim already binds a different physical residency receipt.");
+    }
+    const updated = validateLaunchClaimRecord({ ...record, physicalResidency, worker, provisionalNativeTurnRef, updatedAt: nowIso() });
+    writeAtomicClaimFile(filePath, updated);
+    return updated;
   } finally {
     releaseDirectoryLock(lock);
   }

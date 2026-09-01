@@ -19,6 +19,7 @@ import {
 import { createDriverScope } from "./harness-registry.mjs";
 import {
   claimNativeSubmissionStartAsync,
+  bindLaunchClaimPhysicalResidencyAsync,
   recordLaunchAcceptanceProvenAsync,
   recordLaunchAcceptanceRejectedAsync,
   recordLaunchAcceptanceUnknownAsync,
@@ -28,6 +29,7 @@ import { validateVersionThreeRoute } from "./durable-state-v3.mjs";
 import { validateNativeReferenceEnvelope } from "./native-reference.mjs";
 import { plainDataTree, plainRecordSnapshot } from "./plain-record.mjs";
 import { admitTargetWorktree } from "./target-worktree-admission.mjs";
+import { getProcessIdentity } from "./process-control.mjs";
 import { types } from "node:util";
 
 /**
@@ -49,6 +51,7 @@ const LAUNCH_INPUT_FIELDS = Object.freeze([
   "deadlineAt",
   "driver",
   "env",
+  "ensureResidencyManager",
   "executionRoot",
   "jobId",
   "lifecycleOwner",
@@ -181,6 +184,9 @@ function snapshotLaunchInput(input) {
     controlRoot: hasSplitRoots ? snapshot.controlRoot : snapshot.workspaceRoot,
     executionRoot: hasSplitRoots ? snapshot.executionRoot : snapshot.workspaceRoot,
   };
+  if (snapshot.ensureResidencyManager != null && typeof snapshot.ensureResidencyManager !== "function") {
+    throw new Error("Version-three worker ensureResidencyManager must be an internal function when stated.");
+  }
   return Object.freeze(stable);
 }
 
@@ -352,13 +358,29 @@ export async function launchVersionThreeTurn(input) {
 
   let liveTurn;
   try {
+    let physicalResidencyBound = false;
+    const bindPhysicalResidency = async ({ physicalResidency, provisionalNativeTurnRef }) => {
+      const provisional = validateNativeReferenceEnvelope(provisionalNativeTurnRef, { driver, route, kind: "turn" });
+      const record = await bindLaunchClaimPhysicalResidencyAsync({
+        ...identity,
+        route,
+        physicalResidency,
+        worker: { pid: process.pid, identity: getProcessIdentity(process.pid) },
+        provisionalNativeTurnRef: provisional,
+      });
+      try { await snapshot.ensureResidencyManager?.(); } catch { /* durable residency remains the recovery source */ }
+      physicalResidencyBound = true;
+      return record.physicalResidency;
+    };
     const rawLiveTurn = await driver.startTurn({
       scope,
       preparedTurn,
-      launchContext,
+      launchContext: Object.freeze({ ...launchContext, bindPhysicalResidency,
+        ensureResidencyManager: snapshot.ensureResidencyManager ?? null }),
       ...(nativeSessionRef == null ? {} : { nativeSessionRef }),
     });
     liveTurn = validateLiveHarnessTurn(rawLiveTurn, { driver, route });
+    if (!physicalResidencyBound) throw new Error("Driver returned a live turn without awaiting the durable physical-residency binder.");
     const launchClaim = await recordLaunchAcceptanceProvenAsync({
       ...identity,
       liveHarnessTurn: liveTurn,

@@ -70,7 +70,7 @@ import {
   readLaunchClaim,
 } from "./launch-claim.mjs";
 import { resolvePluginStateRoot } from "./paths.mjs";
-import { validateProcessIdentity } from "./process-control.mjs";
+import { terminateProcessTree, validateProcessIdentity } from "./process-control.mjs";
 import { runVersionThreeWorkerLoop } from "./v3-worker-loop.mjs";
 import { rollbackPreparedVersionThreeTurn } from "./v3-worker-entry.mjs";
 import { SOURCE_ROOT } from "./version.mjs";
@@ -414,6 +414,18 @@ async function provenAbsent(pid, pidIdentity, deadlineMs) {
     await sleep(CLEANUP_PROOF_INTERVAL_MS);
   }
   return !validateProcessIdentity(pid, pidIdentity);
+}
+
+/** Stop only the residency manager owned by this smoke's disposable runtime. */
+async function stopIsolatedResidencyManager(runtimeHome) {
+  const receiptFile = path.join(runtimeHome, "runtime", "residency-manager", "receipt.json");
+  if (!fs.existsSync(receiptFile)) return true;
+  let receipt;
+  try { receipt = JSON.parse(fs.readFileSync(receiptFile, "utf8")); } catch { return false; }
+  if (!Number.isSafeInteger(receipt?.pid) || receipt.pid < 1 || typeof receipt?.identity !== "string") return false;
+  if (!validateProcessIdentity(receipt.pid, receipt.identity)) return true;
+  try { terminateProcessTree(receipt.pid, receipt.identity); } catch { return false; }
+  return provenAbsent(receipt.pid, receipt.identity, CLEANUP_PROOF_TIMEOUT_MS);
 }
 
 /**
@@ -1015,7 +1027,9 @@ export async function runPhaseALeafSmoke(options = {}) {
       state.mutation.workspaceDisposed = !fs.existsSync(cwd);
     }
     if (options.keepRuntimeHome !== true) {
-      fs.rmSync(runtimeHome, { recursive: true, force: true });
+      if (await stopIsolatedResidencyManager(runtimeHome)) {
+        fs.rmSync(runtimeHome, { recursive: true, force: true });
+      }
       state.mutation.runtimeHomeDisposed = !fs.existsSync(runtimeHome);
     }
     if (priorRuntimeHome == null) delete process.env.CODEX_HARNESSDOCK_RUNTIME_HOME;

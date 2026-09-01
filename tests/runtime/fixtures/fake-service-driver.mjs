@@ -263,7 +263,6 @@ export function createFakeServiceDriver(options = {}) {
       service.sequence += 1;
       const sessionId = scope.route.continuationSessionId ?? `service-session-${service.sequence}`;
       const turnId = `service-turn-${service.sequence}`;
-      service.prompts.push(preparedTurn.promptEnvelope);
       const turn = {
         turnId,
         instanceKey: scope.route.instanceKey,
@@ -272,6 +271,13 @@ export function createFakeServiceDriver(options = {}) {
         state: "active",
         settle: null,
       };
+      if (typeof input?.launchContext?.bindPhysicalResidency === "function") {
+        await input.launchContext.bindPhysicalResidency({
+          physicalResidency: { kind: "reused_service", turnLeaseToken: "0".repeat(32) },
+          provisionalNativeTurnRef: turn.nativeTurnRef,
+        });
+      }
+      service.prompts.push(preparedTurn.promptEnvelope);
       const settled = new Promise((resolve) => {
         turn.settle = (status) => {
           if (turn.state === "terminal") return;

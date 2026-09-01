@@ -102,6 +102,7 @@ const WORKER_LOOP_INPUT_FIELDS = Object.freeze([
   "executionRoot",
   "workspaceRoot",
   "env",
+  "ensureResidencyManager",
   "signal",
   "deadlineAt",
   "cwd",
@@ -233,6 +234,9 @@ function snapshotWorkerLoopInput(input) {
     throw new Error("Version-three worker loop input requires its durable roots.");
   }
   const route = validateVersionThreeRoute(snapshot.route, "Version-three worker loop route");
+  if (snapshot.ensureResidencyManager != null && typeof snapshot.ensureResidencyManager !== "function") {
+    throw new Error("Version-three worker ensureResidencyManager must be an internal function when stated.");
+  }
   assertHarnessId(snapshot.driver?.harnessId);
   const assignedMessageIds = snapshotArray(snapshot.assignedMessageIds, "Version-three worker assignedMessageIds")
     .map((value, index) => assertText(value, `Version-three worker assignedMessageIds[${index}]`));
@@ -316,6 +320,11 @@ function snapshotWorkerLoopInput(input) {
     workspaceRoot: canonicalExecutionRoot,
     canonicalWorkspaceRoot,
     env: plainDataTree(snapshot.env ?? {}, "Version-three worker env", 3),
+    ensureResidencyManager: snapshot.ensureResidencyManager ?? (() => {
+      void import("./residency-manager.mjs")
+        .then(({ ensureResidencyManager }) => ensureResidencyManager())
+        .catch(() => undefined);
+    }),
     signal: snapshot.signal ?? null,
     deadline: snapshotDeadline(snapshot.deadlineAt),
     cwd,
@@ -353,6 +362,7 @@ function launchInputOf(snapshot) {
     env: snapshot.env,
     signal: snapshot.signal,
     deadlineAt: snapshot.deadline?.text ?? null,
+    ensureResidencyManager: snapshot.ensureResidencyManager,
     // Always stated onward: the launch core refuses an omitted value, and an
     // omission must never be silently reintroduced as a default here.
     turnOptions: snapshot.turnOptions,
@@ -1146,6 +1156,10 @@ async function settleUnknown(session, reason, detail) {
   // `quiesceOnUnknownExit()`.
   session.liveOwnershipQuiesce = quiesceOnUnknownExit(session);
   const uncertainty = persistUncertainty(session, reason, detail);
+  if (uncertainty.uncertaintyPersisted) {
+    try { await session.snapshot.ensureResidencyManager(); }
+    catch { /* the durable unknown remains the recovery owner */ }
+  }
   const disposal = await disposeLiveTurn(session);
   return unknownOutcome(session, reason, detail, { ...uncertainty, ...disposal });
 }
@@ -1245,6 +1259,8 @@ async function settleTerminal(session, rawResult) {
       terminalJob,
     });
     session.durableRecord = "terminal";
+    try { await snapshot.ensureResidencyManager(); }
+    catch { /* durable terminal/service state remains visible to a later ensure */ }
   } catch (error) {
     return settleUnknown(session, "terminal_record_not_durable", detailOf(error));
   }
@@ -1458,7 +1474,10 @@ export async function runVersionThreeWorkerLoop(input) {
       route: snapshot.route,
       nativeTurnRef: launchClaim.nativeTurnRef,
       worker: { pid: process.pid, identity: getProcessIdentity(process.pid) },
+      physicalResidency: launchClaim.physicalResidency,
     });
+    try { await snapshot.ensureResidencyManager(); }
+    catch { /* durable running state remains visible to a later ensure */ }
     if (typeof liveTurn.subscribeProgress === "function") {
       session.progressUnsubscribe = liveTurn.subscribeProgress((progress) => {
         try {

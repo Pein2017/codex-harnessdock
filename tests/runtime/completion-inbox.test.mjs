@@ -6,6 +6,8 @@ import path from "node:path";
 import { afterEach, describe, it } from "node:test";
 
 import {
+  COMPLETION_INBOX_VERSION,
+  HARD_RECLAIM_LIFECYCLE_MESSAGE,
   acknowledgeAgentCompletionEvents,
   acknowledgeCompletionEvents,
   appendCompletionEvent,
@@ -130,6 +132,89 @@ function readFromFreshProcess(workspace, ownerRootId, runtimeHome) {
 }
 
 describe("completion inbox", () => {
+  it("stores one nonsemantic hard-reclaim lifecycle event with explicit unknown settlement", () => {
+    const { workspace, ownerRootId } = setup();
+    const message = HARD_RECLAIM_LIFECYCLE_MESSAGE;
+    const first = appendCompletionEvent(workspace, ownerRootId, {
+      jobId: "hard-reclaimed-job",
+      agentId: "hard-reclaimed-agent",
+      terminalStatus: "hard_reclaimed",
+      completedAt: "2026-08-31T00:00:00.000Z",
+      summary: message,
+      settlement: "unknown",
+      resumability: { classification: "not_resumable", blockingReason: "worker_lost" },
+      blocking: { reason: "worker_lost", scope: "agent", retry: "new_agent" },
+      detailedResultAvailable: false,
+      resultPointer: null,
+      finalMessage: message,
+      claudeSessionIdAvailable: false,
+      metrics: null,
+    });
+    const second = appendCompletionEvent(workspace, ownerRootId, {
+      jobId: "hard-reclaimed-job",
+      agentId: "hard-reclaimed-agent",
+      terminalStatus: "hard_reclaimed",
+      completedAt: "2026-08-31T00:00:00.000Z",
+      summary: message,
+      settlement: "unknown",
+      resumability: { classification: "not_resumable", blockingReason: "worker_lost" },
+      blocking: { reason: "worker_lost", scope: "agent", retry: "new_agent" },
+      detailedResultAvailable: false,
+      resultPointer: null,
+      finalMessage: message,
+      claudeSessionIdAvailable: false,
+      metrics: null,
+    });
+
+    assert.equal(first.appended, true);
+    assert.equal(second.appended, false);
+    assert.deepEqual(second.event, first.event, "replay returns the exact same lifecycle event bytes");
+    assert.deepEqual(first.event, {
+      version: COMPLETION_INBOX_VERSION,
+      sequence: 1,
+      eventId: deterministicCompletionEventId(ownerRootId, "hard-reclaimed-job"),
+      jobId: "hard-reclaimed-job",
+      agentId: "hard-reclaimed-agent",
+      agentStatus: "errored",
+      terminalStatus: "hard_reclaimed",
+      settlement: "unknown",
+      completedAt: "2026-08-31T00:00:00.000Z",
+      summary: message,
+      resumability: { classification: "not_resumable", claudeSessionId: null, blockingReason: "worker_lost" },
+      blocking: { reason: "worker_lost", scope: "agent", retry: "new_agent" },
+      detailedResultAvailable: false,
+      resultPointer: null,
+      finalMessage: message,
+      truncated: false,
+      claudeSessionIdAvailable: false,
+      metrics: null,
+      deliveryToken: first.event.deliveryToken,
+    });
+    for (const forbidden of ["continuation", "result", "assistantOutput", "modelOutput", "acceptance", "success", "failure"]) {
+      assert.equal(Object.hasOwn(first.event, forbidden), false, forbidden);
+    }
+
+    const publicSummary = readUnreadAgentCompletionSummaries(workspace, ownerRootId).events[0];
+    assert.deepEqual({
+      agentStatus: publicSummary.agentStatus,
+      terminalStatus: publicSummary.terminalStatus,
+      settlement: publicSummary.settlement,
+      completionMessage: publicSummary.completionMessage,
+      blocking: publicSummary.blocking,
+      metrics: publicSummary.metrics,
+    }, {
+      agentStatus: "errored",
+      terminalStatus: "hard_reclaimed",
+      settlement: "unknown",
+      completionMessage: message,
+      blocking: { reason: "worker_lost", scope: "agent", retry: "new_agent" },
+      metrics: null,
+    });
+    for (const forbidden of ["continuation", "result", "assistant_output", "model_output", "acceptance", "success", "failure"]) {
+      assert.equal(Object.hasOwn(publicSummary, forbidden), false, forbidden);
+    }
+  });
+
   it("freezes normalized metrics and projects legacy completion metrics as null", () => {
     const { workspace, ownerRootId } = setup();
     const metrics = {

@@ -93,6 +93,34 @@ describe("OpenCode shared service manager", () => {
     assert.deepEqual(await manager.inspect(), { status: "reused" });
   });
 
+  it("derives only a managed receipt plus exact lease, or a reused classification", async () => {
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-opencode-residency-"));
+    cleanups.push(runtimeRoot);
+    let healthy = false;
+    const managed = createOpencodeServiceManager({
+      env: { OPENCODE_SERVER_URL: "http://127.0.0.1:4096", OPENCODE_EXECUTABLE: "/opt/opencode" },
+      runtimeRoot, probe: async () => ({ kind: healthy ? "healthy" : "absent" }), executableCheck: () => true,
+      start: () => { healthy = true; return { pid: 91, unref() {} }; }, getIdentity: () => "identity-91",
+      isAlive: () => true, validateIdentity: () => true,
+    });
+    await managed.ensure();
+    const lease = await managed.acquireTurnLease({ rootId: "root", agentId: "agent", turnId: "turn", attemptId: "attempt" });
+    const residency = await managed.residencyForTurnLease(lease);
+    assert.deepEqual(Object.keys(residency).sort(), ["commandFingerprint", "identity", "kind", "pid", "receiptGeneration", "turnLeaseToken"]);
+    assert.equal(residency.kind, "managed_service");
+    assert.equal(JSON.stringify(residency).includes("127.0.0.1"), false);
+
+    const reusedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-opencode-reused-residency-"));
+    cleanups.push(reusedRoot);
+    const reused = createOpencodeServiceManager({
+      env: { OPENCODE_SERVER_URL: "http://127.0.0.1:4096", OPENCODE_EXECUTABLE: "/opt/opencode" },
+      runtimeRoot: reusedRoot,
+      probe: async () => ({ kind: "healthy" }), isAlive: () => true, validateIdentity: () => false,
+    });
+    const reusedLease = await reused.acquireTurnLease({ rootId: "root", agentId: "agent", turnId: "turn2", attemptId: "attempt2" });
+    assert.deepEqual(await reused.residencyForTurnLease(reusedLease), { kind: "reused_service", turnLeaseToken: reusedLease.token });
+  });
+
   it("keeps managed ownership outside disposable runtime isolation homes", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "cc-opencode-service-owner-"));
     cleanups.push(root);
@@ -443,7 +471,7 @@ describe("OpenCode shared service manager", () => {
     assert.deepEqual(await manager.reapIfIdle(), { reaped: true, reason: "terminated" });
   });
 
-  it("serializes reapers, refuses drift and ambiguous termination, and re-arms one timer", async () => {
+  it("serializes reapers and refuses drift and ambiguous termination without an MCP timer", async () => {
     const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-opencode-fence-"));
     cleanups.push(runtimeRoot);
     let now = 1_000;
@@ -473,15 +501,6 @@ describe("OpenCode shared service manager", () => {
     assert.equal(outcomes.filter((result) => result.reaped).length, 1);
     assert.equal(terminated, 1);
 
-    const callbacks = [];
-    const timer = createOpencodeServiceManager({ ...common, setTimer: (fn, ms) => {
-      const handle = { fn, ms, unref() {} }; callbacks.push(handle); return handle;
-    } });
-    assert.equal(timer.scheduleReap(), true);
-    assert.equal(timer.scheduleReap(), false);
-    await callbacks[0].fn();
-    assert.equal(callbacks.length, 2);
-
     const ambiguousRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-opencode-ambiguous-"));
     cleanups.push(ambiguousRoot);
     alive = false;
@@ -491,5 +510,194 @@ describe("OpenCode shared service manager", () => {
     assert.deepEqual(await ambiguous.reapIfIdle(), { reaped: false, reason: "not_idle" });
     now += 60_000;
     assert.deepEqual(await ambiguous.reapIfIdle(), { reaped: false, reason: "termination_ambiguous" });
+  });
+
+  it("never signals reused/shared service scope and closes a later sole managed scope exactly once", async () => {
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-opencode-hard-shared-"));
+    cleanups.push(runtimeRoot);
+    let alive = false;
+    let ready = false;
+    let signals = 0;
+    let markers = 0;
+    const manager = createOpencodeServiceManager({
+      env: { OPENCODE_SERVER_URL: "http://127.0.0.1:4096", OPENCODE_EXECUTABLE: "/opt/opencode" },
+      runtimeRoot, probe: async () => ({ kind: ready ? "healthy" : "absent" }), executableCheck: () => true,
+      start: () => { alive = true; ready = true; return { pid: 91, unref() {} }; }, getIdentity: () => "identity-91",
+      isAlive: () => alive, validateIdentity: () => alive, peerActivity: () => "none",
+      terminate: () => { signals += 1; alive = false; ready = false; return { attempted: true, delivered: true }; },
+    });
+    await manager.ensure();
+    const target = await manager.acquireTurnLease({ rootId: "root", agentId: "agent", turnId: "turn", attemptId: "attempt" });
+    const peer = await manager.acquireTurnLease({ rootId: "root", agentId: "peer", turnId: "peer-turn", attemptId: "peer-attempt" });
+    const residency = await manager.residencyForTurnLease(target);
+    const input = { residency, rootId: "root", agentId: "agent", turnId: "turn", attemptId: "attempt",
+      beforeTerminate: async () => { markers += 1; } };
+    assert.deepEqual(await manager.inspectHardReclaimManagedTurn(input), {
+      disposition: "retained_shared", processDisposition: "retained_shared", serviceTurnDisposition: "retained_shared", failureCode: null,
+    });
+    assert.deepEqual(await manager.hardReclaimManagedTurn(input), {
+      disposition: "retained_shared", processDisposition: "retained_shared", serviceTurnDisposition: "retained_shared", failureCode: null,
+    });
+    assert.deepEqual({ signals, markers }, { signals: 0, markers: 0 });
+
+    await manager.releaseTurnLease(peer);
+    assert.deepEqual(await manager.hardReclaimManagedTurn(input), {
+      disposition: "released", processDisposition: "dead", serviceTurnDisposition: "released", failureCode: null,
+    });
+    assert.deepEqual({ signals, markers }, { signals: 1, markers: 1 });
+    assert.deepEqual(await manager.hardReclaimManagedTurn({ ...input, terminationAlreadyAttempted: true }), {
+      disposition: "released", processDisposition: "dead", serviceTurnDisposition: "already_released", failureCode: null,
+    });
+    assert.equal(signals, 1);
+
+    const reusedRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-opencode-hard-reused-"));
+    cleanups.push(reusedRoot);
+    const reused = createOpencodeServiceManager({
+      env: { OPENCODE_SERVER_URL: "http://127.0.0.1:4096", OPENCODE_EXECUTABLE: "/opt/opencode" },
+      runtimeRoot: reusedRoot, probe: async () => ({ kind: "healthy" }), terminate: () => { throw new Error("reused service must not be signalled"); },
+    });
+    const reusedLease = await reused.acquireTurnLease({ rootId: "root", agentId: "agent", turnId: "turn", attemptId: "attempt" });
+    const reusedResidency = await reused.residencyForTurnLease(reusedLease);
+    assert.deepEqual(await reused.hardReclaimManagedTurn({ residency: reusedResidency, rootId: "root", agentId: "agent", turnId: "turn", attemptId: "attempt" }), {
+      disposition: "retained_reused", processDisposition: "retained_reused", serviceTurnDisposition: "retained_reused", failureCode: null,
+    });
+    assert.deepEqual(await reused.nextIdleDeadline(), { obligation: false, deadline: null });
+  });
+
+  it("retains a managed service when the target lease already left but peer turns remain", async () => {
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-opencode-hard-absent-target-shared-"));
+    cleanups.push(runtimeRoot);
+    let alive = false;
+    let ready = false;
+    let signals = 0;
+    const manager = createOpencodeServiceManager({
+      env: { OPENCODE_SERVER_URL: "http://127.0.0.1:4096", OPENCODE_EXECUTABLE: "/opt/opencode" },
+      runtimeRoot, probe: async () => ({ kind: ready ? "healthy" : "absent" }), executableCheck: () => true,
+      start: () => { alive = true; ready = true; return { pid: 96, unref() {} }; }, getIdentity: () => "identity-96",
+      isAlive: () => alive, validateIdentity: () => alive, peerActivity: () => "none",
+      terminate: () => { signals += 1; alive = false; return { attempted: true, delivered: true }; },
+    });
+    await manager.ensure();
+    const target = await manager.acquireTurnLease({ rootId: "root", agentId: "agent", turnId: "turn", attemptId: "attempt" });
+    const peer = await manager.acquireTurnLease({ rootId: "root", agentId: "peer", turnId: "peer-turn", attemptId: "peer-attempt" });
+    const residency = await manager.residencyForTurnLease(target);
+    await manager.releaseTurnLease(target);
+    const result = await manager.hardReclaimManagedTurn({
+      residency, rootId: "root", agentId: "agent", turnId: "turn", attemptId: "attempt",
+      beforeTerminate: async () => { throw new Error("shared scope must not mark termination"); },
+    });
+    assert.deepEqual(result, { disposition: "retained_shared", processDisposition: "retained_shared",
+      serviceTurnDisposition: "already_released", failureCode: null });
+    assert.equal(signals, 0);
+    assert.equal(fs.existsSync(peer.file), true);
+  });
+
+  it("holds signal refusal and a still-live target without ever sending a second signal", async () => {
+    for (const [name, termination, expected] of [
+      ["refused", () => ({ attempted: true, delivered: false }), "signal_refused"],
+      ["still alive", () => ({ attempted: true, delivered: true }), "target_still_alive"],
+    ]) {
+      const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), `cc-opencode-hard-${name.replace(" ", "-")}-`));
+      cleanups.push(runtimeRoot);
+      let ready = false;
+      let now = 1_000;
+      let signals = 0;
+      const manager = createOpencodeServiceManager({
+        env: { OPENCODE_SERVER_URL: "http://127.0.0.1:4096", OPENCODE_EXECUTABLE: "/opt/opencode" },
+        runtimeRoot, probe: async () => ({ kind: ready ? "healthy" : "absent" }), executableCheck: () => true,
+        start: () => { ready = true; return { pid: 92, unref() {} }; }, getIdentity: () => "identity-92",
+        isAlive: () => true, validateIdentity: () => true, peerActivity: () => "none",
+        terminate: () => { signals += 1; return termination(); }, now: () => now++, reapTimeoutMs: 2, reapDelayMs: 0,
+      });
+      await manager.ensure();
+      const lease = await manager.acquireTurnLease({ rootId: "root", agentId: "agent", turnId: "turn", attemptId: "attempt" });
+      const residency = await manager.residencyForTurnLease(lease);
+      const first = await manager.hardReclaimManagedTurn({ residency, rootId: "root", agentId: "agent", turnId: "turn", attemptId: "attempt", beforeTerminate: async () => {} });
+      assert.deepEqual(first, { disposition: "ambiguous", processDisposition: "unknown", serviceTurnDisposition: "retained", failureCode: expected });
+      const second = await manager.hardReclaimManagedTurn({ residency, rootId: "root", agentId: "agent", turnId: "turn", attemptId: "attempt", terminationAlreadyAttempted: true });
+      assert.equal(second.failureCode, "target_still_alive");
+      assert.equal(signals, 1);
+      assert.equal(fs.existsSync(lease.file), true);
+    }
+  });
+
+  it("recovers after a crash following one signal, but refuses receipt, endpoint, peer, and unlink drift", async () => {
+    const runtimeRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-opencode-hard-crash-"));
+    cleanups.push(runtimeRoot);
+    let alive = false;
+    let ready = false;
+    let signals = 0;
+    const manager = createOpencodeServiceManager({
+      env: { OPENCODE_SERVER_URL: "http://127.0.0.1:4096", OPENCODE_EXECUTABLE: "/opt/opencode" },
+      runtimeRoot, probe: async () => ({ kind: ready ? "healthy" : "absent" }), executableCheck: () => true,
+      start: () => { alive = true; ready = true; return { pid: 93, unref() {} }; }, getIdentity: () => "identity-93",
+      isAlive: () => alive, validateIdentity: () => alive, peerActivity: () => "none",
+      terminate: () => { signals += 1; alive = false; ready = false; throw Object.assign(new Error("crash after delivery"), { code: "EIO" }); },
+    });
+    await manager.ensure();
+    const lease = await manager.acquireTurnLease({ rootId: "root", agentId: "agent", turnId: "turn", attemptId: "attempt" });
+    const residency = await manager.residencyForTurnLease(lease);
+    const first = await manager.hardReclaimManagedTurn({ residency, rootId: "root", agentId: "agent", turnId: "turn", attemptId: "attempt", beforeTerminate: async () => {} });
+    assert.equal(first.failureCode, "signal_failed");
+    const recovered = await manager.hardReclaimManagedTurn({ residency, rootId: "root", agentId: "agent", turnId: "turn", attemptId: "attempt", terminationAlreadyAttempted: true });
+    assert.equal(recovered.disposition, "released");
+    assert.equal(signals, 1);
+
+    for (const [name, mutate, expected] of [
+      ["endpoint", ({ setReady }) => setReady(false), "endpoint_unproven"],
+      ["peer", ({ setPeer }) => setPeer("present"), "peer_present"],
+      ["receipt", ({ receiptFile }) => {
+        const receipt = JSON.parse(fs.readFileSync(receiptFile, "utf8"));
+        fs.writeFileSync(receiptFile, JSON.stringify({ ...receipt, commandFingerprint: "0".repeat(64) }));
+      }, "receipt_drift"],
+    ]) {
+      const driftRoot = fs.mkdtempSync(path.join(os.tmpdir(), `cc-opencode-hard-${name}-`));
+      cleanups.push(driftRoot);
+      let driftAlive = false;
+      let driftReady = false;
+      let peer = "none";
+      let driftSignals = 0;
+      const drift = createOpencodeServiceManager({
+        env: { OPENCODE_SERVER_URL: "http://127.0.0.1:4096", OPENCODE_EXECUTABLE: "/opt/opencode" },
+        runtimeRoot: driftRoot, probe: async () => ({ kind: driftReady ? "healthy" : "absent" }), executableCheck: () => true,
+        start: () => { driftAlive = true; driftReady = true; return { pid: 94, unref() {} }; }, getIdentity: () => "identity-94",
+        isAlive: () => driftAlive, validateIdentity: () => driftAlive, peerActivity: () => peer,
+        terminate: () => { driftSignals += 1; driftAlive = false; return { attempted: true, delivered: true }; },
+      });
+      await drift.ensure();
+      const driftLease = await drift.acquireTurnLease({ rootId: "root", agentId: "agent", turnId: "turn", attemptId: "attempt" });
+      const driftResidency = await drift.residencyForTurnLease(driftLease);
+      mutate({ setReady: (value) => { driftReady = value; }, setPeer: (value) => { peer = value; },
+        receiptFile: path.join(driftRoot, "opencode-service", "receipt.json") });
+      const outcome = await drift.hardReclaimManagedTurn({ residency: driftResidency, rootId: "root", agentId: "agent", turnId: "turn", attemptId: "attempt", beforeTerminate: async () => {} });
+      assert.equal(outcome.failureCode, expected);
+      assert.equal(driftSignals, 0);
+      assert.equal(fs.existsSync(driftLease.file), true);
+    }
+
+    const unlinkRoot = fs.mkdtempSync(path.join(os.tmpdir(), "cc-opencode-hard-unlink-"));
+    cleanups.push(unlinkRoot);
+    let unlinkAlive = false;
+    let unlinkReady = false;
+    let targetLeaseFile = null;
+    const realUnlink = fs.unlinkSync;
+    const unlink = createOpencodeServiceManager({
+      env: { OPENCODE_SERVER_URL: "http://127.0.0.1:4096", OPENCODE_EXECUTABLE: "/opt/opencode" },
+      runtimeRoot: unlinkRoot, probe: async () => ({ kind: unlinkReady ? "healthy" : "absent" }), executableCheck: () => true,
+      start: () => { unlinkAlive = true; unlinkReady = true; return { pid: 95, unref() {} }; }, getIdentity: () => "identity-95",
+      isAlive: () => unlinkAlive, validateIdentity: () => unlinkAlive, peerActivity: () => "none",
+      terminate: () => { unlinkAlive = false; unlinkReady = false; return { attempted: true, delivered: true }; },
+      unlinkSync: (file) => {
+        if (file === targetLeaseFile) throw Object.assign(new Error("ambiguous unlink"), { code: "EIO" });
+        return realUnlink(file);
+      },
+    });
+    await unlink.ensure();
+    const unlinkLease = await unlink.acquireTurnLease({ rootId: "root", agentId: "agent", turnId: "turn", attemptId: "attempt" });
+    targetLeaseFile = unlinkLease.file;
+    const unlinkResidency = await unlink.residencyForTurnLease(unlinkLease);
+    const ambiguous = await unlink.hardReclaimManagedTurn({ residency: unlinkResidency, rootId: "root", agentId: "agent", turnId: "turn", attemptId: "attempt", beforeTerminate: async () => {} });
+    assert.equal(ambiguous.failureCode, "lease_unlink_retained");
+    assert.equal(fs.existsSync(unlinkLease.file), true);
   });
 });

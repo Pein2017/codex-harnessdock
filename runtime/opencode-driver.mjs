@@ -372,7 +372,7 @@ function requiredText(value, code, detail) {
  *
  * @param {{env?: NodeJS.ProcessEnv, cwd?: string, envFile?: string,
  *   acceptanceTimeoutMs?: number, turnTimeoutMs?: number,
- *   serviceManager?: {ensure: () => Promise<object>, acquireTurnLease?: (identity: object) => Promise<object>, releaseTurnLease?: (lease: object) => Promise<boolean>},
+ *   serviceManager?: {ensure: () => Promise<object>, acquireTurnLease?: (identity: object) => Promise<object>, releaseTurnLease?: (lease: object) => Promise<boolean>, residencyForTurnLease?: (lease: object) => Promise<object>},
  *   _test?: any}} [options]
  */
 export function createOpencodeDriver(options = {}) {
@@ -983,6 +983,16 @@ export function createOpencodeDriver(options = {}) {
       const prepared = input?.preparedTurn;
       let releaseCapacity = null;
       let turnLease = null;
+      const nudgeResidencyManager = async () => {
+        try { await input?.launchContext?.ensureResidencyManager?.(); } catch { /* durable state is still the source */ }
+      };
+      const releaseTurnLease = async () => {
+        if (!turnLease || typeof serviceManager.releaseTurnLease !== "function") return false;
+        const released = await serviceManager.releaseTurnLease(turnLease);
+        await nudgeResidencyManager();
+        if (released) turnLease = null;
+        return released;
+      };
       let promptText;
       let attemptId;
       let route;
@@ -1007,14 +1017,21 @@ export function createOpencodeDriver(options = {}) {
           "An OpenCode turn requires its durable turn identity before any native submission."
         );
         promptText = renderOpencodeExplorerPrompt(prepared?.promptEnvelope?.taskInput, route.authority);
+        if (typeof input?.launchContext?.bindPhysicalResidency !== "function") {
+          throw new OpencodeRouteError("residency_unproven", "OpenCode requires a durable physical-residency binder before submission.");
+        }
         releaseCapacity = claimCapacity(fixedInstanceKey);
         if (typeof serviceManager.acquireTurnLease === "function") {
           turnLease = await serviceManager.acquireTurnLease({
             rootId: scope?.rootId, agentId: scope?.agentId, turnId: scope?.turnId, attemptId,
           });
+          await nudgeResidencyManager();
+        }
+        if (!turnLease || typeof serviceManager.residencyForTurnLease !== "function") {
+          throw new OpencodeRouteError("residency_unproven", "OpenCode service residency cannot be proven before submission.");
         }
       } catch (error) {
-        if (turnLease && typeof serviceManager.releaseTurnLease === "function") await serviceManager.releaseTurnLease(turnLease);
+        await releaseTurnLease();
         if (releaseCapacity) releaseCapacity();
         throw preTransportRejection(error);
       }
@@ -1077,6 +1094,10 @@ export function createOpencodeDriver(options = {}) {
         } catch (error) {
           throw new OpencodeRouteError("turn_identity_unprovable", error.message);
         }
+        await input.launchContext.bindPhysicalResidency({
+          physicalResidency: await serviceManager.residencyForTurnLease(turnLease),
+          provisionalNativeTurnRef: nativeTurnRef,
+        });
         // The read-only stream is registered before the blocking prompt is
         // dispatched. Its own failure is advisory and cannot alter prompt
         // acceptance or settlement.
@@ -1137,10 +1158,7 @@ export function createOpencodeDriver(options = {}) {
               serverVersion: input?.launchContext?.serverVersion ?? null,
             });
             settled = true;
-            if (turnLease && typeof serviceManager.releaseTurnLease === "function") {
-              await serviceManager.releaseTurnLease(turnLease);
-              turnLease = null;
-            }
+            await releaseTurnLease();
             if (releaseCapacity) {
               releaseCapacity();
               releaseCapacity = null;
@@ -1175,7 +1193,7 @@ export function createOpencodeDriver(options = {}) {
         };
       } catch (error) {
         observation?.dispose();
-        if (turnLease && typeof serviceManager.releaseTurnLease === "function") await serviceManager.releaseTurnLease(turnLease);
+        await releaseTurnLease();
         if (releaseCapacity) releaseCapacity();
         throw preTransportRejection(error);
       }

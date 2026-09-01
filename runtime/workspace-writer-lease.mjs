@@ -26,7 +26,7 @@
  * concurrent writer on the same workspace.
  */
 
-import { acquireLease, releaseLeasesOnSettlement } from "./instance-admission-lease.mjs";
+import { acquireLease, releaseExactLeasesForHardReclaim, releaseLeasesOnSettlement } from "./instance-admission-lease.mjs";
 
 /**
  * Acquire the one behavioral writer lease for a canonical workspace root.
@@ -65,4 +65,4 @@ export function acquireIntendedWorkspaceWriterLease({
   });
 }
 
-export { releaseLeasesOnSettlement };
+export { releaseExactLeasesForHardReclaim, releaseLeasesOnSettlement };

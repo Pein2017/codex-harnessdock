@@ -7,12 +7,16 @@ import { fileURLToPath } from "node:url";
 import { after, describe, it } from "node:test";
 
 import { createAgentStore } from "../../runtime/agent-store.mjs";
+import { createAgentRuntime } from "../../runtime/agent-runtime.mjs";
 import {
   CLAUDE_CODE_CAPABILITIES,
   CLAUDE_CODE_DRIVER_VERSION,
   CLAUDE_CODE_HARNESS_ID,
 } from "../../runtime/claude-code-driver.mjs";
-import { readUnreadCompletionEvents } from "../../runtime/completion-inbox.mjs";
+import {
+  readUnreadCompletionEvents,
+  reconcileHardReclaimCompletion,
+} from "../../runtime/completion-inbox.mjs";
 import {
   FUTURE_WRITE_GENERATION,
   PUBLIC_WRITE_GENERATION,
@@ -37,6 +41,13 @@ import {
 } from "../../runtime/job-store.mjs";
 import {
   V3_JOB_STATUSES,
+  claimVersionThreeHardReclaim,
+  markVersionThreeHardReclaimTerminationAttempted,
+  recordVersionThreeHardReclaimFailure,
+  recordVersionThreeHardReclaimPhysicalDeath,
+  recordVersionThreeHardReclaimLeasePending,
+  commitVersionThreeHardReclaim,
+  updateCommittedVersionThreeHardReclaim,
   claimVersionThreeProgress,
   listVersionThreeJobRecords,
   markVersionThreeTurnProjected,
@@ -128,7 +139,19 @@ function setup(options = {}) {
   const store = createAgentStore({
     cwd: workspaceRoot, ownerRootId, writeGeneration: FUTURE_WRITE_GENERATION,
   });
-  const agent = store.createAgent({ task_name: `v3_job_${sequence}`, route, initialMessage: "prompt" });
+  const agent = store.createAgent({
+    task_name: `v3_job_${sequence}`,
+    route,
+    initialMessage: "prompt",
+    ...(options.terminalEventDescriptorPath == null ? {} : {
+      terminalEventBinding: {
+        jobId,
+        descriptorPath: options.terminalEventDescriptorPath,
+        reservationId: `reservation-${sequence}`,
+        tokenFingerprint: `fingerprint-${sequence}`,
+      },
+    }),
+  });
   if (options.activate !== false) {
     const reservation = store.reserveActivation(agent.agentId, jobId, { initial: true });
     assert.ok(reservation.reserved);
@@ -161,17 +184,36 @@ function setup(options = {}) {
       normalizedTerminalResult: normalizedTerminalResult(route, turnRef),
       ...overrides,
     }),
-    running: () => recordVersionThreeTurnRunning({
+    running: (overrides = {}) => recordVersionThreeTurnRunning({
       generation: FUTURE_WRITE_GENERATION,
       ...identity,
       attemptId,
       workspaceRoot,
       route,
       nativeTurnRef: turnRef,
+      ...overrides,
     }),
     record: () => readVersionThreeJobRecord(identity),
     events: () => readUnreadCompletionEvents(workspaceRoot, ownerRootId).events,
   };
+}
+
+function commitHardReclaimContext(context) {
+  context.running({ physicalResidency: { kind: "local_process", pid: 71, identity: "process-71" } });
+  recordVersionThreeTurnUncertain({
+    generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId, reason: "worker_lost",
+  });
+  claimVersionThreeHardReclaim({ generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId });
+  recordVersionThreeHardReclaimPhysicalDeath({
+    generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId, physicalDisposition: "dead",
+  });
+  recordVersionThreeHardReclaimLeasePending({
+    generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId,
+    leaseDisposition: { admission: "released", writer: "released", serviceTurn: "not_applicable" },
+  });
+  return commitVersionThreeHardReclaim({
+    generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId,
+  });
 }
 
 describe("version-three job store: durable lifecycle", () => {
@@ -186,7 +228,158 @@ describe("version-three job store: durable lifecycle", () => {
     const second = context.running();
     assert.equal(second.createdAt, first.createdAt);
     assert.equal(second.status, "running");
-    assert.deepEqual(V3_JOB_STATUSES, ["running", "unknown", "completed", "failed", "interrupted"]);
+    assert.deepEqual(V3_JOB_STATUSES, ["running", "unknown", "hard_reclaimed", "completed", "failed", "interrupted"]);
+  });
+
+  it("round-trips only current-generation physical residency", () => {
+    const context = setup();
+    const physicalResidency = { kind: "local_process", pid: 7, identity: "123" };
+    recordVersionThreeTurnRunning({
+      generation: FUTURE_WRITE_GENERATION,
+      ...context.identity,
+      attemptId: context.attemptId,
+      workspaceRoot,
+      route: context.route,
+      nativeTurnRef: context.turnRef,
+      physicalResidency,
+    });
+    assert.deepEqual(context.record().physicalResidency, physicalResidency);
+  });
+
+  it("keeps legacy unknown records observable but read-only and reclaim-ineligible", () => {
+    const context = setup();
+    context.running();
+    const current = resolveVersionThreeJobDirectory(context.identity);
+    const file = fs.readdirSync(current).find((name) => name.endsWith(".json"));
+    const filePath = path.join(current, file);
+    const legacy = JSON.parse(fs.readFileSync(filePath, "utf8"));
+    legacy.version = 1;
+    delete legacy.physicalResidency;
+    fs.writeFileSync(filePath, JSON.stringify(legacy));
+
+    assert.equal(context.record().version, 1, "ordinary reads retain the legacy record");
+    assert.deepEqual(listVersionThreeJobRecords({ ownerRootId: context.ownerRootId }).records.map((record) => record.version), [1]);
+    assert.throws(
+      () => recordVersionThreeTurnUncertain({
+        generation: FUTURE_WRITE_GENERATION,
+        ...context.identity,
+        attemptId: context.attemptId,
+        reason: "driver_result_rejected",
+      }),
+      (error) => error.code === "legacy_record_read_only",
+    );
+    assert.deepEqual(JSON.parse(fs.readFileSync(filePath, "utf8")), legacy, "legacy bytes stay read-only and untouched");
+  });
+
+  it("fences the closed hard-reclaim phases and refuses ordinary terminal settlement once claimed", () => {
+    const context = setup();
+    context.running({ physicalResidency: { kind: "local_process", pid: 71, identity: "process-71" } });
+    recordVersionThreeTurnUncertain({ generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId, reason: "worker_lost" });
+    const claimed = claimVersionThreeHardReclaim({ generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId });
+    assert.equal(claimed.hardReclaim.phase, "claimed");
+    assert.deepEqual(claimed.hardReclaim.leaseDisposition, {
+      admission: "pending", writer: "pending", serviceTurn: "not_applicable",
+    });
+    assert.throws(() => recordVersionThreeTurnTerminal({ generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId, terminalJob: context.terminalJob() }), (error) => error.code === "hard_reclaim_claimed");
+    markVersionThreeHardReclaimTerminationAttempted({ generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId });
+    recordVersionThreeHardReclaimPhysicalDeath({ generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId, physicalDisposition: "dead" });
+    recordVersionThreeHardReclaimLeasePending({
+      generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId,
+      leaseDisposition: { admission: "released", writer: "already_released", serviceTurn: "not_applicable" },
+    });
+    const committed = commitVersionThreeHardReclaim({ generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId });
+    assert.equal(committed.status, "hard_reclaimed");
+    assert.equal(committed.terminalJob, null);
+    assert.equal(committed.uncertainty.reason, "worker_lost");
+    assert.equal(committed.hardReclaim.phase, "committed");
+    assert.equal(committed.hardReclaim.physicalDisposition, "dead");
+    assert.deepEqual(committed.hardReclaim.leaseDisposition, {
+      admission: "released", writer: "already_released", serviceTurn: "not_applicable",
+    });
+    assert.equal(committed.hardReclaim.failureCode, null);
+  });
+
+  it("keeps ambiguous lease disposition unknown and durably completes retained shared scope later", () => {
+    const context = setup();
+    context.running();
+    recordVersionThreeTurnUncertain({ generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId, reason: "worker_lost" });
+    claimVersionThreeHardReclaim({ generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId });
+    recordVersionThreeHardReclaimPhysicalDeath({
+      generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId,
+      physicalDisposition: "retained_shared",
+    });
+    recordVersionThreeHardReclaimLeasePending({
+      generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId,
+      leaseDisposition: { admission: "unknown", writer: "retained_shared", serviceTurn: "retained_shared" },
+      failureCode: "lease_disposition_unknown",
+    });
+    assert.throws(
+      () => commitVersionThreeHardReclaim({ generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId }),
+      (error) => error.code === "lease_disposition_unknown",
+    );
+    const pending = context.record();
+    assert.equal(pending.status, "unknown");
+    assert.equal(pending.hardReclaim.phase, "lease_pending");
+
+    recordVersionThreeHardReclaimLeasePending({
+      generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId,
+      leaseDisposition: { admission: "released", writer: "retained_shared", serviceTurn: "retained_shared" },
+      failureCode: null,
+    });
+    const committed = commitVersionThreeHardReclaim({ generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId });
+    const marked = markVersionThreeHardReclaimTerminationAttempted({
+      generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId,
+    });
+    recordVersionThreeHardReclaimFailure({
+      generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId,
+      failureCode: "peer_present",
+    });
+    const remarked = markVersionThreeHardReclaimTerminationAttempted({
+      generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId,
+    });
+    const completed = updateCommittedVersionThreeHardReclaim({
+      generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId,
+      physicalDisposition: "dead",
+      leaseDisposition: { admission: "released", writer: "released", serviceTurn: "released" },
+    });
+    assert.equal(committed.status, "hard_reclaimed");
+    assert.equal(remarked.hardReclaim.terminationAttemptedAt, marked.hardReclaim.terminationAttemptedAt);
+    assert.deepEqual(completed.hardReclaim.leaseDisposition, {
+      admission: "released", writer: "released", serviceTurn: "released",
+    });
+    assert.equal(completed.terminalJob, null);
+    assert.equal(completed.uncertainty.reason, "worker_lost");
+  });
+
+  it("persists a closed signal failure without permitting a second marker", () => {
+    const context = setup();
+    context.running();
+    recordVersionThreeTurnUncertain({ generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId, reason: "worker_lost" });
+    claimVersionThreeHardReclaim({ generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId });
+    const marked = markVersionThreeHardReclaimTerminationAttempted({ generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId });
+    const failed = recordVersionThreeHardReclaimFailure({
+      generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId,
+      failureCode: "signal_refused",
+    });
+    assert.equal(failed.hardReclaim.failureCode, "signal_refused");
+    assert.equal(markVersionThreeHardReclaimTerminationAttempted({ generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId }).hardReclaim.terminationAttemptedAt, marked.hardReclaim.terminationAttemptedAt);
+  });
+
+  it("lets an ordinary terminal winner fence every later hard-reclaim attempt", () => {
+    const context = setup();
+    context.running();
+    recordVersionThreeTurnUncertain({
+      generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId, reason: "worker_lost",
+    });
+    const terminal = recordVersionThreeTurnTerminal({
+      generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId, terminalJob: context.terminalJob(),
+    });
+    assert.equal(terminal.status, "completed");
+    assert.throws(
+      () => claimVersionThreeHardReclaim({ generation: FUTURE_WRITE_GENERATION, ...context.identity, attemptId: context.attemptId }),
+      (error) => error.code === "not_unknown",
+    );
+    assert.equal(context.record().hardReclaim, null);
   });
 
   it("moves running to unknown with an exact reason, and only a proven terminal moves it onward", () => {
@@ -553,6 +746,171 @@ describe("version-three job store: separation from the public queue", () => {
 });
 
 describe("version-three job store: internal reconciliation", () => {
+  it("projects a committed hard reclaim into one deterministic worker-loss lifecycle event", () => {
+    const context = setup();
+    const committed = commitHardReclaimContext(context);
+    const frozenPhysical = JSON.stringify({ uncertainty: committed.uncertainty, hardReclaim: committed.hardReclaim });
+
+    const first = reconcileVersionThreeTerminalJobs({
+      ownerRootId: context.ownerRootId, generation: FUTURE_WRITE_GENERATION,
+    });
+    assert.deepEqual(
+      first.receipts.map((receipt) => [receipt.jobId, receipt.reconciled, receipt.agentProjected, receipt.completionPublished]),
+      [[context.jobId, true, true, true]],
+    );
+    assert.equal(context.store.readAgent(context.agentId).status, "errored");
+    assert.deepEqual(context.store.readAgent(context.agentId).continuation, {
+      mode: "blocked",
+      evidence: {
+        reason: "worker_lost",
+        settlement: "unknown",
+        jobId: context.jobId,
+        attemptId: context.attemptId,
+        observedAt: context.store.readAgent(context.agentId).continuation.evidence.observedAt,
+      },
+    });
+    assert.equal(context.events().length, 1);
+    assert.deepEqual({
+      terminalStatus: context.events()[0].terminalStatus,
+      settlement: context.events()[0].settlement,
+      blocking: context.events()[0].blocking,
+      detailedResultAvailable: context.events()[0].detailedResultAvailable,
+      resultPointer: context.events()[0].resultPointer,
+      metrics: context.events()[0].metrics,
+    }, {
+      terminalStatus: "hard_reclaimed",
+      settlement: "unknown",
+      blocking: { reason: "worker_lost", scope: "agent", retry: "new_agent" },
+      detailedResultAvailable: false,
+      resultPointer: null,
+      metrics: null,
+    });
+    assert.equal(JSON.stringify({ uncertainty: context.record().uncertainty, hardReclaim: context.record().hardReclaim }), frozenPhysical);
+    assert.deepEqual(reconcileVersionThreeTerminalJobs({
+      ownerRootId: context.ownerRootId, generation: FUTURE_WRITE_GENERATION,
+    }).receipts, []);
+    assert.equal(context.events().length, 1);
+  });
+
+  it("repairs the crash window after Agent loss projection but before its lifecycle event", () => {
+    const context = setup();
+    const committed = commitHardReclaimContext(context);
+    const frozenPhysical = JSON.stringify({ uncertainty: committed.uncertainty, hardReclaim: committed.hardReclaim });
+    assert.equal(context.store.finalizeHardReclaim(committed).reconciled, true);
+    markVersionThreeTurnProjected({
+      generation: FUTURE_WRITE_GENERATION, ...context.identity, agentProjected: true,
+    });
+    assert.equal(context.events().length, 0);
+
+    const receipts = reconcileVersionThreeTerminalJobs({
+      ownerRootId: context.ownerRootId, generation: FUTURE_WRITE_GENERATION,
+    }).receipts;
+    assert.deepEqual(receipts.map((receipt) => [receipt.agentProjected, receipt.completionPublished]), [[true, true]]);
+    assert.equal(context.events().length, 1);
+    assert.deepEqual(reconcileVersionThreeTerminalJobs({
+      ownerRootId: context.ownerRootId, generation: FUTURE_WRITE_GENERATION,
+    }).receipts, []);
+    assert.equal(context.events().length, 1);
+    assert.equal(JSON.stringify({ uncertainty: context.record().uncertainty, hardReclaim: context.record().hardReclaim }), frozenPhysical);
+  });
+
+  it("repairs committed hard reclaim from ordinary AgentRuntime reconciliation", () => {
+    const context = setup();
+    const committed = commitHardReclaimContext(context);
+    const frozenPhysical = JSON.stringify({ uncertainty: committed.uncertainty, hardReclaim: committed.hardReclaim });
+    const claudeConfigDir = path.join(root, `claude-config-${sequence}`);
+    const codexHome = path.join(root, `codex-home-${sequence}`);
+    fs.mkdirSync(claudeConfigDir);
+    fs.mkdirSync(codexHome);
+    const runtime = createAgentRuntime({
+      cwd: workspaceRoot,
+      env: {
+        ...process.env,
+        CODEX_THREAD_ID: context.ownerRootId,
+        CODEX_HOME: codexHome,
+        CLAUDE_CONFIG_DIR: claudeConfigDir,
+      },
+    });
+
+    const receipts = runtime.reconcile();
+    assert.ok(receipts.some((receipt) => receipt.jobId === context.jobId &&
+      receipt.agentProjected === true && receipt.completionPublished === true));
+    assert.equal(context.store.readAgent(context.agentId).status, "errored");
+    assert.equal(context.events().length, 1);
+    assert.equal(JSON.stringify({ uncertainty: context.record().uncertainty, hardReclaim: context.record().hardReclaim }), frozenPhysical);
+  });
+
+  it("repairs the crash window after lifecycle durability by publishing the same bound loss once", () => {
+    const descriptor = path.join(root, `descriptor-${sequence + 1}.json`);
+    fs.writeFileSync(descriptor, "{}", { mode: 0o600 });
+    const context = setup({ terminalEventDescriptorPath: descriptor });
+    const committed = commitHardReclaimContext(context);
+    assert.equal(context.store.finalizeHardReclaim(committed).reconciled, true);
+    markVersionThreeTurnProjected({
+      generation: FUTURE_WRITE_GENERATION, ...context.identity, agentProjected: true,
+    });
+    assert.ok(reconcileHardReclaimCompletion(workspaceRoot, context.ownerRootId, committed).event);
+    const frozenPhysical = JSON.stringify({ uncertainty: committed.uncertainty, hardReclaim: committed.hardReclaim });
+    const lifecycle = () => {
+      const agent = context.store.readAgent(context.agentId);
+      return JSON.stringify({
+        status: agent.status,
+        activeJobId: agent.activeJobId,
+        latestJobId: agent.latestJobId,
+        lastTerminalJobId: agent.lastTerminalJobId,
+        finalizedJobIds: agent.finalizedJobIds,
+        continuation: agent.continuation,
+      });
+    };
+    const frozenLifecycle = lifecycle();
+
+    const publisher = path.join(root, `publisher-${sequence}.mjs`);
+    const publisherRuntime = path.join(root, `publisher-runtime-${sequence}`);
+    const captured = path.join(root, `publisher-events-${sequence}.jsonl`);
+    fs.mkdirSync(publisherRuntime);
+    fs.writeFileSync(publisher, [
+      "#!/usr/bin/env node",
+      "import fs from 'node:fs';",
+      "const payload = process.argv[process.argv.indexOf('--event-payload') + 1];",
+      "fs.appendFileSync(process.env.HD_CAPTURED_EVENTS, fs.readFileSync(payload, 'utf8') + '\\n');",
+      "process.stdout.write(JSON.stringify({ state: 'terminal' }));",
+    ].join("\n"), { mode: 0o700 });
+    const priorBin = process.env.CODEX_HARNESSDOCK_WAKE_PUBLISHER_BIN;
+    const priorRoot = process.env.CODEX_HARNESSDOCK_WAKE_RUNTIME_ROOT;
+    const priorCapture = process.env.HD_CAPTURED_EVENTS;
+    try {
+      process.env.CODEX_HARNESSDOCK_WAKE_PUBLISHER_BIN = publisher;
+      process.env.CODEX_HARNESSDOCK_WAKE_RUNTIME_ROOT = publisherRuntime;
+      process.env.HD_CAPTURED_EVENTS = captured;
+      const receipts = reconcileVersionThreeTerminalJobs({
+        ownerRootId: context.ownerRootId, generation: FUTURE_WRITE_GENERATION,
+      }).receipts;
+      assert.equal(receipts[0]?.reason, "reconciled", JSON.stringify(receipts[0]));
+      assert.deepEqual(receipts.map((receipt) => [receipt.agentProjected, receipt.completionPublished]), [[true, true]]);
+      assert.deepEqual(fs.readFileSync(captured, "utf8").trim().split("\n").map(JSON.parse), [{
+        kind: "worker_terminal",
+        producer_task_id: context.store.readAgent(context.agentId).path,
+        outcome: "settlement_uncertain",
+        reason: "worker_lost",
+      }]);
+      assert.deepEqual(context.store.terminalEventBinding(context.agentId).publication,
+        { state: "published", jobId: context.jobId });
+      assert.deepEqual(reconcileVersionThreeTerminalJobs({
+        ownerRootId: context.ownerRootId, generation: FUTURE_WRITE_GENERATION,
+      }).receipts, []);
+      assert.equal(fs.readFileSync(captured, "utf8").trim().split("\n").length, 1);
+      assert.equal(JSON.stringify({ uncertainty: context.record().uncertainty, hardReclaim: context.record().hardReclaim }), frozenPhysical);
+      assert.equal(lifecycle(), frozenLifecycle, "terminal publication changes no Agent lifecycle fact");
+    } finally {
+      if (priorBin == null) delete process.env.CODEX_HARNESSDOCK_WAKE_PUBLISHER_BIN;
+      else process.env.CODEX_HARNESSDOCK_WAKE_PUBLISHER_BIN = priorBin;
+      if (priorRoot == null) delete process.env.CODEX_HARNESSDOCK_WAKE_RUNTIME_ROOT;
+      else process.env.CODEX_HARNESSDOCK_WAKE_RUNTIME_ROOT = priorRoot;
+      if (priorCapture == null) delete process.env.HD_CAPTURED_EVENTS;
+      else process.env.HD_CAPTURED_EVENTS = priorCapture;
+    }
+  });
+
   it("finishes an unpublished terminal record exactly once", () => {
     const context = setup();
     context.running();

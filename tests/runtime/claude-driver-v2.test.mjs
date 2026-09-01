@@ -166,7 +166,12 @@ function makeDriver(overrides = {}) {
     inspectRoutes: overrides.inspectRoutes ?? (async () => DISCOVERED_ROUTES),
     ...hostSeams(overrides.host ?? {}),
   });
-  return { driver, session };
+  const revalidatePreparedTurn = driver.revalidatePreparedTurn.bind(driver);
+  const boundDriver = Object.freeze({ ...driver, revalidatePreparedTurn: async (...args) => Object.freeze({
+    ...await revalidatePreparedTurn(...args),
+    bindPhysicalResidency: async () => {},
+  }) });
+  return { driver: boundDriver, session };
 }
 
 function inspectScope(driver, overrides = {}) {
@@ -219,7 +224,10 @@ async function startTurn(driver, options = {}) {
     driver.prepareTurn({ route, taskInput, turnOptions, turnId: scope.turnId }),
     { driver, route, taskInput },
   );
-  const launchContext = await driver.revalidatePreparedTurn(preparedTurn, scope);
+  const launchContext = {
+    ...await driver.revalidatePreparedTurn(preparedTurn, scope),
+    bindPhysicalResidency: options.bindPhysicalResidency ?? (async () => {}),
+  };
   const live = await driver.startTurn({
     scope,
     preparedTurn,
@@ -822,6 +830,35 @@ describe("Claude Code instance identity reconciliation", () => {
 // ---------------------------------------------------------------------------
 
 describe("Claude Code live turn", () => {
+  it("refuses a direct start without the durable residency binder before spawning", async () => {
+    const session = fakeSession({ autoSettle: false });
+    const { driver } = makeDriver({ session });
+    const route = await acceptRoute(driver);
+    const scope = turnScope(driver, route);
+    const preparedTurn = driver.prepareTurn({ route, taskInput: scope.taskInput, turnOptions: scope.turnOptions, turnId: scope.turnId });
+    const { bindPhysicalResidency: _ignored, ...launchContext } = await driver.revalidatePreparedTurn(preparedTurn, scope);
+    await assert.rejects(
+      driver.startTurn({ scope, preparedTurn, launchContext }),
+      (error) => isDriverPreTransportRejection(error),
+    );
+    assert.equal(session.state.spawnAccepted, null);
+  });
+
+  it("awaits durable physical binding before accepting the child", async () => {
+    const session = fakeSession({ autoSettle: false });
+    const { driver } = makeDriver({ session });
+    let release;
+    const binding = new Promise((resolve) => { release = resolve; });
+    const starting = startTurn(driver, { bindPhysicalResidency: async () => binding });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(session.state.spawnAccepted, null, "sensitivity: removing await would accept the child here");
+    release();
+    const { wrapper } = await starting;
+    assert.equal(session.state.spawnAccepted, true);
+    session.state.settle(claudeResult());
+    await wrapper.result;
+  });
+
   it("returns a live handle at proven child acceptance, before the turn ends", async () => {
     const session = fakeSession({ autoSettle: false });
     const { driver } = makeDriver({ session });
