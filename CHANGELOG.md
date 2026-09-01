@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.28.0 - 2026-09-01
+
+- Bind every accepted native turn to exact physical residency and reclaim only
+  one-hour-old uncertainty whose worker and native process/service identity are
+  still provably owned, while preserving ambiguous leases and durable history.
+- Replace MCP-owned lifecycle timers with one self-exiting residency manager,
+  and project committed worker loss plus descriptor-bound wake events without
+  fabricating settlement, continuation, or assistant output.
+- Load heavy Harness Drivers only for launch/activation operations and omit
+  process-resident heavy registries from observational MCP calls, reducing the
+  measured idle MCP footprint without changing the nine public operations.
+- Keep retained capability-schema v2/v3 launch evidence readable and byte-stable
+  during writer safety scans; fresh routes and inspection evidence remain strict
+  capability-schema v4.
+
 ## 0.27.0 - 2026-08-31
 
 - Make bounded native progress a first-class capability: Pi consumes RPC JSONL
