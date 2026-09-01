@@ -14,3 +14,6 @@
  * accept or misroute batch input.
  */
 export const HARNESSDOCK_MCP_API_GENERATION = 11;
+
+/** Every Harness this MCP generation admits, in deterministic alphabetical order. */
+export const HARNESSDOCK_MCP_HARNESS_IDS = Object.freeze(["claude-code", "opencode", "pi"]);
